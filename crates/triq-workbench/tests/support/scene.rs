@@ -111,7 +111,8 @@ impl Scene {
     }
 }
 
-/// Pretend each runtime took its second reading this long after its first.
+/// Pretend each runtime took its second reading this long after its first,
+/// and that the newest sample of every port was sent just as it did.
 pub fn later(
     before: &[triq::Inventory],
     mut after: Vec<triq::Inventory>,
@@ -119,6 +120,11 @@ pub fn later(
 ) -> Vec<triq::Inventory> {
     for ((after, before), elapsed) in after.iter_mut().zip(before).zip(elapsed) {
         after.taken_ns = before.taken_ns + elapsed.as_nanos() as u64;
+        for node in &mut after.nodes {
+            let sources = node.inputs.iter_mut().flat_map(|input| &mut input.sources);
+            sources.filter(|source| source.received > 0).for_each(|source| source.sent_ns = after.taken_ns);
+            node.outputs.iter_mut().filter(|output| output.sent > 0).for_each(|output| output.sent_ns = after.taken_ns);
+        }
     }
     after
 }

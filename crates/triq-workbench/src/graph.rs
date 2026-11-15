@@ -159,38 +159,66 @@ pub fn size(card: &Card) -> Vec2 {
     vec2((inputs + outputs + 40.0).max(header), 46.0 + (ROW + 4.0) * rows as f32)
 }
 
-/// How many samples each port has handled so far, by `runtime/node/port`:
-/// what an output has sent, and what an input has received from all its sources.
-pub fn counts(inventories: &[Inventory]) -> BTreeMap<String, u64> {
-    let mut counts = BTreeMap::new();
-    for inventory in inventories {
-        for node in &inventory.nodes {
-            for input in &node.inputs {
-                let received = input.sources.iter().map(|source| source.received).sum();
-                counts.insert(format!("{}/{}/{}", inventory.runtime, node.name, input.port.name), received);
-            }
-            for output in &node.outputs {
-                counts.insert(output.service.clone(), output.sent);
+/// One reading of a counter of samples.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Reading {
+    /// How many samples so far.
+    pub count: u64,
+    /// When the newest of them was sent, in nanoseconds since 1970. Zero if the runtime does not say.
+    pub sent_ns: u64,
+    /// When the runtime read the counter, in nanoseconds since 1970 by its own clock.
+    pub taken_ns: u64,
+}
+
+/// The seconds that the samples counted between two readings were sent over:
+/// from the sending of the newest sample at the first reading to that of the
+/// newest at the second. Timed instead by the readings themselves, a stream
+/// of sixty a second would have 29, 30 or 31 samples in half a second and
+/// seem to waver between 58 and 62. A runtime too old to say when samples
+/// were sent is timed by its readings, and so is a stretch with nothing new.
+pub fn seconds_between(before: &Reading, now: &Reading) -> f64 {
+    let sent = before.sent_ns > 0 && now.sent_ns > before.sent_ns;
+    let ns = if sent { now.sent_ns - before.sent_ns } else { now.taken_ns.saturating_sub(before.taken_ns) };
+    ns as f64 / 1e9
+}
+
+/// The counters a runtime reports: one for each output, by `runtime/node/port`,
+/// and one for each output an input hears, by the input and then the output.
+fn readings(inventory: &Inventory) -> BTreeMap<(String, &str), Reading> {
+    let taken_ns = inventory.taken_ns;
+    let mut readings = BTreeMap::new();
+    for node in &inventory.nodes {
+        for input in &node.inputs {
+            let port = format!("{}/{}/{}", inventory.runtime, node.name, input.port.name);
+            for source in &input.sources {
+                let reading = Reading { count: source.received, sent_ns: source.sent_ns, taken_ns };
+                readings.insert((port.clone(), source.output.as_str()), reading);
             }
         }
+        for output in &node.outputs {
+            let reading = Reading { count: output.sent, sent_ns: output.sent_ns, taken_ns };
+            readings.insert((output.service.clone(), ""), reading);
+        }
     }
-    counts
+    readings
 }
 
 /// Samples per second through every port, from two readings of the machine.
-/// Each runtime's counters are divided by the time that runtime says passed
-/// between its own two readings. A port that is new has no rate yet, and
-/// neither has anything in a program that started again in between.
+/// An input's rate is the sum over the outputs it hears. A port that is new
+/// has no rate yet, and neither has anything in a program that started
+/// again in between.
 pub fn rates(before: &[Inventory], after: &[Inventory]) -> BTreeMap<String, f64> {
     let mut rates = BTreeMap::new();
     for now in after {
         let earlier = before.iter().find(|earlier| earlier.runtime == now.runtime && earlier.pid == now.pid);
         let Some(earlier) = earlier.filter(|earlier| earlier.taken_ns < now.taken_ns) else { continue };
-        let seconds = (now.taken_ns - earlier.taken_ns) as f64 / 1e9;
-        let was = counts(std::slice::from_ref(earlier));
-        for (port, count) in counts(std::slice::from_ref(now)) {
-            if let Some(passed) = was.get(&port).and_then(|was| count.checked_sub(*was)) {
-                rates.insert(port, passed as f64 / seconds);
+        let was = readings(earlier);
+        for ((port, source), reading) in readings(now) {
+            let before = was.get(&(port.clone(), source));
+            if let Some((before, passed)) =
+                before.and_then(|before| Some((before, reading.count.checked_sub(before.count)?)))
+            {
+                *rates.entry(port).or_insert(0.0) += passed as f64 / seconds_between(before, &reading);
             }
         }
     }

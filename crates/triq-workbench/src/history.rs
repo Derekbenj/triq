@@ -3,8 +3,9 @@
 //! Nothing here is measured by the workbench. A runtime reports counters for
 //! each of its connections; two readings of them give what happened between.
 //! The machine may be read many times a second, and every reading makes a
-//! point. A rate is still counted over half a second: over a tenth, one
-//! sample more or less would look like ten a second.
+//! point. A rate is taken over the half second before it, and timed by when
+//! the samples were sent, so that a steady stream draws a steady line.
+use crate::graph::{Reading, seconds_between};
 use std::collections::{BTreeMap, VecDeque};
 use triq::Inventory;
 
@@ -20,7 +21,7 @@ pub struct Connection {
 pub struct Point {
     /// When the reading was taken: seconds since 1970, by the clock of the runtime that owns the input.
     pub at: f64,
-    /// Samples received per second, over the half second before.
+    /// Samples received per second over the half second before, timed by when they were sent.
     pub rate: f64,
     /// Samples lost per second, over the same time: sent, and gone before the input read them.
     pub lost: f64,
@@ -86,8 +87,7 @@ struct Trace {
 /// What a runtime said about a connection at one reading.
 struct Counters {
     pid: u32,
-    taken_ns: u64,
-    received: u64,
+    received: Reading,
     lost: u64,
 }
 
@@ -107,27 +107,30 @@ impl History {
                     // An input that is still waiting for its output has nothing to measure.
                     for source in input.sources.iter().filter(|source| source.connected) {
                         let connection = Connection { to: to.clone(), from: source.output.clone() };
-                        let (received, lost) = (source.received, source.lost);
-                        let now = Counters { pid: inventory.pid, taken_ns: inventory.taken_ns, received, lost };
+                        let (count, sent_ns, taken_ns) = (source.received, source.sent_ns, inventory.taken_ns);
+                        let received = Reading { count, sent_ns, taken_ns };
+                        let now = Counters { pid: inventory.pid, received, lost: source.lost };
                         let trace = self.traces.entry(connection.clone()).or_default();
                         // Counters that went back belong to a node or a program that started
                         // again, and nothing is counted across that.
                         let follows = |before: &Counters| {
-                            before.pid == now.pid && before.taken_ns < now.taken_ns && before.received <= received
+                            let Reading { count, taken_ns, .. } = before.received;
+                            before.pid == now.pid && taken_ns < received.taken_ns && count <= received.count
                         };
                         if !trace.recent.back().is_some_and(follows) {
                             trace.recent.clear();
                         }
                         // Count from the newest reading that is half a second old, or the oldest there is.
-                        while trace.recent.len() > 1 && now.taken_ns - trace.recent[1].taken_ns >= Self::SPAN {
+                        let old_enough = |before: &Counters| taken_ns - before.received.taken_ns >= Self::SPAN;
+                        while trace.recent.len() > 1 && old_enough(&trace.recent[1]) {
                             trace.recent.pop_front();
                         }
                         if let Some(before) = trace.recent.front() {
-                            let seconds = (now.taken_ns - before.taken_ns) as f64 / 1e9;
+                            let seconds = seconds_between(&before.received, &received);
                             trace.points.push_back(Point {
-                                at: now.taken_ns as f64 / 1e9,
-                                rate: (received - before.received) as f64 / seconds,
-                                lost: lost.saturating_sub(before.lost) as f64 / seconds,
+                                at: taken_ns as f64 / 1e9,
+                                rate: (count - before.received.count) as f64 / seconds,
+                                lost: now.lost.saturating_sub(before.lost) as f64 / seconds,
                                 gap: source.gap_us as f64 / 1000.0,
                                 latency: source.latency_us as f64 / 1000.0,
                             });

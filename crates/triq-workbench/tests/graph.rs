@@ -5,7 +5,7 @@ use scene::*;
 use std::time::Duration;
 use triq::prelude::*;
 use triq_workbench::egui::Rect;
-use triq_workbench::graph::{self, Card};
+use triq_workbench::graph::{self, Card, Reading};
 use triq_workbench::snarl::Snarl;
 
 #[derive(Ports)]
@@ -195,7 +195,8 @@ fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
     for _ in 0..30 {
         scene.imu.pose.send(Pose::default())?;
     }
-    let count = |port: &str| graph::counts(&scene.inventories())[port];
+    // How many samples the viewer has taken so far.
+    let count = |_: &str| scene.desk.inventory().nodes[0].inputs[0].sources[0].received;
     assert!(wait_for(|| {
         while scene.viewer.pose.recv().expect("recv").is_some() {}
         count(&shown) == 30
@@ -222,5 +223,56 @@ fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
     let mut restarted = newer.clone();
     restarted.iter_mut().for_each(|inventory| inventory.pid += 1);
     assert!(graph::rates(&after, &later(&after, restarted, [quarter; 2])).is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_rate_is_timed_by_when_the_samples_were_sent() -> triq::Result {
+    // 29 samples between two readings half a second apart. Their send times
+    // say sixty a second; the time between the readings would say 58.
+    let before = Reading { count: 100, sent_ns: 5_000_000_000, taken_ns: 9_000_000_000 };
+    let sent_ns = before.sent_ns + 29 * 1_000_000_000 / 60;
+    let now = Reading { count: 129, sent_ns, taken_ns: before.taken_ns + 500_000_000 };
+    assert!((29.0 / graph::seconds_between(&before, &now) - 60.0).abs() < 1e-6);
+    // A runtime too old to say when samples were sent is timed by its readings.
+    let old = |reading: Reading| Reading { sent_ns: 0, ..reading };
+    assert_eq!(29.0 / graph::seconds_between(&old(before), &old(now)), 58.0);
+    // With nothing new, the time that passed is the time between the readings.
+    let idle = Reading { count: 100, taken_ns: now.taken_ns, ..before };
+    assert_eq!(graph::seconds_between(&before, &idle), 0.5);
+
+    // The rates beside the pins are worked out this way: for an output, and for each output an input hears.
+    let scene = Scene::new()?;
+    scene.imu.pose.send(Pose::default())?;
+    assert!(wait_for(|| scene.viewer.pose.recv().expect("recv").is_some()));
+    let first = scene.inventories();
+    let mut second = first.clone();
+    for inventory in &mut second {
+        inventory.taken_ns += 500_000_000;
+        for node in &mut inventory.nodes {
+            for source in
+                node.inputs.iter_mut().flat_map(|input| &mut input.sources).filter(|source| source.sent_ns > 0)
+            {
+                (source.received, source.sent_ns) = (source.received + 29, source.sent_ns + 29 * 1_000_000_000 / 60);
+            }
+            for output in node.outputs.iter_mut().filter(|output| output.sent_ns > 0) {
+                (output.sent, output.sent_ns) = (output.sent + 29, output.sent_ns + 29 * 1_000_000_000 / 60);
+            }
+        }
+    }
+    let rates = graph::rates(&first, &second);
+    let (robot, desk) = (scene.robot.name(), scene.desk.name());
+    for port in [format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose")] {
+        assert!((rates[&port] - 60.0).abs() < 1e-6, "{port}: {}", rates[&port]);
+    }
+    assert_eq!(rates[&format!("{desk}/viewer/image")], 0.0, "an input still waiting for its output reads zero");
+
+    // And so are the points a chart draws.
+    let mut history = triq_workbench::history::History::default();
+    history.record(&first);
+    history.record(&second);
+    let filtered =
+        triq_workbench::history::Connection { to: format!("{robot}/smoother/raw"), from: format!("{robot}/imu/pose") };
+    assert!((history.latest(&filtered).expect("a point").rate - 60.0).abs() < 1e-6);
     Ok(())
 }
