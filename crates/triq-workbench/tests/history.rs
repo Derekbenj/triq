@@ -164,3 +164,40 @@ fn the_past_is_kept_for_an_hour() -> triq::Result {
     assert_eq!(oldest, almost[1].taken_ns as f64 / 1e9);
     Ok(())
 }
+
+#[test]
+fn a_line_is_cut_where_it_crosses_the_edges_of_what_is_in_view() -> triq::Result {
+    let scene = Scene::new()?;
+    let (filtered, _) = connections(&scene);
+    let mut history = History::default();
+    let mut reading = scene.inventories();
+    history.record(&reading);
+    // 80, 60, 20 and 40 samples a second, at two, four, six and eight seconds.
+    for samples in [160, 120, 40, 80] {
+        send(&scene, samples)?;
+        reading = later(&reading, scene.inventories(), [Duration::from_secs(2); 2]);
+        history.record(&reading);
+    }
+    let start = history.points(&filtered).next().unwrap().at - 2.0;
+    // Times as seconds from the start, values rounded: what a chart of the rate would draw.
+    let line = |since: f64, until: f64| -> Vec<(f64, f64)> {
+        let line = history.line(&filtered, Stat::Rate, start + since, start + until);
+        line.into_iter().map(|(at, value)| (((at - start) * 10.0).round() / 10.0, value.round())).collect()
+    };
+
+    assert_eq!(line(0.0, 10.0), [(2.0, 80.0), (4.0, 60.0), (6.0, 20.0), (8.0, 40.0)], "all of it");
+    // It comes in at the left edge on its way from one point to the next, and goes out at the right the same way.
+    assert_eq!(line(3.0, 8.0), [(3.0, 70.0), (4.0, 60.0), (6.0, 20.0), (8.0, 40.0)]);
+    assert_eq!(line(3.0, 7.0), [(3.0, 70.0), (4.0, 60.0), (6.0, 20.0), (7.0, 30.0)]);
+    assert_eq!(line(4.5, 5.5), [(4.5, 50.0), (5.5, 30.0)], "even with no point of its own in view");
+    assert_eq!(line(6.0, 6.0), [(6.0, 20.0)]);
+    // Before its first point and after its last there is nothing to draw.
+    assert_eq!(line(0.0, 1.5), []);
+    assert_eq!(line(7.0, 12.0), [(7.0, 30.0), (8.0, 40.0)]);
+    assert_eq!(line(9.0, 12.0), []);
+
+    // The newest point of a connection is at hand without looking through the others.
+    assert_eq!(history.latest(&filtered).map(|point| point.rate), Some(40.0));
+    assert_eq!(history.latest(&Connection { to: "nobody/x/y".into(), from: "nobody/a/b".into() }), None);
+    Ok(())
+}

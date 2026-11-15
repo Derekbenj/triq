@@ -161,6 +161,30 @@ impl History {
         self.traces.get(connection).into_iter().flat_map(|trace| &trace.points)
     }
 
+    /// The newest point of a connection.
+    pub fn latest(&self, connection: &Connection) -> Option<&Point> {
+        self.traces.get(connection)?.points.back()
+    }
+
+    /// One number of a connection between two times, as a chart draws it:
+    /// pairs of time and value, oldest first. Where the line crosses either
+    /// time on its way from one point to the next, it is cut there. The
+    /// points are found without looking through the whole hour.
+    pub fn line(&self, connection: &Connection, stat: Stat, since: f64, until: f64) -> Vec<(f64, f64)> {
+        let Some(Trace { points, .. }) = self.traces.get(connection) else { return Vec::new() };
+        let first = points.partition_point(|point| point.at < since);
+        let end = points.partition_point(|point| point.at <= until);
+        // Where the line is at `time`, if that lies between the point at `index` and the one before it.
+        let cut = |index: usize, time: f64| {
+            let (before, after) = (points.get(index.checked_sub(1)?)?, points.get(index)?);
+            let along = (time - before.at) / (after.at - before.at);
+            let value = stat.of(before) + (stat.of(after) - stat.of(before)) * along;
+            (before.at < time && time < after.at).then_some((time, value))
+        };
+        let in_view = points.range(first.min(end)..end).map(|point| (point.at, stat.of(point)));
+        cut(first, since).into_iter().chain(in_view).chain(cut(end, until)).collect()
+    }
+
     /// When the newest point of any connection was taken.
     pub fn newest(&self) -> Option<f64> {
         self.traces.values().filter_map(|trace| trace.points.back()).map(|point| point.at).reduce(f64::max)

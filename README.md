@@ -158,6 +158,8 @@ The `Charts` tab, beside `Graph`, shows what connections do over time:
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
 - The top and bottom of a chart are always the largest and the smallest value in view, written in
   its corners. Hover over a chart to read the lines at that moment.
+- A chart ends a moment before the present and moves on with every frame the window draws, so its
+  lines slide along evenly between one reading of the machine and the next.
 
 Nothing in it is measured by the workbench. A runtime reports counters for each of its connections,
 and the workbench reads them ten times a second and keeps what they say. So a line has ten points a

@@ -4,17 +4,22 @@
 //! times, so what a chart must show is known exactly.
 #[path = "support/scene.rs"]
 mod scene;
+#[path = "support/window.rs"]
+mod window;
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use scene::*;
 use std::time::Duration;
 use triq_workbench::charts::{self, Charts};
-use triq_workbench::egui::{self, PointerButton, accesskit::Role};
+use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::History;
+use window::drag;
 
 struct Shown {
     charts: Charts,
     history: History,
+    /// The time at the right edge of every chart.
+    now: f64,
 }
 
 type Window<'a> = Harness<'a, Shown>;
@@ -43,26 +48,6 @@ fn number<'a>(harness: &'a Window<'_>, input: &'a str, stat: &'a str) -> Node<'a
     connection.get_by_label(stat)
 }
 
-/// Press on something, move to somewhere else in a few steps, and let go.
-fn drag(harness: &mut Window<'_>, from: egui::Pos2, to: egui::Pos2) {
-    let button = |pos, pressed| egui::Event::PointerButton {
-        pos,
-        button: PointerButton::Primary,
-        pressed,
-        modifiers: egui::Modifiers::NONE,
-    };
-    harness.hover_at(from);
-    harness.run_steps(2);
-    harness.event(button(from, true));
-    harness.run_steps(2);
-    for step in 1..=6 {
-        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
-        harness.run_steps(1);
-    }
-    harness.event(button(to, false));
-    harness.run_steps(3);
-}
-
 fn shows(harness: &Window<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
 }
@@ -83,11 +68,13 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     let scene = Scene::new()?;
     let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
     let (filtered, viewed) = (format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose"));
-    let shown = Shown { charts: Charts::default(), history: history(&scene)? };
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let shown = Shown { charts: Charts::default(), history, now };
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
         |ui, shown: &mut Shown| {
             egui::Panel::top("controls").show(ui, |ui| ui.horizontal(|ui| shown.charts.controls(ui)));
-            shown.charts.show(ui, &shown.history);
+            shown.charts.show(ui, &shown.history, shown.now);
         },
         shown,
     );
@@ -111,10 +98,18 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         shows(&harness, "80.0") && shows(&harness, "20.0") && shows(&harness, "30 s ago") && shows(&harness, "now")
     );
 
-    // With only the last five seconds in view, the 80 of eight seconds ago is not among them.
+    // With only the last five seconds in view, the 80 of six seconds ago is not among them:
+    // the line comes in at the left edge at 70, on its way down to 60.
     set(&mut harness, 0, 5.0);
-    assert!(shows(&harness, "60.0") && shows(&harness, "20.0") && shows(&harness, "5 s ago"));
+    assert!(shows(&harness, "70.0") && shows(&harness, "20.0") && shows(&harness, "5 s ago"));
     assert!(!shows(&harness, "80.0"));
+
+    // A chart ends at the time it is told, not at its newest point. Three
+    // seconds on, the line has slid left: what is left in view runs from 20 to 40.
+    harness.state_mut().now += 3.0;
+    harness.run_steps(2);
+    assert!(shows(&harness, "40.0") && shows(&harness, "20.0") && !shows(&harness, "70.0"));
+    harness.state_mut().now -= 3.0;
 
     // A second number on the same chart: the chart reaches down to take it in.
     set(&mut harness, 0, 30.0);

@@ -56,14 +56,26 @@ pub fn seen(harness: &Bench<'_>, drawn: &Node<'_>) -> egui::Pos2 {
     view(harness) * drawn.rect().center()
 }
 
-pub fn press(harness: &mut Bench<'_>, at: egui::Pos2, button: PointerButton, pressed: bool) {
+pub fn press<State>(harness: &mut Harness<'_, State>, at: egui::Pos2, button: PointerButton, pressed: bool) {
     harness.event(egui::Event::PointerButton { pos: at, button, pressed, modifiers: egui::Modifiers::NONE });
     harness.run_steps(2);
 }
 
-pub fn click(harness: &mut Bench<'_>, at: egui::Pos2, button: PointerButton) {
+pub fn click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2, button: PointerButton) {
     harness.hover_at(at);
     harness.run_steps(2);
     press(harness, at, button, true);
     press(harness, at, button, false);
+}
+
+/// Press on something, move to somewhere else in a few steps, and let go.
+pub fn drag<State>(harness: &mut Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
+    harness.hover_at(from);
+    harness.run_steps(2);
+    press(harness, from, PointerButton::Primary, true);
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run_steps(1);
+    }
+    press(harness, to, PointerButton::Primary, false);
 }

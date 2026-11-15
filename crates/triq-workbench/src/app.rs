@@ -16,6 +16,7 @@ use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, Sn
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
 
 pub struct Workbench {
@@ -28,6 +29,12 @@ pub struct Workbench {
     /// Bring every card into view on the next frame that has any.
     fit: bool,
 }
+
+/// How far behind the present the right edge of a chart is, in seconds. The
+/// machine is read ten times a second, so the newest point is up to a tenth
+/// of a second old, and a little more by the time it has been fetched. Drawn
+/// this far behind, a line always has a point beyond the edge to run on to.
+const BEHIND: f64 = 0.15;
 
 /// What fills the window under the top row.
 #[derive(PartialEq)]
@@ -98,7 +105,13 @@ impl Workbench {
 
         egui::Panel::top("status").show(ui, |ui| self.status(ui, &inventories));
         if self.tab == Tab::Charts {
-            return self.charts.show(ui, &self.feed.history());
+            // A chart ends a moment before the present, and the present moves on. While
+            // there is a line to slide along, the window is drawn again as soon as it can be.
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+            if !self.charts.is_empty() {
+                ui.ctx().request_repaint();
+            }
+            return self.charts.show(ui, &self.feed.history(), now - BEHIND);
         }
         egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
         let rates = self.feed.rates();

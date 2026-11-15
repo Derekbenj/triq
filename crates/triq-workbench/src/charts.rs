@@ -4,6 +4,9 @@
 //! dragged onto a chart is drawn there as a line over time; several can share
 //! a chart, and there can be several charts. The top and bottom of a chart
 //! are always the largest and the smallest value in view.
+//!
+//! A chart ends at a time it is told, which the window moves on with every
+//! frame it draws: the lines slide along evenly, however often points arrive.
 use crate::colors;
 use crate::history::{Connection, History, Stat};
 use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder};
@@ -50,14 +53,20 @@ impl Charts {
         }
     }
 
-    /// Draw the list of connections and the charts.
-    pub fn show(&mut self, ui: &mut Ui, history: &History) {
+    /// True when no chart has a line on it: nothing moves, so nothing needs drawing again.
+    pub fn is_empty(&self) -> bool {
+        self.charts.iter().all(Vec::is_empty)
+    }
+
+    /// Draw the list of connections and the charts. `now` is the time at the
+    /// right edge of every chart, in seconds since 1970.
+    pub fn show(&mut self, ui: &mut Ui, history: &History, now: f64) {
         egui::Panel::left("connections").default_size(300.0).show(ui, |ui| connections(ui, history));
-        egui::CentralPanel::default().show(ui, |ui| self.grid(ui, history));
+        egui::CentralPanel::default().show(ui, |ui| self.grid(ui, history, now));
     }
 
     /// The charts, in rows of `across`, sharing the room there is.
-    fn grid(&mut self, ui: &mut Ui, history: &History) {
+    fn grid(&mut self, ui: &mut Ui, history: &History, now: f64) {
         let room = ui.available_rect_before_wrap();
         let across = self.across.min(self.charts.len());
         let down = self.charts.len().div_ceil(across);
@@ -71,7 +80,7 @@ impl Charts {
                 let (chart, landed) = ui.dnd_drop_zone::<Trace, bool>(egui::Frame::canvas(ui.style()), |ui| {
                     ui.set_min_size(ui.available_size());
                     let remove = names(ui, traces, history, alone);
-                    lines(ui, traces, history, seconds);
+                    lines(ui, traces, history, now - seconds, now);
                     remove
                 });
                 if let Some(trace) = landed {
@@ -100,7 +109,7 @@ fn connections(ui: &mut Ui, history: &History) {
             ui.vertical(|ui| {
                 ui.strong(&connection.to);
                 ui.weak(format!("from {}", connection.from));
-                let newest = history.points(connection).last();
+                let newest = history.latest(connection);
                 for stat in Stat::ALL {
                     let trace = Trace { connection: connection.clone(), stat };
                     let id = egui::Id::unique(("number", &connection.to, &connection.from, stat.name()));
@@ -140,7 +149,7 @@ fn names(ui: &mut Ui, traces: &mut Vec<Trace>, history: &History, alone: bool) -
             ui.painter().rect_filled(Rect::from_center_size(dash.center(), egui::vec2(12.0, 3.0)), 0.0, ink);
             let name = ui.label(format!("{} {}", trace.connection.to, trace.stat.name()));
             name.on_hover_text(format!("from {}", trace.connection.from));
-            if let Some(point) = history.points(&trace.connection).last() {
+            if let Some(point) = history.latest(&trace.connection) {
                 ui.weak(written(trace.stat.of(point)) + trace.stat.unit());
             }
             if ui.small_button("×").on_hover_text("Take this line off the chart").clicked() {
@@ -161,18 +170,15 @@ fn names(ui: &mut Ui, traces: &mut Vec<Trace>, history: &History, alone: bool) -
     remove
 }
 
-/// The lines of a chart, over the last `seconds`. The chart reaches from the
-/// smallest value in view at the bottom to the largest at the top.
-fn lines(ui: &mut Ui, traces: &[Trace], history: &History, seconds: f64) {
+/// The lines of a chart, from the time `since` at its left edge to `until` at
+/// its right. The chart reaches from the smallest value in view at the bottom
+/// to the largest at the top.
+fn lines(ui: &mut Ui, traces: &[Trace], history: &History, since: f64, until: f64) {
     let (whole, chart) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
     // Under the lines, a row that says what time the left and right edges are.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
-    let Some(newest) = history.newest() else { return };
-    let since = newest - seconds;
-    let in_view = |trace: &Trace| -> Vec<(f64, f64)> {
-        let points = history.points(&trace.connection).filter(|point| point.at >= since);
-        points.map(|point| (point.at, trace.stat.of(point))).collect()
-    };
+    let seconds = until - since;
+    let in_view = |trace: &Trace| history.line(&trace.connection, trace.stat, since, until);
     let lines: Vec<Vec<(f64, f64)>> = traces.iter().map(in_view).collect();
     let Some((low, high)) = extent(lines.iter().flatten().map(|(_, value)| *value)) else { return };
 
@@ -207,7 +213,7 @@ fn lines(ui: &mut Ui, traces: &[Trace], history: &History, seconds: f64) {
                     ui.label(format!("{name} {} {}{}", stat.name(), written(*value), stat.unit()));
                 }
             }
-            ui.weak(format!("{:.1} s ago", newest - at));
+            ui.weak(format!("{:.1} s ago", until - at));
         });
     }
 }

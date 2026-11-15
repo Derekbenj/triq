@@ -9,7 +9,7 @@ use scene::*;
 use triq::{NodeInfo, NodeState};
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
-use window::{Bench, around, open, until};
+use window::{Bench, around, drag, open, until};
 
 fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
@@ -80,6 +80,24 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     });
     assert!(listed, "the filter's connection is listed, with a rate");
     assert!(shows(&harness, "Drag a number here.") && !shows(&harness, "Tidy"), "charts take the place of the graph");
+
+    // With nothing on a chart, nothing moves, and the window waits for something new before it draws again.
+    harness.run_steps(5);
+    assert!(!harness.ctx.has_requested_repaint());
+    // Drag the rate onto the chart. A chart ends at the present, and the present moves on:
+    // the window keeps drawing, so that the line slides along evenly between one reading and the next.
+    // Other programs' connections may be listed first: scroll down to this one.
+    let rate = |harness: &Bench<'_>| {
+        let connection = harness.get_by_label(&filtered).parent().expect("its part of the list");
+        connection.get_by_label("rate").rect().center()
+    };
+    harness.get_by_label(&filtered).parent().expect("its part of the list").get_by_label("rate").scroll_to_me();
+    harness.run_steps(3);
+    let (rate, chart) = (rate(&harness), harness.get_by_label("Drag a number here.").rect().center());
+    drag(&mut harness, rate, chart);
+    assert!(until(&mut harness, |harness| shows(harness, &format!("{filtered} rate"))), "the chart names its line");
+    harness.run_steps(5);
+    assert!(harness.ctx.has_requested_repaint());
     click(&mut harness, "Graph");
     assert!(until(&mut harness, |harness| shows(harness, "Tidy") && !shows(harness, "Drag a number here.")));
 
