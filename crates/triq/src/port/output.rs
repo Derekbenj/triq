@@ -40,6 +40,10 @@ pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
     service: PubSub<T, H>,
     seq: AtomicU64,
     sent: AtomicU64,
+    /// When the newest sample was sent. A report reads this and `sent` one
+    /// after the other; a sample sent between the two reads is counted and
+    /// not yet timed, or timed and not yet counted, until the next report.
+    sent_ns: AtomicU64,
     undelivered: AtomicU64,
 }
 
@@ -179,6 +183,7 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
             service,
             seq: AtomicU64::new(0),
             sent: AtomicU64::new(0),
+            sent_ns: AtomicU64::new(0),
             undelivered: AtomicU64::new(0),
         })
     }
@@ -187,6 +192,7 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
         let stamp = Stamp { seq: self.seq.fetch_add(1, Ordering::Relaxed) + 1, sent_ns: now_ns() };
         *loan.user_header_mut() = Headed { stamp, header };
         self.sent.fetch_add(1, Ordering::Relaxed);
+        self.sent_ns.store(stamp.sent_ns, Ordering::Relaxed);
         let delivered = match loan.send() {
             Ok(delivered) => delivered,
             // A reliable output gave up on one input; the others have the sample.
@@ -211,6 +217,7 @@ impl<T: Payload + ?Sized, H: Header> OutputPort for Shared<T, H> {
             service: self.name.clone(),
             subscribers: self.service.dynamic_config().number_of_subscribers(),
             sent: self.sent.load(Ordering::Relaxed),
+            sent_ns: self.sent_ns.load(Ordering::Relaxed),
             undelivered: self.undelivered.load(Ordering::Relaxed),
         }
     }

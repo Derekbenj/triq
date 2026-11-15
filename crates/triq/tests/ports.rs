@@ -2,7 +2,7 @@
 #[path = "support/helpers.rs"]
 mod helpers;
 use helpers::*;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use triq::prelude::*;
 
 #[derive(Ports)]
@@ -154,6 +154,44 @@ fn a_connection_reports_the_longest_gap_between_its_samples_of_late() -> triq::R
         send_after(step)?;
     }
     assert!(gap() >= step && gap() < hole, "{:?}", gap());
+    Ok(())
+}
+
+#[test]
+fn both_ends_of_a_connection_say_when_its_newest_sample_was_sent() -> triq::Result {
+    let rt = Runtime::new(&unique("sent"))?;
+    let source: Source = rt.attach("source")?;
+    let sink: Sink = rt.attach("sink")?;
+    rt.connect("source/out", "sink/input")?;
+    let now = || SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64;
+    // What the output says of itself, and what the input says of what it hears from it.
+    let ends = || {
+        let inventory = rt.inventory();
+        let node = |name: &str| inventory.nodes.iter().find(|node| node.name == name).cloned().expect("the node");
+        (node("source").outputs[0].clone(), node("sink").inputs[0].sources[0].clone())
+    };
+    let (output, input) = ends();
+    assert_eq!((output.sent_ns, input.sent_ns), (0, 0), "nothing has been sent");
+
+    let before = now();
+    source.out.send(pose(1.0))?;
+    let (output, input) = ends();
+    assert!((before..=now()).contains(&output.sent_ns), "the output says when it last sent");
+    assert_eq!(input.sent_ns, 0, "the input has not taken the sample yet");
+
+    // The time of sending travels with the sample, so the input can say it too.
+    let stamp = sink.input.recv()?.expect("the sample").stamp();
+    let (output, input) = ends();
+    assert_eq!((output.sent_ns, input.sent_ns), (stamp.sent_ns, stamp.sent_ns));
+    // With the latency beside it, that is also when the input had the sample.
+    let had = input.sent_ns + input.latency_us * 1000;
+    assert!((stamp.sent_ns..=now()).contains(&had));
+
+    source.out.send(pose(2.0))?;
+    assert!(sink.input.recv()?.is_some());
+    let (newer_output, newer_input) = ends();
+    assert!(newer_output.sent_ns > output.sent_ns, "a second sample moves both on");
+    assert_eq!(newer_input.sent_ns, newer_output.sent_ns);
     Ok(())
 }
 

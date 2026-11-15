@@ -55,7 +55,7 @@ struct Source<T: Payload + ?Sized, H: Header> {
     /// Why the last attempt to link failed, other than the output not existing.
     problem: Option<String>,
     last_seq: u64,
-    /// When the sample before was sent, by its stamp.
+    /// When the newest sample was sent, by its stamp. Zero before the first.
     last_sent_ns: u64,
     received: u64,
     lost: u64,
@@ -349,6 +349,7 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
                 problem: source.problem.clone(),
                 received: source.received,
                 lost: source.lost,
+                sent_ns: source.last_sent_ns,
                 latency_us: source.latency_ns / 1000,
                 gap_us: source.gap_ns.largest(now_ns()) / 1000,
             };

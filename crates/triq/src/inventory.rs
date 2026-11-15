@@ -93,7 +93,14 @@ pub struct SourceInfo {
     pub received: u64,
     /// Samples overwritten in the queue before the input read them.
     pub lost: u64,
-    /// Send-to-receive time of the most recent sample.
+    /// When the most recent sample was sent, in nanoseconds since 1970 by the
+    /// sender's clock. Two reports give an exact rate: the samples received
+    /// between them, over the time between these. Zero until one arrives,
+    /// and from a runtime too old to say.
+    #[serde(default)]
+    pub sent_ns: u64,
+    /// Send-to-receive time of the most recent sample. Added to `sent_ns`, it
+    /// is when the input had the sample.
     pub latency_us: u64,
     /// The longest time from one sample to the next, by when they were sent,
     /// over the last half second to second: read at least twice a second, no
@@ -111,6 +118,10 @@ pub struct OutputInfo {
     pub service: String,
     pub subscribers: usize,
     pub sent: u64,
+    /// When the most recent sample was sent, in nanoseconds since 1970 by this
+    /// program's clock. Zero until one is, and from a runtime too old to say.
+    #[serde(default)]
+    pub sent_ns: u64,
     /// Sends a reliable output gave up on.
     pub undelivered: u64,
 }
