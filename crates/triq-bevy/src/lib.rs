@@ -2,14 +2,20 @@
 //!
 //! This file holds what other programs need in order to talk to the scene:
 //! the messages and the settings. `rig.rs` is how a controller moves the rig.
-//! With the `engine` feature, `scene.rs` is the Bevy program itself.
+//! With the `engine` feature, `scene.rs` is the Bevy program itself. With the
+//! `viewer` feature, `viewer.rs` draws camera frames in any program that has
+//! an egui window.
 mod rig;
 #[cfg(feature = "engine")]
 mod scene;
+#[cfg(feature = "viewer")]
+mod viewer;
 
 pub use rig::RigState;
 #[cfg(feature = "engine")]
 pub use scene::{CAMERA, RIG, app};
+#[cfg(feature = "viewer")]
+pub use viewer::{FRAME_VIEW, FrameViewPorts, FrameViews};
 
 use serde::{Deserialize, Serialize};
 use triq::prelude::*;
