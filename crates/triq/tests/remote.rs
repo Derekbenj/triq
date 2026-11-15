@@ -62,7 +62,8 @@ fn discover_finds_running_runtimes_and_what_they_offer() -> triq::Result {
 
     let found = triq::discover()?;
     let inventory = found.iter().find(|inventory| inventory.runtime == rt.name()).expect("the runtime is listed");
-    assert_eq!(*inventory, rt.inventory(), "a remote view is the runtime's own view");
+    // Apart from when each was taken, a remote view is the runtime's own view.
+    assert_eq!(*inventory, triq::Inventory { taken_ns: inventory.taken_ns, ..rt.inventory() });
     assert_eq!(inventory.factories[0].kind, "gain");
     assert_eq!(inventory.pools[0].name, "dsp");
     assert_eq!(inventory.nodes[0].name, "bench");

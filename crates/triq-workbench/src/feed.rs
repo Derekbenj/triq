@@ -83,18 +83,18 @@ impl Feed {
         thread::Builder::new().name("workbench-watch".into()).spawn({
             let (shared, redraw) = (shared.clone(), redraw.clone());
             move || {
-                let mut reading = (Instant::now(), BTreeMap::new());
+                // The reading that rates are measured from, and when it was made.
+                let mut reading = (Instant::now(), Arc::new(Vec::new()));
                 while !shared.stop.load(Ordering::Acquire) {
                     if let Ok(found) = triq::discover() {
+                        let found = Arc::new(found);
                         // Changes can be announced in quick succession, and a
                         // rate measured over a few milliseconds would mean little.
-                        let elapsed = reading.0.elapsed();
-                        if elapsed >= REFRESH / 2 {
-                            let counts = graph::counts(&found);
-                            *shared.rates.lock().unwrap() = Arc::new(graph::rates(&reading.1, &counts, elapsed));
-                            reading = (Instant::now(), counts);
+                        if reading.0.elapsed() >= REFRESH / 2 {
+                            *shared.rates.lock().unwrap() = Arc::new(graph::rates(&reading.1, &found));
+                            reading = (Instant::now(), found.clone());
                         }
-                        *shared.inventories.lock().unwrap() = Arc::new(found);
+                        *shared.inventories.lock().unwrap() = found;
                         redraw();
                     }
                     let _ = watch.wait(REFRESH);

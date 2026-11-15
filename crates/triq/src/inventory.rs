@@ -16,6 +16,11 @@ pub struct Inventory {
     /// Moves on whenever the runtime's nodes, factories, connections or settings
     /// change. Counters moving is not a change.
     pub revision: u64,
+    /// When the runtime read its counters for this report, in nanoseconds
+    /// since 1970 by its own clock. Two reports and the time between them
+    /// give rates. Zero from a runtime too old to say.
+    #[serde(default)]
+    pub taken_ns: u64,
     pub pools: Vec<PoolInfo>,
     /// The kinds of node this runtime can be asked to create. Sorted by kind.
     pub factories: Vec<FactoryInfo>,

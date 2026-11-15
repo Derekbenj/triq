@@ -385,6 +385,18 @@ fn a_registered_factory_spawns_nodes_by_kind() -> triq::Result {
 }
 
 #[test]
+fn an_inventory_says_when_it_was_taken() -> triq::Result {
+    // Counters read twice give a rate only with the time between the readings,
+    // and only the runtime knows when it read them.
+    let rt = Runtime::new(&unique("taken"))?;
+    let first = rt.inventory();
+    std::thread::sleep(Duration::from_millis(20));
+    let between = Duration::from_nanos(rt.inventory().taken_ns - first.taken_ns);
+    assert!((Duration::from_millis(20)..Duration::from_millis(500)).contains(&between), "{between:?}");
+    Ok(())
+}
+
+#[test]
 fn the_inventory_describes_pools_and_nodes() -> triq::Result {
     let rt = Runtime::builder(&unique("describe")).pool("dsp", 2).start()?;
     rt.spawn::<Doubler>("doubler", Placement::pool("dsp"), ())?;

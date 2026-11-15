@@ -6,6 +6,7 @@ pub use local::{Local, LocalFactory};
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
 use crate::inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, shown};
+use crate::message::now_ns;
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
 use crate::raw::{IpcNode, Notifier, Svc, quiet_logs};
@@ -593,6 +594,7 @@ impl Inner {
             runtime: self.name.clone(),
             pid: std::process::id(),
             revision: self.revision.load(Ordering::Acquire),
+            taken_ns: now_ns(),
             pools: pools
                 .map(|(name, pool)| PoolInfo { name: name.clone(), threads: pool.threads, shared: pool.shared })
                 .collect(),

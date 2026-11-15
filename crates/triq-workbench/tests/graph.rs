@@ -150,29 +150,56 @@ fn tidying_puts_every_card_right_of_what_feeds_it() -> triq::Result {
     Ok(())
 }
 
+/// Pretend each runtime took its second reading this long after its first.
+fn later(before: &[triq::Inventory], mut after: Vec<triq::Inventory>, elapsed: [Duration; 2]) -> Vec<triq::Inventory> {
+    for ((after, before), elapsed) in after.iter_mut().zip(before).zip(elapsed) {
+        after.taken_ns = before.taken_ns + elapsed.as_nanos() as u64;
+    }
+    after
+}
+
 #[test]
 fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
     let scene = Scene::new()?;
-    let robot = scene.robot.name();
-    let (sent, received, passed_on) =
-        (format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"), format!("{robot}/smoother/smooth"));
-    let before = graph::counts(&scene.inventories());
-    assert_eq!((before[&sent], before[&received]), (0, 0), "every port is counted, by its full name");
+    let (robot, desk) = (scene.robot.name(), scene.desk.name());
+    let (sent, received, passed_on, shown) = (
+        format!("{robot}/imu/pose"),
+        format!("{robot}/smoother/raw"),
+        format!("{robot}/smoother/smooth"),
+        format!("{desk}/viewer/pose"),
+    );
+    let before = scene.inventories();
+    assert!(graph::rates(&before, &before).is_empty(), "one reading gives no rate");
 
     for _ in 0..30 {
         scene.imu.pose.send(Pose::default())?;
     }
-    assert!(wait_for(|| graph::counts(&scene.inventories())[&passed_on] == 30));
-    let after = graph::counts(&scene.inventories());
-    let rates = graph::rates(&before, &after, Duration::from_millis(500));
-    assert_eq!((rates[&sent], rates[&received], rates[&passed_on]), (60.0, 60.0, 60.0));
+    let count = |port: &str| graph::counts(&scene.inventories())[port];
+    assert!(wait_for(|| {
+        while scene.viewer.pose.recv().expect("recv").is_some() {}
+        count(&shown) == 30
+    }));
 
-    // A port that was not there the first time has no rate yet. A counter
-    // that went back belongs to a program that restarted: no rate either.
+    // Every runtime says when it read its own counters, and no two read them
+    // at the same moment. Here the desk (listed first) took a quarter of a
+    // second between its readings and the robot half a second.
+    let quarter = Duration::from_millis(250);
+    let after = later(&before, scene.inventories(), [quarter, 2 * quarter]);
+    let rates = graph::rates(&before, &after);
+    assert_eq!((rates[&sent], rates[&received], rates[&passed_on]), (60.0, 60.0, 60.0));
+    assert_eq!(rates[&shown], 120.0);
+
+    // A port that was not there the first time has no rate yet.
     let late: ImuPorts = scene.robot.attach("late")?;
     late.pose.send(Pose::default())?;
-    let later = graph::counts(&scene.inventories());
-    assert!(!graph::rates(&after, &later, Duration::from_millis(500)).contains_key(&format!("{robot}/late/pose")));
-    assert!(!graph::rates(&after, &before, Duration::from_millis(500)).contains_key(&sent));
+    let newer = later(&after, scene.inventories(), [quarter; 2]);
+    let rates = graph::rates(&after, &newer);
+    assert!(!rates.contains_key(&format!("{robot}/late/pose")));
+    assert_eq!(rates[&sent], 0.0, "and one that has gone quiet reads zero");
+
+    // A program that started again counts from nothing: its old readings say nothing about its new ones.
+    let mut restarted = newer.clone();
+    restarted.iter_mut().for_each(|inventory| inventory.pid += 1);
+    assert!(graph::rates(&after, &later(&after, restarted, [quarter; 2])).is_empty());
     Ok(())
 }

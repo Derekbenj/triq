@@ -3,7 +3,6 @@
 use eframe::egui::{Color32, Pos2, Vec2, ecolor::Hsva, pos2, vec2};
 use egui_snarl::{InPinId, OutPinId, Snarl};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::time::Duration;
 use triq::{Direction, Inventory, MessageType, NodeInfo, PortSpec};
 
 /// One node of one runtime, as drawn.
@@ -105,7 +104,7 @@ pub fn sync(snarl: &mut Snarl<Card>, inventories: &[Inventory]) {
 
 const LEFT: f32 = 40.0;
 const TOP: f32 = 40.0;
-const COLUMN: f32 = 320.0;
+const COLUMN: f32 = 390.0;
 const GAP: f32 = 36.0;
 
 /// Lay every card out afresh, each one column right of whatever feeds it.
@@ -144,7 +143,7 @@ fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
 
 /// Roughly how large a card is drawn; used to lay cards out and to frame the view.
 pub fn size(card: &Card) -> Vec2 {
-    vec2(250.0, 56.0 + 30.0 * card.node.inputs.len().max(card.node.outputs.len()) as f32)
+    vec2(320.0, 56.0 + 30.0 * card.node.inputs.len().max(card.node.outputs.len()) as f32)
 }
 
 /// How many samples each port has handled so far, by `runtime/node/port`:
@@ -165,19 +164,24 @@ pub fn counts(inventories: &[Inventory]) -> BTreeMap<String, u64> {
     counts
 }
 
-/// Samples per second through every port, from two readings of the counters
-/// taken `elapsed` apart. A port that is new has no rate yet, and neither has
-/// one whose counter went back because its program started again.
-pub fn rates(
-    before: &BTreeMap<String, u64>,
-    after: &BTreeMap<String, u64>,
-    elapsed: Duration,
-) -> BTreeMap<String, f64> {
-    let rate = |(port, now): (&String, &u64)| {
-        let passed = now.checked_sub(*before.get(port)?)?;
-        Some((port.clone(), passed as f64 / elapsed.as_secs_f64()))
-    };
-    after.iter().filter_map(rate).collect()
+/// Samples per second through every port, from two readings of the machine.
+/// Each runtime's counters are divided by the time that runtime says passed
+/// between its own two readings. A port that is new has no rate yet, and
+/// neither has anything in a program that started again in between.
+pub fn rates(before: &[Inventory], after: &[Inventory]) -> BTreeMap<String, f64> {
+    let mut rates = BTreeMap::new();
+    for now in after {
+        let earlier = before.iter().find(|earlier| earlier.runtime == now.runtime && earlier.pid == now.pid);
+        let Some(earlier) = earlier.filter(|earlier| earlier.taken_ns < now.taken_ns) else { continue };
+        let seconds = (now.taken_ns - earlier.taken_ns) as f64 / 1e9;
+        let was = counts(std::slice::from_ref(earlier));
+        for (port, count) in counts(std::slice::from_ref(now)) {
+            if let Some(passed) = was.get(&port).and_then(|was| count.checked_sub(*was)) {
+                rates.insert(port, passed as f64 / seconds);
+            }
+        }
+    }
+    rates
 }
 
 /// Whether an output may be wired to an input: iceoryx2 will insist on the same message type.
