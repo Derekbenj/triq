@@ -1,7 +1,13 @@
 //! What a runtime reports about itself. Plain data, sent between programs as JSON.
-use crate::{Placement, PortSpec};
+use crate::{Placement, PortSpec, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Settings as the inventory shows them. Going through text keeps an `f32` of
+/// 0.2 reading 0.2; converted directly it would read 0.20000000298023224.
+pub(crate) fn shown<A: Serialize>(params: &A) -> Result<Value> {
+    Ok(serde_json::from_str(&serde_json::to_string(params)?)?)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inventory {

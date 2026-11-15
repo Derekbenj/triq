@@ -153,7 +153,7 @@ pub fn compatible(output: &PortSpec, input: &PortSpec) -> bool {
 
 /// One colour per message type, the same on every machine and in every session.
 pub fn color(message: &MessageType) -> Color32 {
-    let text = format!("{}{}{}", message.name, message.size, message.slice);
+    let text = format!("{message}{}", message.size);
     let hash =
         text.bytes().fold(0xcbf29ce484222325u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3));
     Hsva::new((hash % 360) as f32 / 360.0, 0.62, 0.86, 1.0).into()

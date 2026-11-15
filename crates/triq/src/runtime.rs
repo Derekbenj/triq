@@ -5,7 +5,7 @@ pub use local::{Local, LocalFactory};
 
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
-use crate::inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo};
+use crate::inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, shown};
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
 use crate::raw::{IpcNode, Notifier, Svc, quiet_logs};
@@ -206,7 +206,7 @@ impl Runtime {
     pub fn register<N: Node>(&self, kind: &str) -> Result {
         let factory = Factory {
             ports: N::Ports::spec(),
-            params: serde_json::to_value(N::Params::default())?,
+            params: shown(&N::Params::default())?,
             info: Mutex::default(),
             local: false,
             spawn: Box::new({
@@ -276,7 +276,8 @@ impl Runtime {
     }
 
     /// Record that something is wrong with a node the application runs. It
-    /// shows in the inventory as the node's last error.
+    /// shows in the inventory as the node's last error. The same problem
+    /// reported again is only counted, so it may be reported as often as it happens.
     pub fn report(&self, node: &str, problem: &str) -> Result {
         let mut state = self.inner.state.lock().unwrap();
         let record = state.nodes.get_mut(node).ok_or_else(|| Error::Unknown(format!("node {node:?}")))?;
@@ -286,9 +287,12 @@ impl Runtime {
             )));
         }
         record.errors += 1;
+        let news = record.last_error.as_deref() != Some(problem);
         record.last_error = Some(problem.into());
         drop(state);
-        self.inner.changed();
+        if news {
+            self.inner.changed();
+        }
         Ok(())
     }
 
@@ -324,7 +328,7 @@ impl Inner {
     fn spawn<N: Node>(self: &Arc<Self>, name: &str, kind: &str, placement: Placement, params: N::Params) -> Result {
         // Everything that can fail cheaply comes first, so nothing is left behind.
         let executor = self.executor(name, &placement)?;
-        let shown = serde_json::to_value(&params)?;
+        let shown = shown(&params)?;
         let node = N::new(params)?;
         let (ports, inputs) = self.bind::<N::Ports>(name, kind, Some(placement), shown, None)?;
         let slot = Arc::new(Slot::new(node, ports, inputs));

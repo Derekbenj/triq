@@ -10,7 +10,7 @@ use iceoryx2::prelude::{AllocationStrategy, BackpressureStrategy, IceoryxSend, P
 use iceoryx2::service::builder::publish_subscribe::PublishSubscribeOpenError;
 use iceoryx2::service::static_config::message_type_details::{TypeDetail, TypeVariant};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Written by the sending output into the header of every sample.
@@ -55,6 +55,14 @@ pub struct MessageType {
     pub slice: bool,
     /// The name of the port's header type; empty when it has none.
     pub header: String,
+}
+
+/// As a person would write it: `Pose`, `u8[]`, or `u8[] + Frame` with a header.
+impl Display for MessageType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}{}", self.name, if self.slice { "[]" } else { "" })?;
+        if self.header.is_empty() { Ok(()) } else { write!(f, " + {}", self.header) }
+    }
 }
 
 /// A message type: any `T: ZeroCopySend`, or a slice `[T]` of it.

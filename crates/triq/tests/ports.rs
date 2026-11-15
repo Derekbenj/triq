@@ -402,6 +402,8 @@ fn a_header_is_part_of_the_message_type() -> triq::Result {
     assert_eq!(HeadedCamera::spec()[0].message.header, "FrameInfo");
     assert_eq!(Camera::spec()[0].message.header, "", "no header unless one is named");
     assert_ne!(HeadedCamera::spec()[0].message, Camera::spec()[0].message);
+    assert_eq!(HeadedCamera::spec()[0].message.to_string(), "u8[] + FrameInfo");
+    assert_eq!(HeadedCamera::spec()[1].message.to_string(), "f32 + FrameInfo");
 
     let rt = Runtime::new(&unique("headers"))?;
     let _camera: HeadedCamera = rt.attach("camera")?;

@@ -352,8 +352,8 @@ fn wire(feed: &Feed, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
             "{} and {} carry different messages: {} and {}",
             source.output(from.output),
             sink.input(to.input),
-            message(output),
-            message(input)
+            output.message,
+            input.message
         ));
         return;
     }
@@ -498,11 +498,7 @@ fn pretty(value: &Value) -> String {
 
 /// `name: Type`, as written beside a pin.
 fn port(spec: &PortSpec) -> String {
-    format!("{}: {}", spec.name, message(spec))
-}
-
-fn message(spec: &PortSpec) -> String {
-    format!("{}{}", spec.message.name, if spec.message.slice { "[]" } else { "" })
+    format!("{}: {}", spec.name, spec.message)
 }
 
 fn state(state: &NodeState) -> String {

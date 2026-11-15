@@ -1,4 +1,5 @@
 //! A node: your code, plus the ports it talks through.
+use crate::inventory::shown;
 use crate::port::InputPort;
 use crate::raw::Listener;
 use crate::{Error, Ports, Result};
@@ -139,7 +140,7 @@ impl<N: Node> Body for Owned<N> {
     }
     fn set_params(&mut self, params: Value) -> Result<Value> {
         let params: N::Params = serde_json::from_value(params)?;
-        let shown = serde_json::to_value(&params)?;
+        let shown = shown(&params)?;
         self.node.set_params(params)?;
         Ok(shown)
     }

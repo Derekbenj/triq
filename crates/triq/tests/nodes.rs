@@ -315,6 +315,50 @@ fn params_configure_a_node_and_can_change_while_it_runs() -> triq::Result {
     Ok(())
 }
 
+/// Settings with a fraction, as most have.
+#[derive(Debug, Serialize, Deserialize)]
+struct FadeParams {
+    level: f32,
+}
+
+impl Default for FadeParams {
+    fn default() -> Self {
+        Self { level: 0.2 }
+    }
+}
+
+struct Fade;
+
+impl Node for Fade {
+    type Ports = Through;
+    type Params = FadeParams;
+    fn new(_: FadeParams) -> triq::Result<Self> {
+        Ok(Fade)
+    }
+    fn set_params(&mut self, _: FadeParams) -> triq::Result {
+        Ok(())
+    }
+    fn run(&mut self, _: &mut Through) -> triq::Result {
+        Ok(())
+    }
+}
+
+#[test]
+fn settings_read_as_they_were_written() -> triq::Result {
+    // An `f32` of 0.2 is not exactly 0.2, and must not be shown as 0.20000000298023224.
+    let rt = Runtime::new(&unique("fractions"))?;
+    rt.register::<Fade>("fade")?;
+    assert_eq!(rt.inventory().factories[0].params, json!({ "level": 0.2 }));
+
+    rt.spawn::<Fade>("typed", Placement::Dedicated, FadeParams { level: 0.7 })?;
+    rt.spawn_kind("fade", "asked", Placement::Dedicated, json!({ "level": 0.1 }))?;
+    let shown = |name: &str| rt.inventory().nodes.into_iter().find(|node| node.name == name).unwrap().params;
+    assert_eq!((shown("typed"), shown("asked")), (json!({ "level": 0.7 }), json!({ "level": 0.1 })));
+    rt.set_params("typed", json!({ "level": 0.3 }))?;
+    assert_eq!(shown("typed"), json!({ "level": 0.3 }));
+    Ok(())
+}
+
 #[test]
 fn a_registered_factory_spawns_nodes_by_kind() -> triq::Result {
     let rt = Runtime::new(&unique("factory"))?;

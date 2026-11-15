@@ -163,6 +163,29 @@ struct CameraParams {
     fps: u32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct LensParams {
+    zoom: f32,
+}
+
+impl Default for LensParams {
+    fn default() -> Self {
+        Self { zoom: 1.1 }
+    }
+}
+
+#[test]
+fn a_local_factory_shows_settings_as_they_were_written() -> triq::Result {
+    let rt = Runtime::new(&unique("lens"))?;
+    let _lenses = rt.local_factory::<CameraPorts, LensParams>("lens")?;
+    assert_eq!(rt.inventory().factories[0].params, json!({ "zoom": 1.1 }));
+    rt.spawn_kind("lens", "wide", Placement::Dedicated, json!({ "zoom": 0.6 }))?;
+    assert_eq!(rt.inventory().nodes[0].params, json!({ "zoom": 0.6 }));
+    rt.set_params("wide", json!({ "zoom": 0.7 }))?;
+    assert_eq!(rt.inventory().nodes[0].params, json!({ "zoom": 0.7 }));
+    Ok(())
+}
+
 #[test]
 fn a_local_factory_hands_ports_to_the_application() -> triq::Result {
     let rt = Runtime::new(&unique("local"))?;
@@ -208,6 +231,13 @@ fn a_local_factory_hands_ports_to_the_application() -> triq::Result {
     rt.report("left", "sensor unplugged")?;
     let node = &remote.inventory()?.nodes[1];
     assert_eq!((node.errors, node.last_error.as_deref()), (1, Some("sensor unplugged")));
+    // Said again, the same problem is counted but is not news: an application
+    // may report it every time round its loop.
+    let revision = remote.inventory()?.revision;
+    rt.report("left", "sensor unplugged")?;
+    assert_eq!((remote.inventory()?.nodes[1].errors, remote.inventory()?.revision), (2, revision));
+    rt.report("left", "sensor on fire")?;
+    assert!(remote.inventory()?.revision > revision);
 
     remote.remove("left")?;
     let Some(Local::Remove { name }) = cameras.try_next() else { panic!("a remove request") };

@@ -4,6 +4,7 @@
 //! device driver, offers nodes made of things only that thread may touch.
 //! The rest of the runtime does not depend on this file.
 use super::{Factory, Inner, Notice, Notify, Runtime};
+use crate::inventory::shown;
 use crate::{Error, Ports, Result};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -82,7 +83,7 @@ impl Runtime {
                     Notice::Paused(false) => (Local::Resume { name }, Value::Null),
                     Notice::Params(params) => {
                         let params: A = serde_json::from_value(params)?;
-                        let shown = serde_json::to_value(&params)?;
+                        let shown = shown(&params)?;
                         (Local::Params { name, params }, shown)
                     }
                 };
@@ -94,14 +95,14 @@ impl Runtime {
         });
         let factory = Factory {
             ports: P::spec(),
-            params: serde_json::to_value(A::default())?,
+            params: shown(&A::default())?,
             info: Mutex::default(),
             local: true,
             spawn: Box::new({
                 let kind = kind.to_owned();
                 move |inner, name, _placement, params| {
                     let params: A = if params.is_null() { A::default() } else { serde_json::from_value(params)? };
-                    let shown = serde_json::to_value(&params)?;
+                    let shown = shown(&params)?;
                     let (ports, _) = inner.bind::<P>(name, &kind, None, shown, Some(notify.clone()))?;
                     // If the application is gone, `ports` is dropped here and the node with it.
                     queue

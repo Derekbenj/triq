@@ -121,6 +121,9 @@ fn only_ports_of_the_same_message_type_can_be_wired() -> triq::Result {
     assert!(!graph::compatible(imu_pose, image));
     assert_eq!(graph::color(&imu_pose.message), graph::color(&pose.message), "one colour per message type");
     assert_ne!(graph::color(&imu_pose.message), graph::color(&image.message));
+    // The same data with a header beside it is another message type.
+    let headed = triq::MessageType { header: "Frame".into(), ..image.message.clone() };
+    assert_ne!(graph::color(&headed), graph::color(&image.message));
     Ok(())
 }
 

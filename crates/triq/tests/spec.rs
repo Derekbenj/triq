@@ -49,6 +49,13 @@ fn a_port_carries_the_message_type_iceoryx2_will_check() {
 }
 
 #[test]
+fn a_message_type_prints_as_it_would_be_written() {
+    let spec = FilterPorts::spec();
+    assert_eq!(spec[0].message.to_string(), "Pose");
+    assert_eq!(spec[3].message.to_string(), "u8[]");
+}
+
+#[test]
 fn port_attributes_become_options() {
     let spec = FilterPorts::spec();
     assert_eq!(spec[0].options, PortOptions::default());

@@ -154,6 +154,5 @@ fn port(spec: &PortSpec) -> String {
         triq::Direction::Input => "in ",
         triq::Direction::Output => "out",
     };
-    let slice = if spec.message.slice { "[]" } else { "" };
-    format!("{direction} {}: {}{slice}", spec.name, spec.message.name)
+    format!("{direction} {}: {}", spec.name, spec.message)
 }

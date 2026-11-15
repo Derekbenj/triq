@@ -28,6 +28,13 @@ fn click(harness: &mut Harness<'_, Workbench>, label: &str) {
     harness.step();
 }
 
+/// The wires that end in one of `runtimes`. The workbench draws the whole
+/// machine, and other triq programs may be running beside this test.
+fn wires(harness: &Harness<'_, Workbench>, runtimes: [&str; 2]) -> usize {
+    let graph = harness.state().graph();
+    graph.wires().filter(|(_, to)| runtimes.contains(&graph[to.node].runtime.as_str())).count()
+}
+
 fn node(runtime: &triq::Runtime, name: &str) -> Option<NodeInfo> {
     runtime.inventory().nodes.into_iter().find(|node| node.name == name)
 }
@@ -63,7 +70,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
         assert!(shows(&harness, label), "{label:?} is on screen");
     }
     assert!(shows(&harness, "waiting"), "a connection without its output says so");
-    assert_eq!(harness.state().graph().wires().count(), 2);
+    assert_eq!(wires(&harness, [&robot, &desk]), 2);
 
     // Create a node from the factory, through the form.
     click(&mut harness, "New filter");
@@ -82,7 +89,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     let (out_pin, in_pin) = (output(harness.state().graph(), &from), input(harness.state().graph(), &to));
     harness.state_mut().wire(out_pin, in_pin);
     assert!(wait_for(|| node(&scene.robot, "filter1").unwrap().inputs[0].sources.len() == 1), "the owner connected it");
-    assert!(until(&mut harness, |harness| harness.state().graph().wires().count() == 3), "and the wire appears");
+    assert!(until(&mut harness, |harness| wires(harness, [&robot, &desk]) == 3), "and the wire appears");
 
     // The new node was placed before it was wired; tidying moves it right of what feeds it.
     let x = |harness: &Harness<'_, Workbench>, name: &str| {
