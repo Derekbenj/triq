@@ -13,5 +13,5 @@ egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5
 serde_json.workspace = true
 
 [dev-dependencies]
-egui_kittest = { version = "=0.37.0", features = ["wgpu", "snapshot"] }
+egui_kittest.workspace = true
 serde.workspace = true

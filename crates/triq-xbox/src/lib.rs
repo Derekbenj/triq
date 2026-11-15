@@ -4,13 +4,19 @@
 //! watches for controllers, offers a factory of controller nodes, and
 //! publishes what each node's controller is doing. With the `sdl` feature,
 //! `SdlPads` reads real controllers; the `triq-xbox` program puts the two together.
+//! With the `viewer` feature, [`ControllerViews`] draws controller states in
+//! any program that has an egui window.
 mod host;
 #[cfg(feature = "sdl")]
 mod sdl;
+#[cfg(feature = "viewer")]
+mod viewer;
 
 pub use host::{ControllerParams, ControllerPorts, Device, FACTORY, Host, Pads};
 #[cfg(feature = "sdl")]
 pub use sdl::SdlPads;
+#[cfg(feature = "viewer")]
+pub use viewer::{CONTROLLER_VIEW, ControllerViewPorts, ControllerViews};
 
 use triq::prelude::*;
 

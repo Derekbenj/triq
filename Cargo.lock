@@ -6959,6 +6959,8 @@ name = "triq-bevy"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "egui",
+ "egui_kittest",
  "image",
  "serde",
  "serde_json",
@@ -6991,6 +6993,8 @@ dependencies = [
 name = "triq-xbox"
 version = "0.1.0"
 dependencies = [
+ "egui",
+ "egui_kittest",
  "sdl3",
  "serde",
  "serde_json",
