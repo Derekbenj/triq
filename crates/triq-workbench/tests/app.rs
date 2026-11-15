@@ -107,15 +107,14 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     harness.state_mut().unwire(out_pin, in_pin);
     assert!(wait_for(|| node(&scene.robot, "filter1").unwrap().inputs[0].sources.is_empty()));
 
-    // A picture of the state so far, for a human to look at.
+    // A picture of the state so far, for a human to look at. Drawing it needs a GPU;
+    // without one the rest of the test still stands.
     harness.run_steps(3);
     let picture = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("workbench.png");
-    harness
-        .render()
-        .map_err(triq::Error::Other)?
-        .save(&picture)
-        .map_err(|error| triq::Error::Other(error.to_string()))?;
-    println!("picture: {}", picture.display());
+    match harness.render() {
+        Ok(image) => image.save(&picture).map_err(|error| triq::Error::Other(error.to_string()))?,
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
 
     click(&mut harness, "Remove");
     assert!(wait_for(|| node(&scene.robot, "filter1").is_none()));
