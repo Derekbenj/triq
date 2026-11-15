@@ -6,7 +6,7 @@
 //! are always the largest and the smallest value in view.
 use crate::colors;
 use crate::history::{Connection, History, Stat};
-use eframe::egui::{self, Align, Color32, Layout, Rect, Sense, Stroke, Ui, UiBuilder};
+use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder};
 
 /// One line on a chart: one number of one connection, over time.
 #[derive(Debug, Clone, PartialEq)]
@@ -184,7 +184,8 @@ fn lines(ui: &mut Ui, traces: &[Trace], history: &History, seconds: f64) {
     };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
     for (number, line) in lines.iter().enumerate() {
-        painter.line(line.iter().map(place).collect(), Stroke::new(2.0, color(number, dark)));
+        let placed: Vec<Pos2> = line.iter().map(place).collect();
+        painter.line(thinned(&placed), Stroke::new(2.0, color(number, dark)));
     }
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));
@@ -218,6 +219,27 @@ pub fn extent(values: impl Iterator<Item = f64>) -> Option<(f64, f64)> {
         values.fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), value| (low.min(value), high.max(value)));
     // With no values at all, the smallest is still above the largest.
     (low <= high).then_some(if low < high { (low, high) } else { (low, low + 1.0) })
+}
+
+/// A line as it will be drawn, without the points that cannot be seen. An hour
+/// at ten points a second is far more points than a chart has pixels across;
+/// what shows of them in one pixel column is where the line enters and leaves
+/// it and how high and low it goes there.
+pub fn thinned(line: &[Pos2]) -> Vec<Pos2> {
+    let mut kept = Vec::new();
+    for column in line.chunk_by(|a, b| a.x.floor() == b.x.floor()) {
+        let by_height = |a: &&Pos2, b: &&Pos2| a.y.total_cmp(&b.y);
+        let (top, bottom) = (column.iter().min_by(by_height), column.iter().max_by(by_height));
+        let mut few = [column[0], *top.unwrap_or(&column[0]), *bottom.unwrap_or(&column[0]), column[column.len() - 1]];
+        // Back in the order they happened in, each of them once.
+        few.sort_by(|a, b| a.x.total_cmp(&b.x));
+        for point in few {
+            if kept.last() != Some(&point) {
+                kept.push(point);
+            }
+        }
+    }
+    kept
 }
 
 /// A number as a chart writes it: to three figures or so.

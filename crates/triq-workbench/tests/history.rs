@@ -15,17 +15,17 @@ fn connections(scene: &Scene) -> (Connection, Connection) {
     (filtered, viewed)
 }
 
-/// Send `count` poses and wait until the filter has passed them all on.
+/// Send `count` poses, one at a time so that the filter keeps up, and wait until it has passed each on.
 fn send(scene: &Scene, count: u64) -> triq::Result {
     let passed = |scene: &Scene| {
         let robot = scene.robot.inventory();
         robot.nodes.iter().find(|node| node.name == "smoother").expect("the filter").outputs[0].sent
     };
     let before = passed(scene);
-    for _ in 0..count {
+    for sent in 1..=count {
         scene.imu.pose.send(Pose::default())?;
+        assert!(wait_for(|| passed(scene) == before + sent));
     }
-    assert!(wait_for(|| passed(scene) == before + count));
     Ok(())
 }
 
@@ -70,6 +70,31 @@ fn a_connection_gets_a_point_for_what_happened_between_two_readings() -> triq::R
     assert_eq!((points[1].rate, points[1].lost), (64.0, 16.0), "per second");
     let filter = history.points(&filtered).last().unwrap();
     assert_eq!((filter.rate, filter.lost), (80.0, 0.0), "the filter kept up");
+    Ok(())
+}
+
+#[test]
+fn a_rate_is_measured_over_half_a_second_however_often_the_machine_is_read() -> triq::Result {
+    let scene = Scene::new()?;
+    let (filtered, _) = connections(&scene);
+    let mut history = History::default();
+    let mut reading = scene.inventories();
+    history.record(&reading);
+
+    // Read every tenth of a second: ten samples each time for half a second, then none.
+    let mut rates = Vec::new();
+    for samples in [10, 10, 10, 10, 10, 0, 0, 0, 0, 0, 0] {
+        send(&scene, samples)?;
+        reading = later(&reading, scene.inventories(), [Duration::from_millis(100); 2]);
+        history.record(&reading);
+        rates.push(history.points(&filtered).last().expect("a point for every reading").rate.round());
+    }
+    // Counted over a tenth of a second, one sample more or less would be ten
+    // a second. So every point is about the half second before it, and a
+    // stream that stops is seen to run down over that long.
+    assert_eq!(rates, [100.0, 100.0, 100.0, 100.0, 100.0, 80.0, 60.0, 40.0, 20.0, 0.0, 0.0]);
+    let times: Vec<f64> = history.points(&filtered).map(|point| point.at).collect();
+    assert!(times.windows(2).all(|pair| (pair[1] - pair[0] - 0.1).abs() < 1e-6), "ten points a second");
     Ok(())
 }
 

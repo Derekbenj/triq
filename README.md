@@ -160,20 +160,16 @@ The `Charts` tab, beside `Graph`, shows what connections do over time:
   its corners. Hover over a chart to read the lines at that moment.
 
 Nothing in it is measured by the workbench. A runtime reports counters for each of its connections,
-and the workbench keeps what two readings, about half a second apart, say happened between them. So a
-line has two points a second, whatever the rate of the data. The longest gap is the one thing a
-count cannot tell, so every input keeps it: the longest time from one sample to the next, by when
-they were sent, over the last second or two. A hiccup of the sender shows there, and so does the
-hole that lost samples leave.
-
-That is the monitoring that needs no knowledge of what a message means, and it
-is all the workbench does. It works from the counters every runtime reports
-and the time each runtime read them at. Showing what a message *holds* is a
-viewer's job; see below.
+and the workbench reads them ten times a second and keeps what they say. So a line has ten points a
+second, whatever the rate of the data. A rate is counted over the half second before each point:
+over a tenth of a second, one sample more or less would look like ten a second. The longest gap is
+the one thing a count cannot tell, so every input keeps it: the longest time from one sample to the
+next, by when they were sent, over the last half second to second. A hiccup of the sender shows
+there, and so does the hole that lost samples leave.
 
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections did, as plain data), `charts.rs` (the charts),
-`feed.rs` (two background threads) and `app.rs` (the window) are about 1,540
+`feed.rs` (two background threads) and `app.rs` (the window) are about 1,590
 lines together. The tests drive the real window code without opening one, with
 a pointer where it matters, and write pictures to `target/tmp/workbench.png`,
 `target/tmp/graph.png` and `target/tmp/charts.png`.
@@ -340,7 +336,7 @@ convention each side has to know and nothing checks.
 | `runtime.rs` | 652 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 117 | factories whose nodes the application runs |
 | `control.rs`, `remote.rs` | 438 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 294 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 295 | report types, the error type, iceoryx2 type names |
 
 About 2,910 lines including comments, plus the derive macro (66) and the command-line tool (158).
 Tests are in `crates/triq/tests`, one file per subject.

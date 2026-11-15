@@ -2,6 +2,9 @@
 //!
 //! Nothing here is measured by the workbench. A runtime reports counters for
 //! each of its connections; two readings of them give what happened between.
+//! The machine may be read many times a second, and every reading makes a
+//! point. A rate is still counted over half a second: over a tenth, one
+//! sample more or less would look like ten a second.
 use std::collections::{BTreeMap, VecDeque};
 use triq::Inventory;
 
@@ -12,16 +15,16 @@ pub struct Connection {
     pub from: String,
 }
 
-/// What a connection did between two readings of its counters.
+/// What a connection was doing at one reading of its counters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
-    /// When the second reading was taken: seconds since 1970, by the clock of the runtime that owns the input.
+    /// When the reading was taken: seconds since 1970, by the clock of the runtime that owns the input.
     pub at: f64,
-    /// Samples received per second.
+    /// Samples received per second, over the half second before.
     pub rate: f64,
-    /// Samples lost per second: sent, and gone before the input read them.
+    /// Samples lost per second, over the same time: sent, and gone before the input read them.
     pub lost: f64,
-    /// The longest time from one sample to the next over the last second or two, in milliseconds.
+    /// The longest time from one sample to the next over the last half second to second, in milliseconds.
     pub gap: f64,
     /// Send-to-receive time of the newest sample, in milliseconds.
     pub latency: f64,
@@ -74,9 +77,9 @@ pub struct History {
 
 #[derive(Default)]
 struct Trace {
-    /// The reading the next point is measured from. `None` when the
-    /// connection was not there at the last reading.
-    last: Option<Counters>,
+    /// The latest readings, back to the one the next rate is counted from.
+    /// Empty when the connection was not there at the last reading.
+    recent: VecDeque<Counters>,
     points: VecDeque<Point>,
 }
 
@@ -91,6 +94,8 @@ struct Counters {
 impl History {
     /// How many seconds of the past are kept.
     pub const LONGEST: f64 = 3600.0;
+    /// How long a rate is counted over, in nanoseconds.
+    const SPAN: u64 = 500_000_000;
 
     /// Take in one reading of the machine.
     pub fn record(&mut self, inventories: &[Inventory]) {
@@ -105,11 +110,19 @@ impl History {
                         let (received, lost) = (source.received, source.lost);
                         let now = Counters { pid: inventory.pid, taken_ns: inventory.taken_ns, received, lost };
                         let trace = self.traces.entry(connection.clone()).or_default();
-                        // Counters that went back belong to a node or a program that started again.
-                        let before = trace.last.as_ref().filter(|before| {
+                        // Counters that went back belong to a node or a program that started
+                        // again, and nothing is counted across that.
+                        let follows = |before: &Counters| {
                             before.pid == now.pid && before.taken_ns < now.taken_ns && before.received <= received
-                        });
-                        if let Some(before) = before {
+                        };
+                        if !trace.recent.back().is_some_and(follows) {
+                            trace.recent.clear();
+                        }
+                        // Count from the newest reading that is half a second old, or the oldest there is.
+                        while trace.recent.len() > 1 && now.taken_ns - trace.recent[1].taken_ns >= Self::SPAN {
+                            trace.recent.pop_front();
+                        }
+                        if let Some(before) = trace.recent.front() {
                             let seconds = (now.taken_ns - before.taken_ns) as f64 / 1e9;
                             trace.points.push_back(Point {
                                 at: now.taken_ns as f64 / 1e9,
@@ -119,7 +132,7 @@ impl History {
                                 latency: source.latency_us as f64 / 1000.0,
                             });
                         }
-                        trace.last = Some(now);
+                        trace.recent.push_back(now);
                         seen.push(connection);
                     }
                 }
@@ -129,16 +142,18 @@ impl History {
         let oldest = self.newest().unwrap_or(0.0) - Self::LONGEST;
         self.traces.retain(|connection, trace| {
             if !seen.contains(connection) {
-                trace.last = None;
+                trace.recent.clear();
             }
-            trace.points.retain(|point| point.at >= oldest);
-            trace.last.is_some() || !trace.points.is_empty()
+            while trace.points.front().is_some_and(|point| point.at < oldest) {
+                trace.points.pop_front();
+            }
+            !trace.recent.is_empty() || !trace.points.is_empty()
         });
     }
 
     /// The connections that were there at the last reading, sorted by input.
     pub fn connections(&self) -> impl Iterator<Item = &Connection> {
-        self.traces.iter().filter(|(_, trace)| trace.last.is_some()).map(|(connection, _)| connection)
+        self.traces.iter().filter(|(_, trace)| !trace.recent.is_empty()).map(|(connection, _)| connection)
     }
 
     /// What a connection did, oldest first.

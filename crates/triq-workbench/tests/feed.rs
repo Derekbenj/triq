@@ -36,19 +36,19 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
         feed.rates().get(&sending).is_some_and(|rate| *rate > 10.0)
     }));
 
-    // And every reading adds to what is kept of each connection's past.
+    // And every reading adds to what is kept of each connection's past: ten points a second.
     let filtered = Connection { to: format!("{robot_name}/smoother/raw"), from: sending.clone() };
     let points = |feed: &Feed| feed.history().points(&filtered).copied().collect::<Vec<_>>();
     assert!(wait_for(|| {
         imu.pose.send(Pose::default()).expect("send");
-        points(&feed).len() >= 3
+        points(&feed).len() >= 15
     }));
     let points = points(&feed);
     assert!(points.iter().any(|point| point.rate > 10.0), "{points:?}");
-    assert!(
-        points.windows(2).all(|pair| pair[1].at - pair[0].at > 0.2),
-        "readings are not taken in a rush: {points:?}"
-    );
+    let mut apart: Vec<f64> = points.windows(2).map(|pair| pair[1].at - pair[0].at).collect();
+    apart.sort_by(f64::total_cmp);
+    assert!((0.08..0.14).contains(&apart[apart.len() / 2]), "a tenth of a second apart, as a rule: {apart:?}");
+    assert!(apart[0] > 0.04, "and never taken in a rush: {apart:?}");
 
     // Each request is carried out in the background and shows in the inventory that follows.
     let (runtime, name) = on("extra");

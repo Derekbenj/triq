@@ -172,3 +172,25 @@ fn a_chart_reaches_from_the_smallest_value_to_the_largest() {
     // Three figures or so.
     assert_eq!([charts::written(121.7), charts::written(59.96), charts::written(8.333)], ["122", "60.0", "8.33"]);
 }
+
+#[test]
+fn a_line_with_more_points_than_pixels_is_thinned_and_looks_the_same() {
+    // Ten thousand points across a hundred pixels, going up and down.
+    let line: Vec<egui::Pos2> = (0..10_000).map(|i| egui::pos2(i as f32 / 100.0, ((i * 37) % 211) as f32)).collect();
+    let thin = charts::thinned(&line);
+    assert!(thin.len() <= 400, "at most four points for each pixel across, not {}", thin.len());
+    assert_eq!((thin[0], thin[thin.len() - 1]), (line[0], line[line.len() - 1]), "it starts and ends where it did");
+    assert!(thin.windows(2).all(|pair| pair[0].x <= pair[1].x), "and is still in order of time");
+    // In every pixel column it reaches as high and as low as before.
+    for column in 0..100 {
+        let reach = |points: &[egui::Pos2]| {
+            let heights = points.iter().filter(|point| point.x.floor() == column as f32).map(|point| point.y);
+            heights.fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), y| (low.min(y), high.max(y)))
+        };
+        assert_eq!(reach(&thin), reach(&line), "column {column}");
+    }
+
+    // A line with room between its points is left as it is.
+    let sparse: Vec<egui::Pos2> = (0..50).map(|i| egui::pos2(i as f32 * 3.0, (i % 7) as f32)).collect();
+    assert_eq!(charts::thinned(&sparse), sparse);
+}

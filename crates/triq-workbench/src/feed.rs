@@ -1,10 +1,11 @@
 //! The workbench's link to the machine, kept off the thread that draws.
 //!
-//! One thread keeps the list of inventories fresh: it listens for runtimes
-//! announcing a change and asks them again. From one reading of the counters
-//! to the next it works out how fast data is flowing, and it keeps what each
-//! connection did as history. Another thread carries out what the user asked
-//! for, one request at a time, so a slow runtime never freezes the window.
+//! One thread keeps the list of inventories fresh: it asks every runtime ten
+//! times a second, and at once when one announces a change. From one reading
+//! of the counters to another it works out how fast data is flowing, and it
+//! keeps what each connection did as history. Another thread carries out what
+//! the user asked for, one request at a time, so a slow runtime never freezes
+//! the window.
 use crate::graph;
 use crate::history::History;
 use serde_json::Value;
@@ -16,8 +17,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 use triq::{Inventory, Placement, Remote, Watch};
 
-/// How often counters are refreshed when nothing announces a change.
-const REFRESH: Duration = Duration::from_millis(500);
+/// How often the machine is read when nothing announces a change. Every
+/// reading is a point on a chart.
+const REFRESH: Duration = Duration::from_millis(100);
+/// How often the rates beside the pins are worked out again. Changing ten
+/// times a second they would be hard to read, and counted over so short a
+/// time they would be rough.
+const RATES: Duration = Duration::from_millis(500);
 
 /// Something the user asked for. Each becomes one request to the runtime that owns the node.
 #[derive(Debug, Clone, PartialEq)]
@@ -87,22 +93,32 @@ impl Feed {
         thread::Builder::new().name("workbench-watch".into()).spawn({
             let (shared, redraw) = (shared.clone(), redraw.clone());
             move || {
-                // The reading that rates are measured from, and when it was made.
-                let mut reading = (Instant::now(), Arc::new(Vec::new()));
+                // The reading the pins' rates are measured from, and when it was made.
+                let mut rated = (Instant::now(), Arc::new(Vec::new()));
+                // When history last took a reading, and when the next regular one is due.
+                let (mut recorded, mut due) = (None::<Instant>, Instant::now());
                 while !shared.stop.load(Ordering::Acquire) {
                     if let Ok(found) = triq::discover() {
                         let found = Arc::new(found);
-                        // Changes can be announced in quick succession, and a
-                        // rate measured over a few milliseconds would mean little.
-                        if reading.0.elapsed() >= REFRESH / 2 {
-                            *shared.rates.lock().unwrap() = Arc::new(graph::rates(&reading.1, &found));
+                        // Changes can be announced in quick succession, and two
+                        // readings a few milliseconds apart would say little.
+                        if recorded.is_none_or(|at| at.elapsed() >= REFRESH / 2) {
                             shared.history.lock().unwrap().record(&found);
-                            reading = (Instant::now(), found.clone());
+                            recorded = Some(Instant::now());
+                        }
+                        if rated.0.elapsed() >= RATES {
+                            *shared.rates.lock().unwrap() = Arc::new(graph::rates(&rated.1, &found));
+                            rated = (Instant::now(), found.clone());
                         }
                         *shared.inventories.lock().unwrap() = found;
                         redraw();
                     }
-                    let _ = watch.wait(REFRESH);
+                    // Sleep until a runtime announces a change or the next reading is due.
+                    let now = Instant::now();
+                    while due <= now {
+                        due += REFRESH;
+                    }
+                    let _ = watch.wait(due - now);
                 }
             }
         })?;
@@ -131,7 +147,7 @@ impl Feed {
         self.shared.rates.lock().unwrap().clone()
     }
 
-    /// What every connection did over the last hour, a point for about every half second.
+    /// What every connection did over the last hour, ten points a second.
     /// Readings wait while this is held, so let go of it once a frame is drawn.
     pub fn history(&self) -> MutexGuard<'_, History> {
         self.shared.history.lock().unwrap()
