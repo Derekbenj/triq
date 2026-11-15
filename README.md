@@ -109,7 +109,10 @@ watch.wait(Duration::from_secs(1))?;   // then call discover() again
 
 The program asking owns nothing. Each request is carried out by the runtime
 that owns the node, and a refusal comes back as the same error it would raise
-locally. The `triq` command-line tool does the same from a terminal:
+locally. Opening a runtime costs many times what asking it something does, so
+a thread keeps the runtimes it has opened: `Remote::open` and `discover` are
+cheap from the second time on, and a runtime that stopped or started again is
+noticed. The `triq` command-line tool does the same from a terminal:
 
 ```text
 triq list                 # or `triq watch` to keep it on screen
@@ -126,14 +129,21 @@ cargo run -p triq-workbench
 ```
 
 Run it and it shows every runtime on the machine: their pools, the kinds of
-node they offer, their nodes as cards, and their connections as wires coloured
-by message type. It owns no nodes and keeps no state of its own; the drawing
-follows what the runtimes report and updates when they announce a change.
+node they offer, their nodes as cards, and their connections as wires. It owns
+no nodes and keeps no state of its own; the drawing follows what the runtimes
+report and updates when they announce a change.
 
+- Every runtime has a colour, shown beside its name on the left. A node wears the colour of the
+  runtime it runs in: its card, its pins, and the wires that leave it.
 - Click a kind on the left (or right-click the canvas) to create a node: name, thread or pool, settings.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
-- Right-click a pin to disconnect it; right-click a node to pause, resume or remove it.
-- Select a node to see its counters, edit its settings, and disconnect single sources.
+- Right-click a wire or a pin to disconnect it.
+- Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
+  and its settings, and to disconnect single sources.
+- Pause a node or start it again with the button on its card. Right-clicking the card offers the
+  same, and removing it.
+- Drag a card anywhere on it to move it, scroll to move the view, pinch to zoom; `Fit` brings every
+  card back into view and `Tidy` lays them out again.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
 - Beside each pin that data is passing through is its rate, such as `120/s`. The details panel adds
   what was received and lost, the latency of the newest sample, and a node's last error.
@@ -143,9 +153,11 @@ is all the workbench does. It works from the counters every runtime reports
 and the time each runtime read them at. Showing what a message *holds* is a
 viewer's job; see below.
 
-`graph.rs` (the drawing as plain data), `feed.rs` (two background threads) and
-`app.rs` (the window) are about 920 lines together. The tests drive the real
-window code without opening one and write a picture to `target/tmp/workbench.png`.
+`graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
+`feed.rs` (two background threads) and `app.rs` (the window) are about 1,100
+lines together. The tests drive the real window code without opening one, with
+a pointer where it matters, and write pictures to `target/tmp/workbench.png`
+and `target/tmp/graph.png`.
 
 ## Programs with their own main loop
 
@@ -308,10 +320,10 @@ convention each side has to know and nothing checks.
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
 | `runtime.rs` | 652 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 117 | factories whose nodes the application runs |
-| `control.rs`, `remote.rs` | 412 | requests between programs, discovery, change announcements |
+| `control.rs`, `remote.rs` | 438 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 288 | report types, the error type, iceoryx2 type names |
 
-About 2,830 lines including comments, plus the derive macro (66) and the command-line tool (158).
+About 2,860 lines including comments, plus the derive macro (66) and the command-line tool (158).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

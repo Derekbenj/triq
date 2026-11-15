@@ -3,18 +3,23 @@
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
 //! a request to a runtime. A wire appears when its owner says it exists.
+//!
+//! A node wears the colour of the runtime it runs in: its card, its pins and
+//! the wires that leave it.
+use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
-use eframe::egui::{self, Color32, Rect, Stroke, Ui, emath::TSTransform};
-use egui_snarl::ui::{PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
+use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, WidgetInfo, emath::TSTransform};
+use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use triq::{FactoryInfo, Inventory, NodeState, Placement, PortSpec};
+use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
 
 pub struct Workbench {
     feed: Feed,
     snarl: Snarl<Card>,
+    colors: Colors,
     focus: Focus,
     /// Bring every card into view on the next frame that has any.
     fit: bool,
@@ -43,7 +48,7 @@ struct Form {
 
 impl Workbench {
     pub fn new(feed: Feed) -> Self {
-        Self { feed, snarl: Snarl::new(), focus: Focus::Nothing, fit: true }
+        Self { feed, snarl: Snarl::new(), colors: Colors::default(), focus: Focus::Nothing, fit: true }
     }
 
     /// The drawing: one card per node, one wire per live connection.
@@ -65,6 +70,7 @@ impl Workbench {
     pub fn show(&mut self, ui: &mut Ui) {
         let inventories = self.feed.inventories();
         graph::sync(&mut self.snarl, &inventories);
+        self.colors.update(inventories.iter().map(|inventory| inventory.runtime.as_str()));
         if let Focus::Node { key, .. } = &self.focus
             && !self.snarl.nodes().any(|card| card.key() == *key)
         {
@@ -103,7 +109,11 @@ impl Workbench {
                 ui.weak("No runtime is running on this machine.");
             }
             for inventory in inventories {
-                ui.strong(&inventory.runtime);
+                ui.horizontal(|ui| {
+                    dot(ui, self.colors.of(&inventory.runtime, ui.visuals().dark_mode), &inventory.runtime);
+                    ui.strong(&inventory.runtime);
+                    ui.weak(format!("process {}", inventory.pid));
+                });
                 for pool in &inventory.pools {
                     let shared = if pool.shared { ", shared" } else { "" };
                     ui.weak(format!("pool {}: {} threads{shared}", pool.name, pool.threads));
@@ -128,12 +138,18 @@ impl Workbench {
     fn details(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
         egui::ScrollArea::vertical().show(ui, |ui| match &mut self.focus {
             Focus::Nothing => {
-                ui.weak("Select a node to see it here, or pick a kind of node on the left to create one.");
-                ui.weak("Drag from an output to an input to connect them. Right-click a pin to disconnect it.");
+                ui.weak("Click a node to see where it runs, or pick a kind of node on the left to create one.");
+                ui.weak(
+                    "Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.",
+                );
+                ui.weak("Right-click a node to pause or remove it.");
             }
             Focus::Node { key, settings } => {
-                if let Some(card) = self.snarl.nodes().find(|card| card.key() == *key) {
-                    node_details(ui, &self.feed, card, settings, rates);
+                let card = self.snarl.nodes().find(|card| card.key() == *key);
+                let home =
+                    inventories.iter().find(|inventory| card.is_some_and(|card| card.runtime == inventory.runtime));
+                if let (Some(card), Some(home)) = (card, home) {
+                    node_details(ui, &self.feed, card, home, settings, rates);
                 }
             }
             Focus::Form(form) => {
@@ -147,16 +163,24 @@ impl Workbench {
     fn canvas(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
         let style = SnarlStyle {
             collapsible: Some(false),
-            pin_size: Some(11.0),
+            header_drag_space: Some(egui::vec2(3.0, 3.0)),
+            pin_size: Some(12.0),
             pin_placement: Some(PinPlacement::Edge),
-            wire_width: Some(2.5),
+            pin_stroke: Some(Stroke::new(1.6, ui.visuals().strong_text_color())),
+            wire_width: Some(3.2),
+            wire_smoothness: Some(1.6),
             wire_style: Some(WireStyle::Bezier5),
+            node_layout: Some(NodeLayout::coil().with_min_pin_row_height(graph::ROW).with_equal_pin_rows()),
+            min_scale: Some(SMALLEST),
             ..SnarlStyle::new()
         };
         // The first cards to appear are framed, and again whenever the user asks.
         let frame = (self.fit && self.snarl.nodes().next().is_some()).then(|| framing(&self.snarl, ui.max_rect()));
-        self.fit = frame.is_none();
-        let mut viewer = Viewer { feed: &self.feed, focus: &mut self.focus, inventories, rates, frame };
+        self.fit &= frame.is_none();
+        let (feed, colors, dark) = (&self.feed, &self.colors, ui.visuals().dark_mode);
+        let mut viewer = Viewer { feed, colors, dark, focus: &mut self.focus, inventories, rates, frame };
+        // Text that could be selected would swallow the press that moves, selects or opens the menu of a card.
+        ui.style_mut().interaction.selectable_labels = false;
         SnarlWidget::new().id_salt("triq-graph").style(style).show(&mut self.snarl, &mut viewer, ui);
     }
 }
@@ -243,10 +267,10 @@ impl Form {
     }
 }
 
-fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, rates: &Rates) {
+/// `home` is what the node's runtime last reported.
+fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, settings: &mut String, rates: &Rates) {
     let node = &card.node;
     ui.heading(&node.name);
-    ui.weak(format!("in {}", card.runtime));
     ui.add_space(8.0);
     egui::Grid::new("facts").num_columns(2).show(ui, |ui| {
         let mut fact = |name: &str, value: String| {
@@ -254,13 +278,14 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, ra
             ui.label(value);
             ui.end_row();
         };
+        fact("Runs in", format!("{}, process {}", home.runtime, home.pid));
+        fact("Runs on", runs_on(&node.placement, &home.pools));
         if !node.kind.is_empty() {
             fact("Kind", node.kind.clone());
         }
-        fact("Runs on", runs_on(&node.placement));
         fact("State", state(&node.state));
         if node.placement.is_some() {
-            fact("Runs", node.runs.to_string());
+            fact("Times run", node.runs.to_string());
         }
         if let Some(error) = &node.last_error {
             fact("Errors", format!("{}, last: {error}", node.errors));
@@ -284,7 +309,10 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, ra
 
     for (index, input) in node.inputs.iter().enumerate() {
         ui.separator();
-        ui.horizontal(|ui| port_with_rate(ui, &input.port, rates, &card.input(index)));
+        ui.horizontal(|ui| {
+            ui.label(port(&input.port));
+            ui.weak(rate(rates, &card.input(index)));
+        });
         if input.sources.is_empty() {
             ui.weak("not connected");
         }
@@ -305,7 +333,10 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, ra
     }
     for output in &node.outputs {
         ui.separator();
-        ui.horizontal(|ui| port_with_rate(ui, &output.port, rates, &output.service));
+        ui.horizontal(|ui| {
+            ui.label(port(&output.port));
+            ui.weak(rate(rates, &output.service));
+        });
         ui.weak(format!("{} sent to {} inputs", output.sent, output.subscribers));
         if output.undelivered > 0 {
             ui.weak(format!("{} could not be delivered", output.undelivered));
@@ -313,36 +344,44 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, ra
     }
 }
 
-/// The buttons that act on a node. True if one was pressed.
-fn actions(ui: &mut Ui, feed: &Feed, card: &Card) -> bool {
+/// How a node is paused or started again: the word for it and the request.
+/// `None` for a node that can be neither.
+fn toggle(card: &Card) -> Option<(&'static str, Request)> {
     let (runtime, node) = (card.runtime.clone(), card.node.name.clone());
     // A node that came from a factory can be paused: by its runtime, or by the
     // application that offered the factory. Ports an application merely holds cannot.
     let pausable = card.node.placement.is_some() || !card.node.kind.is_empty();
-    let toggle = match (pausable, &card.node.state) {
-        (true, NodeState::Running) => Some(("Pause", Request::Pause { runtime: runtime.clone(), node: node.clone() })),
-        (true, NodeState::Paused) => Some(("Resume", Request::Resume { runtime: runtime.clone(), node: node.clone() })),
+    match &card.node.state {
+        NodeState::Running if pausable => Some(("Pause", Request::Pause { runtime, node })),
+        NodeState::Paused if pausable => Some(("Resume", Request::Resume { runtime, node })),
         _ => None,
-    };
+    }
+}
+
+/// The buttons that act on a node. True if one was pressed.
+fn actions(ui: &mut Ui, feed: &Feed, card: &Card) -> bool {
     let mut pressed = false;
-    if let Some((label, request)) = toggle
-        && ui.button(label).clicked()
+    if let Some((word, request)) = toggle(card)
+        && ui.button(word).clicked()
     {
         feed.ask(request);
         pressed = true;
     }
     if ui.button("Remove").clicked() {
-        feed.ask(Request::Remove { runtime, node });
+        feed.ask(Request::Remove { runtime: card.runtime.clone(), node: card.node.name.clone() });
         pressed = true;
     }
     pressed
 }
 
+/// How far the view can be zoomed out: far enough to see a large machine whole.
+const SMALLEST: f32 = 0.05;
+
 /// The view that shows every card, no larger than life.
 fn framing(snarl: &Snarl<Card>, canvas: Rect) -> TSTransform {
     let card = |(pos, card): (egui::Pos2, &Card)| Rect::from_min_size(pos, graph::size(card));
-    let cards = snarl.nodes_pos().map(card).fold(Rect::NOTHING, Rect::union).expand(30.0);
-    let scale = (canvas.width() / cards.width()).min(canvas.height() / cards.height()).clamp(0.2, 1.0);
+    let cards = snarl.nodes_pos().map(card).fold(Rect::NOTHING, Rect::union).expand(40.0);
+    let scale = (canvas.width() / cards.width()).min(canvas.height() / cards.height()).clamp(SMALLEST, 1.0);
     TSTransform::new(canvas.center().to_vec2() - cards.center().to_vec2() * scale, scale)
 }
 
@@ -370,11 +409,66 @@ fn unwire(feed: &Feed, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
 /// How the graph widget asks what to draw and reports what the user did.
 struct Viewer<'a> {
     feed: &'a Feed,
+    colors: &'a Colors,
+    /// Whether the window is drawn light on dark.
+    dark: bool,
     focus: &'a mut Focus,
     inventories: &'a [Inventory],
     rates: &'a Rates,
     /// A view to switch to this frame.
     frame: Option<TSTransform>,
+}
+
+impl Viewer<'_> {
+    fn color(&self, card: &Card) -> Color32 {
+        self.colors.of(&card.runtime, self.dark)
+    }
+
+    /// A pin, and any wire that leaves it, in the colour of the node's runtime.
+    fn pin(&self, card: &Card) -> PinInfo {
+        PinInfo::circle().with_fill(self.color(card)).with_wire_color(self.color(card))
+    }
+}
+
+/// A dot in the colour of a runtime. It stands for the runtime, and is named after it.
+fn dot(ui: &mut Ui, color: Color32, runtime: &str) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, ui.spacing().interact_size.y), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, runtime));
+    ui.painter().circle_filled(rect.center(), 5.0, color);
+    response.on_hover_text(format!("runs in {runtime}"));
+}
+
+/// The small button on a card that pauses its node or starts it again: two bars, or a triangle.
+fn sign(ui: &mut Ui, word: &str, paused: bool) -> egui::Response {
+    let side = ui.spacing().interact_size.y;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(side, side), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(Role::Button, true, word));
+    let look = ui.style().interact(&response);
+    let (middle, ink) = (rect.center(), look.fg_stroke.color);
+    ui.painter().rect_filled(rect, look.corner_radius, look.weak_bg_fill);
+    if paused {
+        let corners = [egui::vec2(-3.5, -5.0), egui::vec2(5.0, 0.0), egui::vec2(-3.5, 5.0)];
+        ui.painter().add(Shape::convex_polygon(corners.map(|corner| middle + corner).to_vec(), ink, Stroke::NONE));
+    } else {
+        for bar in [-3.0, 3.0] {
+            ui.painter().rect_filled(
+                Rect::from_center_size(middle + egui::vec2(bar, 0.0), egui::vec2(3.0, 10.0)),
+                0.0,
+                ink,
+            );
+        }
+    }
+    response.on_hover_text(word)
+}
+
+/// What is written beside a pin, in a space of fixed width: a card keeps its
+/// shape as data starts and stops.
+fn aside(ui: &mut Ui, text: String) -> egui::Response {
+    let space = ui.allocate_ui(egui::vec2(graph::ASIDE, 0.0), |ui| {
+        ui.set_min_width(graph::ASIDE);
+        ui.weak(text)
+    });
+    space.inner
 }
 
 impl SnarlViewer<Card> for Viewer<'_> {
@@ -391,11 +485,22 @@ impl SnarlViewer<Card> for Viewer<'_> {
     fn show_header(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], ui: &mut Ui, snarl: &mut Snarl<Card>) {
         let card = &snarl[node];
         ui.horizontal(|ui| {
+            dot(ui, self.color(card), &card.runtime);
             ui.strong(&card.node.name);
-            ui.weak(format!("{} · {}", card.runtime, state(&card.node.state)));
+            match &card.node.state {
+                NodeState::Running => ui.weak("running"),
+                NodeState::Paused => ui.colored_label(ui.visuals().warn_fg_color, "paused"),
+                NodeState::Stopped(_) => ui.colored_label(ui.visuals().error_fg_color, "stopped"),
+            };
+            if let Some((word, request)) = toggle(card)
+                && sign(ui, word, card.node.state == NodeState::Paused).clicked()
+            {
+                self.feed.ask(request);
+            }
         });
     }
 
+    /// The outline of a card is the colour of its runtime, heavier when the card is selected.
     fn node_frame(
         &mut self,
         default: egui::Frame,
@@ -404,12 +509,22 @@ impl SnarlViewer<Card> for Viewer<'_> {
         _: &[OutPin],
         snarl: &Snarl<Card>,
     ) -> egui::Frame {
-        match &*self.focus {
-            Focus::Node { key, .. } if *key == snarl[node].key() => {
-                default.stroke(Stroke::new(2.0, Color32::from_rgb(90, 160, 250)))
-            }
-            _ => default,
-        }
+        let card = &snarl[node];
+        let selected = matches!(&*self.focus, Focus::Node { key, .. } if *key == card.key());
+        default.stroke(Stroke::new(if selected { 3.5 } else { 1.8 }, self.color(card))).corner_radius(9)
+    }
+
+    /// The header is tinted with it.
+    fn header_frame(
+        &mut self,
+        default: egui::Frame,
+        node: NodeId,
+        _: &[InPin],
+        _: &[OutPin],
+        snarl: &Snarl<Card>,
+    ) -> egui::Frame {
+        let tint = if self.dark { 0.28 } else { 0.20 };
+        default.fill(default.fill.lerp_to_gamma(self.color(&snarl[node]), tint)).corner_radius(9)
     }
 
     fn inputs(&mut self, card: &Card) -> usize {
@@ -426,20 +541,22 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let input = &card.node.inputs[pin.id.input];
         let received: u64 = input.sources.iter().map(|source| source.received).sum();
         let lost: u64 = input.sources.iter().map(|source| source.lost).sum();
-        let label = port_with_rate(ui, &input.port, self.rates, &card.input(pin.id.input));
-        label.on_hover_text(format!("{received} received, {lost} lost"));
+        ui.label(port(&input.port)).on_hover_text(format!("{received} received, {lost} lost"));
         let waiting = card.waiting(pin.id.input);
-        if !waiting.is_empty() {
-            ui.weak("waiting").on_hover_text(format!("waiting for {}", waiting.join(", ")));
+        if waiting.is_empty() {
+            aside(ui, rate(self.rates, &card.input(pin.id.input)));
+        } else {
+            aside(ui, "waiting".to_owned()).on_hover_text(format!("waiting for {}", waiting.join(", ")));
         }
-        PinInfo::circle().with_fill(graph::color(&input.port.message))
+        self.pin(card)
     }
 
     fn show_output(&mut self, pin: &OutPin, ui: &mut Ui, snarl: &mut Snarl<Card>) -> impl SnarlPin + 'static {
-        let output = &snarl[pin.id.node].node.outputs[pin.id.output];
-        let label = port_with_rate(ui, &output.port, self.rates, &output.service);
-        label.on_hover_text(format!("{} sent to {} inputs", output.sent, output.subscribers));
-        PinInfo::circle().with_fill(graph::color(&output.port.message))
+        let card = &snarl[pin.id.node];
+        let output = &card.node.outputs[pin.id.output];
+        ui.label(port(&output.port)).on_hover_text(format!("{} sent to {} inputs", output.sent, output.subscribers));
+        aside(ui, rate(self.rates, &output.service));
+        self.pin(card)
     }
 
     /// A wire being dragged only snaps to an input it could be connected to.
@@ -468,6 +585,13 @@ impl SnarlViewer<Card> for Viewer<'_> {
     fn node_clicked(&mut self, node: NodeId, snarl: &Snarl<Card>) {
         let card = &snarl[node];
         *self.focus = Focus::node(card.key(), &card.node.params);
+    }
+
+    /// A click beside the cards lets go of the one that was selected.
+    fn background_clicked(&mut self, _: &Snarl<Card>) {
+        if matches!(self.focus, Focus::Node { .. }) {
+            *self.focus = Focus::Nothing;
+        }
     }
 
     fn has_node_menu(&mut self, _: &Card) -> bool {
@@ -509,15 +633,13 @@ fn port(spec: &PortSpec) -> String {
     format!("{}: {}", spec.name, spec.message)
 }
 
-/// A port, followed by how fast data is passing through it if any is: `pose: Pose  120/s`.
-fn port_with_rate(ui: &mut Ui, spec: &PortSpec, rates: &Rates, name: &str) -> egui::Response {
-    let label = ui.label(port(spec));
+/// How fast data is passing through a port, such as `120/s`; nothing if none is.
+fn rate(rates: &Rates, name: &str) -> String {
     match rates.get(name) {
-        Some(rate) if *rate >= 10.0 => _ = ui.weak(format!("{rate:.0}/s")),
-        Some(rate) if *rate > 0.0 => _ = ui.weak(format!("{rate:.1}/s")),
-        _ => {}
+        Some(rate) if *rate >= 10.0 => format!("{rate:.0}/s"),
+        Some(rate) if *rate > 0.0 => format!("{rate:.1}/s"),
+        _ => String::new(),
     }
-    label
 }
 
 fn state(state: &NodeState) -> String {
@@ -528,10 +650,15 @@ fn state(state: &NodeState) -> String {
     }
 }
 
-fn runs_on(placement: &Option<Placement>) -> String {
+/// The thread that runs a node, given the pools of its runtime.
+fn runs_on(placement: &Option<Placement>, pools: &[PoolInfo]) -> String {
     match placement {
-        None => "the application that holds it".to_owned(),
+        None => "the application's own loop".to_owned(),
         Some(Placement::Dedicated) => "a thread of its own".to_owned(),
-        Some(Placement::Pool(pool)) => format!("pool {pool}"),
+        Some(Placement::Pool(name)) => match pools.iter().find(|pool| pool.name == *name) {
+            Some(pool) if pool.shared => format!("pool {name}: any of its {} threads", pool.threads),
+            Some(pool) => format!("pool {name}: one of its {} threads", pool.threads),
+            None => format!("pool {name}"),
+        },
     }
 }

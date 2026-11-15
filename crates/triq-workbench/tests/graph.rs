@@ -3,8 +3,17 @@
 mod scene;
 use scene::*;
 use std::time::Duration;
+use triq::prelude::*;
+use triq_workbench::egui::Rect;
 use triq_workbench::graph::{self, Card};
 use triq_workbench::snarl::Snarl;
+
+#[derive(Ports)]
+#[allow(dead_code)]
+struct WidePorts {
+    a_port_with_quite_a_long_name_in: Input<Pose>,
+    a_port_with_quite_a_long_name_out: Output<Pose>,
+}
 
 fn keys(snarl: &Snarl<Card>) -> Vec<String> {
     let mut keys: Vec<String> = snarl.nodes().map(Card::key).collect();
@@ -103,10 +112,27 @@ fn new_cards_are_laid_out_left_to_right_without_overlapping() -> triq::Result {
     // Three more sources share the first column.
     let _more: Vec<ImuPorts> = (0..3).map(|i| scene.robot.attach(&format!("extra{i}"))).collect::<triq::Result<_>>()?;
     graph::sync(&mut snarl, &scene.inventories());
-    let mut places: Vec<(i32, i32)> = snarl.nodes_pos().map(|(pos, _)| (pos.x as i32, pos.y as i32)).collect();
-    places.sort();
-    places.dedup();
-    assert_eq!(places.len(), 6, "no two cards share a place");
+    let cards: Vec<_> =
+        snarl.nodes_pos().map(|(pos, card)| (card.key(), Rect::from_min_size(pos, graph::size(card)))).collect();
+    assert_eq!(cards.len(), 6);
+    for (index, (name, card)) in cards.iter().enumerate() {
+        for (other_name, other) in &cards[index + 1..] {
+            assert!(!card.intersects(*other), "{name} and {other_name} overlap");
+        }
+    }
+
+    // A card with long port names is wider, and what it feeds keeps clear of it.
+    let wide: WidePorts = scene.robot.attach("wide")?;
+    let _fed: WidePorts = scene.robot.attach("fed")?;
+    scene.robot.connect("wide/a_port_with_quite_a_long_name_out", "fed/a_port_with_quite_a_long_name_in")?;
+    graph::sync(&mut snarl, &scene.inventories());
+    let card = |name: &str| {
+        let (pos, card) = snarl.nodes_pos().find(|(_, card)| card.node.name == name).unwrap();
+        Rect::from_min_size(pos, graph::size(card))
+    };
+    assert!(card("wide").width() > card("imu").width());
+    assert!(card("wide").right() < card("fed").left(), "with room for the wire between them");
+    drop(wide);
     Ok(())
 }
 
@@ -120,11 +146,14 @@ fn only_ports_of_the_same_message_type_can_be_wired() -> triq::Result {
     let imu_pose = &robot.nodes.iter().find(|node| node.name == "imu").unwrap().outputs[0].port;
     assert!(graph::compatible(imu_pose, pose));
     assert!(!graph::compatible(imu_pose, image));
-    assert_eq!(graph::color(&imu_pose.message), graph::color(&pose.message), "one colour per message type");
-    assert_ne!(graph::color(&imu_pose.message), graph::color(&image.message));
     // The same data with a header beside it is another message type.
-    let headed = triq::MessageType { header: "Frame".into(), ..image.message.clone() };
-    assert_ne!(graph::color(&headed), graph::color(&image.message));
+    let headed = triq::PortSpec {
+        message: triq::MessageType { header: "Frame".into(), ..image.message.clone() },
+        ..imu_pose.clone()
+    };
+    assert!(!graph::compatible(&headed, image));
+    // And an input is wired to an output, not to another input.
+    assert!(!graph::compatible(pose, pose));
     Ok(())
 }
 

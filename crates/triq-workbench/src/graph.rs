@@ -1,9 +1,9 @@
 //! From what the runtimes report to what is drawn: one card per node, one wire
 //! per live connection. Nothing here talks to a runtime or to the screen.
-use eframe::egui::{Color32, Pos2, Vec2, ecolor::Hsva, pos2, vec2};
+use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, OutPinId, Snarl};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use triq::{Direction, Inventory, MessageType, NodeInfo, PortSpec};
+use triq::{Direction, Inventory, NodeInfo, PortSpec};
 
 /// One node of one runtime, as drawn.
 #[derive(Debug, Clone, PartialEq)]
@@ -104,8 +104,12 @@ pub fn sync(snarl: &mut Snarl<Card>, inventories: &[Inventory]) {
 
 const LEFT: f32 = 40.0;
 const TOP: f32 = 40.0;
-const COLUMN: f32 = 390.0;
-const GAP: f32 = 36.0;
+/// The room left between cards: across for the wires, down to tell the cards apart.
+const GAP: Vec2 = vec2(90.0, 36.0);
+/// How tall the row of a pin is drawn.
+pub const ROW: f32 = 32.0;
+/// How wide the space beside a pin is, where its rate is written.
+pub const ASIDE: f32 = 48.0;
 
 /// Lay every card out afresh, each one column right of whatever feeds it.
 pub fn tidy(snarl: &mut Snarl<Card>) {
@@ -131,19 +135,28 @@ fn sources_first(mut cards: Vec<Card>) -> Vec<Card> {
     ordered
 }
 
-/// Where a card goes among those already placed: one column right of the
-/// furthest card feeding it, below whatever is in that column.
+/// Where a card goes among those already placed: right of every card that
+/// feeds it, below whatever is already there.
 fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
-    let feeders = placed.iter().filter(|(_, other)| other.feeds(card)).map(|(place, _)| place.x + COLUMN);
-    let x = feeders.fold(LEFT, f32::max);
-    let column = placed.iter().filter(|(place, _)| (place.x - x).abs() < COLUMN / 2.0);
-    let y = column.map(|(place, other)| place.y + size(other).y + GAP).fold(TOP, f32::max);
+    let feeders = placed.iter().filter(|(_, other)| other.feeds(card));
+    let x = feeders.map(|(place, other)| place.x + size(other).x + GAP.x).fold(LEFT, f32::max);
+    let beside = placed.iter().filter(|(place, other)| place.x < x + size(card).x && x < place.x + size(other).x);
+    let y = beside.map(|(place, other)| place.y + size(other).y + GAP.y).fold(TOP, f32::max);
     pos2(x, y)
 }
 
 /// Roughly how large a card is drawn; used to lay cards out and to frame the view.
 pub fn size(card: &Card) -> Vec2 {
-    vec2(320.0, 56.0 + 30.0 * card.node.inputs.len().max(card.node.outputs.len()) as f32)
+    // A letter is about this wide. A port is written `name: Type`, with room for its rate beside it.
+    const LETTER: f32 = 7.5;
+    let written = |port: &PortSpec| LETTER * (port.name.len() + 2 + port.message.to_string().len()) as f32 + ASIDE;
+    let widest = |ports: &mut dyn Iterator<Item = &PortSpec>| ports.map(written).fold(0.0, f32::max);
+    let inputs = widest(&mut card.node.inputs.iter().map(|input| &input.port));
+    let outputs = widest(&mut card.node.outputs.iter().map(|output| &output.port));
+    // The header holds the name, the state and a button.
+    let header = LETTER * (card.node.name.len() + 16) as f32;
+    let rows = card.node.inputs.len().max(card.node.outputs.len());
+    vec2((inputs + outputs + 40.0).max(header), 46.0 + (ROW + 4.0) * rows as f32)
 }
 
 /// How many samples each port has handled so far, by `runtime/node/port`:
@@ -187,12 +200,4 @@ pub fn rates(before: &[Inventory], after: &[Inventory]) -> BTreeMap<String, f64>
 /// Whether an output may be wired to an input: iceoryx2 will insist on the same message type.
 pub fn compatible(output: &PortSpec, input: &PortSpec) -> bool {
     output.direction == Direction::Output && input.direction == Direction::Input && output.message == input.message
-}
-
-/// One colour per message type, the same on every machine and in every session.
-pub fn color(message: &MessageType) -> Color32 {
-    let text = format!("{message}{}", message.size);
-    let hash =
-        text.bytes().fold(0xcbf29ce484222325u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3));
-    Hsva::new((hash % 360) as f32 / 360.0, 0.62, 0.86, 1.0).into()
 }

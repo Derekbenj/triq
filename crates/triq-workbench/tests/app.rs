@@ -2,35 +2,27 @@
 //! look at the machine, create a node from a factory, wire it, pause it, remove it.
 #[path = "support/scene.rs"]
 mod scene;
-use egui_kittest::Harness;
+#[path = "support/window.rs"]
+mod window;
 use egui_kittest::kittest::Queryable;
 use scene::*;
 use triq::{NodeInfo, NodeState};
-use triq_workbench::feed::Feed;
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
-use triq_workbench::{Workbench, egui};
+use window::{Bench, around, open, until};
 
-/// Draw frames until `done` holds.
-fn until(harness: &mut Harness<'_, Workbench>, mut done: impl FnMut(&Harness<'_, Workbench>) -> bool) -> bool {
-    wait_for(|| {
-        harness.step();
-        done(harness)
-    })
-}
-
-fn shows(harness: &Harness<'_, Workbench>, label: &str) -> bool {
+fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
 }
 
-fn click(harness: &mut Harness<'_, Workbench>, label: &str) {
+/// Click something in the lists and panels beside the graph.
+fn click(harness: &mut Bench<'_>, label: &str) {
     harness.get_all_by_label(label).next().unwrap_or_else(|| panic!("nothing labelled {label:?}")).click();
     harness.step();
 }
 
-/// The wires that end in one of `runtimes`. The workbench draws the whole
-/// machine, and other triq programs may be running beside this test.
-fn wires(harness: &Harness<'_, Workbench>, runtimes: [&str; 2]) -> usize {
+/// The wires that end in one of `runtimes`.
+fn wires(harness: &Bench<'_>, runtimes: [&str; 2]) -> usize {
     let graph = harness.state().graph();
     graph.wires().filter(|(_, to)| runtimes.contains(&graph[to.node].runtime.as_str())).count()
 }
@@ -59,10 +51,7 @@ fn input(snarl: &Snarl<Card>, name: &str) -> InPinId {
 fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     let scene = Scene::new()?;
     let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(1500.0, 900.0))
-        .wgpu()
-        .build_ui_state(|ui, bench: &mut Workbench| bench.show(ui), Workbench::new(Feed::start(|| {})?));
+    let mut harness = open()?;
 
     // It shows what is there without being told where to look.
     assert!(until(&mut harness, |harness| shows(harness, &robot) && shows(harness, &desk)), "runtimes are listed");
@@ -73,12 +62,13 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     assert_eq!(wires(&harness, [&robot, &desk]), 2);
 
     // Where data flows, the pins say how fast.
-    assert!(harness.query_all_by_label_contains("/s").next().is_none(), "nothing is flowing yet");
+    let rated = |harness: &Bench<'_>, port| around(harness, port).query_by_label_contains("/s").is_some();
+    assert!(!rated(&harness, "raw: Pose") && !rated(&harness, "smooth: Pose"), "nothing is flowing yet");
     let flowing = until(&mut harness, |harness| {
         scene.imu.pose.send(Pose::default()).expect("send");
-        harness.query_all_by_label_contains("/s").count() >= 3
+        rated(harness, "raw: Pose") && rated(harness, "smooth: Pose")
     });
-    assert!(flowing, "the sensor's output, and the filter's input and output, show a rate");
+    assert!(flowing, "the filter's input and output show a rate");
 
     // Create a node from the factory, through the form.
     click(&mut harness, "New filter");
@@ -100,7 +90,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     assert!(until(&mut harness, |harness| wires(harness, [&robot, &desk]) == 3), "and the wire appears");
 
     // The new node was placed before it was wired; tidying moves it right of what feeds it.
-    let x = |harness: &Harness<'_, Workbench>, name: &str| {
+    let x = |harness: &Bench<'_>, name: &str| {
         harness.state().graph().nodes_pos().find(|(_, card)| card.node.name == name).unwrap().0.x
     };
     assert!(x(&harness, "filter1") <= x(&harness, "imu"));
