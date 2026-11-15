@@ -119,6 +119,27 @@ triq set robot/filter_2 '{"alpha":0.1}'
 triq pause | resume | remove robot/filter_2
 ```
 
+## The workbench
+
+```sh
+cargo run -p triq-workbench
+```
+
+Run it and it shows every runtime on the machine: their pools, the kinds of
+node they offer, their nodes as cards, and their connections as wires coloured
+by message type. It owns no nodes and keeps no state of its own; the drawing
+follows what the runtimes report and updates when they announce a change.
+
+- Click a kind on the left (or right-click the canvas) to create a node: name, thread or pool, settings.
+- Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
+- Right-click a pin to disconnect it; right-click a node to pause, resume or remove it.
+- Select a node to see its counters, edit its settings, and disconnect single sources.
+- An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
+
+`graph.rs` (the drawing as plain data), `feed.rs` (two background threads) and
+`app.rs` (the window) are about 850 lines together. The tests drive the real
+window code without opening one and write a picture to `target/tmp/workbench.png`.
+
 ## Programs with their own main loop
 
 A renderer or a device driver keeps its main thread. It can hold ports itself:
@@ -212,7 +233,8 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 
 ## Not there yet
 
-- The graph editor (egui_snarl) and anything across the network.
+- Anything across the network.
+- The workbench does not remember where cards were placed between runs, and has no panels for custom views of a node's data.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 

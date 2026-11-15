@@ -1,0 +1,17 @@
+[package]
+name = "triq-workbench"
+description = "See the runtimes on this machine as a graph, and rewire them"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+triq = { path = "../triq" }
+eframe = "=0.37.0"
+# The fork carries the egui 0.37 port and the wire and menu behaviour the graph relies on.
+egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5d137ac3aaa6abe4eae8b99916a7a09cc546", default-features = false }
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest = { version = "=0.37.0", features = ["wgpu", "snapshot"] }
+serde.workspace = true
