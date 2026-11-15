@@ -135,9 +135,16 @@ follows what the runtimes report and updates when they announce a change.
 - Right-click a pin to disconnect it; right-click a node to pause, resume or remove it.
 - Select a node to see its counters, edit its settings, and disconnect single sources.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
+- Beside each pin that data is passing through is its rate, such as `120/s`. The details panel adds
+  what was received and lost, the latency of the newest sample, and a node's last error.
+
+That is the monitoring that needs no knowledge of what a message means, and it
+is all the workbench does. It works from the counters every runtime reports
+and the time each runtime read them at. Showing what a message *holds* is a
+viewer's job; see below.
 
 `graph.rs` (the drawing as plain data), `feed.rs` (two background threads) and
-`app.rs` (the window) are about 850 lines together. The tests drive the real
+`app.rs` (the window) are about 920 lines together. The tests drive the real
 window code without opening one and write a picture to `target/tmp/workbench.png`.
 
 ## Programs with their own main loop
@@ -171,22 +178,25 @@ for the application's loop. The application says what only it knows with
 `rt.set_factory_info(kind, json)`, which shows beside the factory (the
 controllers that are plugged in, for example). See `examples/app_loop.rs`.
 
-## Two programs built on it
+## Programs built on it
 
 `triq-xbox` and `triq-bevy` are ordinary users of the library, written to try
 it on real work. Each keeps its own main loop and offers local factories.
+`triq-demo` is the workbench with their two viewers under it.
 
 ```sh
 cargo run -p triq-xbox                 # runtime "xbox": game controllers, read with SDL3
 cargo run -p triq-bevy                 # runtime "bevy": a scene; add --headless for no window
-cargo run -p triq-workbench
+cargo run -p triq-demo                 # runtime "views": the workbench, and what the views show
 ```
 
-In the workbench:
+In the window:
 
 1. Create an `xbox` node. The factory lists the controllers it sees; put one's id in the settings, `{"device": 3}`.
 2. Create a `rig` and one or two `camera` nodes (`{"mount": 0}` and `{"mount": 1}` sit side by side).
 3. Drag `state` to the rig's `controller`, and the rig's `mounts` to each camera's `mounts`.
+4. Create a `controller_view` and a `frame_view` per camera. Drag `state` to the controller view as
+   well (an output feeds as many inputs as you like), and each camera's `image` to a frame view.
 
 The left stick moves the rig, the right stick turns it, the triggers lower and
 raise it. The Bevy window shows the scene from above and each camera's picture.
@@ -195,11 +205,47 @@ with nothing wired, it copies and sends nothing.
 
 | Crate | Files | What to read it for |
 | --- | --- | --- |
-| `triq-xbox` | `lib.rs` 85, `host.rs` 173, `sdl.rs` 93 | a device as a node; which device is a setting, not a wire |
-| `triq-bevy` | `lib.rs` 171, `rig.rs` 67, `scene.rs` 405 | nodes inside an engine's own loop; large frames with a header |
+| `triq-xbox` | `lib.rs` 91, `host.rs` 173, `sdl.rs` 93, `viewer.rs` 130 | a device as a node; which device is a setting, not a wire |
+| `triq-bevy` | `lib.rs` 177, `rig.rs` 67, `scene.rs` 405, `viewer.rs` 140 | nodes inside an engine's own loop; large frames with a header |
+| `triq-demo` | `lib.rs` 57, `main.rs` 22 | a project's own window: the workbench and its viewers together |
 
 Their messages and settings build without SDL or Bevy (`default-features = false`),
 so another program can use `XboxState` or `Frame` without either.
+
+## Viewers
+
+triq has no notion of a viewer, and the workbench cannot draw a message it
+knows nothing about. Neither needs to. A viewer is two ordinary things, kept
+in the crate that owns the message type:
+
+- a kind of node with an input, offered as a local factory by whichever program has a window;
+- a function that draws what those nodes last received.
+
+```rust
+let mut views = FrameViews::new(&runtime)?;   // offers `frame_view` nodes on this program's runtime
+// every frame, wherever the pictures should go:
+views.show(ui);                               // takes each node's newest frame and draws it
+```
+
+Because a view is a node, every tool already lists it, wires it, pauses it and
+removes it, and iceoryx2 already refuses to wire it to the wrong kind of
+output. Nothing was added to triq or to the workbench for `ControllerViews`
+(`triq-xbox/src/viewer.rs`) or `FrameViews` (`triq-bevy/src/viewer.rs`); a
+third crate adds a third viewer the same way.
+
+A project that wants its views in the workbench's window writes that window.
+The heart of `triq-demo` is this, around a runtime to hold the view nodes:
+
+```rust
+egui::Panel::bottom("views").show(ui, |ui| {
+    self.controllers.show(ui);
+    self.frames.show(ui);
+});
+self.workbench.show(ui);
+```
+
+A view can as well live in a window of its own, or inside the program that
+produces the data; it is only a node and a drawing function.
 
 ## Delivery
 
@@ -260,12 +306,12 @@ convention each side has to know and nothing checks.
 | `node.rs` | 252 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 206 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 650 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime.rs` | 652 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 117 | factories whose nodes the application runs |
 | `control.rs`, `remote.rs` | 412 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 283 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 288 | report types, the error type, iceoryx2 type names |
 
-About 2,820 lines including comments, plus the derive macro (66) and the command-line tool (158).
+About 2,830 lines including comments, plus the derive macro (66) and the command-line tool (158).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements
@@ -300,8 +346,8 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 ## Not there yet
 
 - Anything across the network.
-- The workbench does not remember where cards were placed between runs, and has no panels for custom views of a node's data. Nothing yet shows a camera's frames outside the Bevy window.
-- `triq-xbox` has been run against pretend controllers and with none plugged in, not yet with a real one in hand.
+- The workbench does not remember where cards were placed between runs.
+- `triq-xbox` is tested with pretend controllers; nothing in the test suite reads a real one.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 
