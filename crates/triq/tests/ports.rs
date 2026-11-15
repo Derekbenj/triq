@@ -112,6 +112,49 @@ fn a_full_queue_drops_its_oldest_sample_and_the_input_counts_the_loss() -> triq:
 }
 
 #[test]
+fn a_connection_reports_the_longest_gap_between_its_samples_of_late() -> triq::Result {
+    let rt = Runtime::new(&unique("gap"))?;
+    let source: Source = rt.attach("source")?;
+    let sink: Sink = rt.attach("sink")?;
+    rt.connect("source/out", "sink/input")?;
+    let gap = || {
+        let inventory = rt.inventory();
+        let sink = inventory.nodes.iter().find(|node| node.name == "sink").expect("the sink");
+        Duration::from_micros(sink.inputs[0].sources[0].gap_us)
+    };
+    // Send one sample after a pause, and take it.
+    let send_after = |pause: Duration| -> triq::Result {
+        std::thread::sleep(pause);
+        source.out.send(pose(0.0))?;
+        assert!(sink.input.recv()?.is_some());
+        Ok(())
+    };
+
+    send_after(Duration::ZERO)?;
+    assert_eq!(gap(), Duration::ZERO, "one sample has nothing before it");
+
+    // Samples a few milliseconds apart, then a hole.
+    let (step, hole) = (Duration::from_millis(5), Duration::from_millis(200));
+    for _ in 0..5 {
+        send_after(step)?;
+    }
+    assert!(gap() >= step && gap() < hole, "{:?}", gap());
+    send_after(hole)?;
+    assert!(gap() >= hole, "the hole is the longest gap: {:?}", gap());
+
+    // It is reported for a second or two, so that a tool looking now and then
+    // sees it however many tools are looking. After that it is history.
+    send_after(step)?;
+    assert!(gap() >= hole, "still reported a moment later: {:?}", gap());
+    let later = Instant::now() + Duration::from_millis(2300);
+    while Instant::now() < later {
+        send_after(step)?;
+    }
+    assert!(gap() >= step && gap() < hole, "{:?}", gap());
+    Ok(())
+}
+
+#[test]
 fn latest_skips_to_the_newest_sample() -> triq::Result {
     let rt = Runtime::new(&unique("skip"))?;
     let source: SmallQueue = rt.attach("source")?;

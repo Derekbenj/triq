@@ -130,8 +130,8 @@ fn describe_node(node: &NodeInfo) -> String {
             };
             _ = writeln!(
                 text,
-                "      <- {} ({state}, {} received, {} lost, {} us)",
-                source.output, source.received, source.lost, source.latency_us
+                "      <- {} ({state}, {} received, {} lost, {} us latency, {} us longest gap)",
+                source.output, source.received, source.lost, source.latency_us, source.gap_us
             );
         }
     }

@@ -55,9 +55,46 @@ struct Source<T: Payload + ?Sized, H: Header> {
     /// Why the last attempt to link failed, other than the output not existing.
     problem: Option<String>,
     last_seq: u64,
+    /// When the sample before was sent, by its stamp.
+    last_sent_ns: u64,
     received: u64,
     lost: u64,
     latency_ns: u64,
+    /// The time from one sample to the next, by when they were sent.
+    gap_ns: Lately,
+}
+
+/// The largest value noted lately: in the current second by the clock, or in
+/// the one before. Nothing is reset when it is read, so any number of tools
+/// that look now and then all see every peak.
+#[derive(Default)]
+struct Lately {
+    /// The second that `now` is the largest of.
+    second: u64,
+    now: u64,
+    before: u64,
+}
+
+impl Lately {
+    const SECOND: u64 = 1_000_000_000;
+
+    fn note(&mut self, at_ns: u64, value: u64) {
+        let second = at_ns / Self::SECOND;
+        if second != self.second {
+            // The largest of a second ago moves back; anything older is forgotten.
+            self.before = if second == self.second + 1 { self.now } else { 0 };
+            (self.second, self.now) = (second, 0);
+        }
+        self.now = self.now.max(value);
+    }
+
+    fn largest(&self, at_ns: u64) -> u64 {
+        match (at_ns / Self::SECOND).saturating_sub(self.second) {
+            0 => self.now.max(self.before),
+            1 => self.now,
+            _ => 0,
+        }
+    }
 }
 
 struct Link<T: Payload + ?Sized, H: Header> {
@@ -159,18 +196,31 @@ impl<T: Payload + ?Sized, H: Header> Deref for Sample<T, H> {
 
 impl<T: Payload + ?Sized, H: Header> Source<T, H> {
     fn new(output: &str) -> Self {
-        Self { output: output.into(), link: None, problem: None, last_seq: 0, received: 0, lost: 0, latency_ns: 0 }
+        Self {
+            output: output.into(),
+            link: None,
+            problem: None,
+            last_seq: 0,
+            last_sent_ns: 0,
+            received: 0,
+            lost: 0,
+            latency_ns: 0,
+            gap_ns: Lately::default(),
+        }
     }
 
     fn count(&mut self, stamp: Stamp) {
-        // Losses are counted from the first sample seen. A sequence that goes
-        // backwards means the output's node was restarted: start afresh.
+        let now = now_ns();
+        // Losses and gaps are counted from the first sample seen. A sequence that
+        // goes backwards means the output's node was restarted: start afresh.
         if self.received > 0 && stamp.seq > self.last_seq {
             self.lost += stamp.seq - self.last_seq - 1;
+            self.gap_ns.note(now, stamp.sent_ns.saturating_sub(self.last_sent_ns));
         }
         self.last_seq = stamp.seq;
+        self.last_sent_ns = stamp.sent_ns;
         self.received += 1;
-        self.latency_ns = now_ns().saturating_sub(stamp.sent_ns);
+        self.latency_ns = now.saturating_sub(stamp.sent_ns);
     }
 }
 
@@ -300,6 +350,7 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
                 received: source.received,
                 lost: source.lost,
                 latency_us: source.latency_ns / 1000,
+                gap_us: source.gap_ns.largest(now_ns()) / 1000,
             };
             let service = |source: &Source<T, H>| source.link.as_ref().map(|link| link.service.clone());
             sources.list.iter().map(|source| (describe(source), service(source))).unzip()
