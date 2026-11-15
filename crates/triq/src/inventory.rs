@@ -96,9 +96,10 @@ pub struct SourceInfo {
     /// Send-to-receive time of the most recent sample.
     pub latency_us: u64,
     /// The longest time from one sample to the next, by when they were sent,
-    /// over the last second or two. A hiccup of the sender shows here, and so
-    /// does a hole left by lost samples. Zero until two samples have arrived
-    /// in that time, and from a runtime too old to say.
+    /// over the last half second to second: read at least twice a second, no
+    /// gap is missed. A hiccup of the sender shows here, and so does a hole
+    /// left by lost samples. Zero until two samples have arrived in that
+    /// time, and from a runtime too old to say.
     #[serde(default)]
     pub gap_us: u64,
 }

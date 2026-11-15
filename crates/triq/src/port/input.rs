@@ -64,32 +64,32 @@ struct Source<T: Payload + ?Sized, H: Header> {
     gap_ns: Lately,
 }
 
-/// The largest value noted lately: in the current second by the clock, or in
-/// the one before. Nothing is reset when it is read, so any number of tools
-/// that look now and then all see every peak.
+/// The largest value noted lately: in the current half second by the clock,
+/// or in the one before. Nothing is reset when it is read, so any number of
+/// tools that look at least twice a second all see every peak.
 #[derive(Default)]
 struct Lately {
-    /// The second that `now` is the largest of.
-    second: u64,
+    /// The half second that `now` is the largest of, counted from 1970.
+    half: u64,
     now: u64,
     before: u64,
 }
 
 impl Lately {
-    const SECOND: u64 = 1_000_000_000;
+    const HALF_SECOND: u64 = 500_000_000;
 
     fn note(&mut self, at_ns: u64, value: u64) {
-        let second = at_ns / Self::SECOND;
-        if second != self.second {
-            // The largest of a second ago moves back; anything older is forgotten.
-            self.before = if second == self.second + 1 { self.now } else { 0 };
-            (self.second, self.now) = (second, 0);
+        let half = at_ns / Self::HALF_SECOND;
+        if half != self.half {
+            // The largest of the half second before moves back; anything older is forgotten.
+            self.before = if half == self.half + 1 { self.now } else { 0 };
+            (self.half, self.now) = (half, 0);
         }
         self.now = self.now.max(value);
     }
 
     fn largest(&self, at_ns: u64) -> u64 {
-        match (at_ns / Self::SECOND).saturating_sub(self.second) {
+        match (at_ns / Self::HALF_SECOND).saturating_sub(self.half) {
             0 => self.now.max(self.before),
             1 => self.now,
             _ => 0,

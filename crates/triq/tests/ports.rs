@@ -140,14 +140,17 @@ fn a_connection_reports_the_longest_gap_between_its_samples_of_late() -> triq::R
     }
     assert!(gap() >= step && gap() < hole, "{:?}", gap());
     send_after(hole)?;
+    let seen = Instant::now();
     assert!(gap() >= hole, "the hole is the longest gap: {:?}", gap());
 
-    // It is reported for a second or two, so that a tool looking now and then
-    // sees it however many tools are looking. After that it is history.
-    send_after(step)?;
-    assert!(gap() >= hole, "still reported a moment later: {:?}", gap());
-    let later = Instant::now() + Duration::from_millis(2300);
-    while Instant::now() < later {
+    // It is reported for at least half a second, so that a tool looking a few
+    // times a second sees it however many tools are looking, and for no more
+    // than a second. After that it is history.
+    while seen.elapsed() < Duration::from_millis(400) {
+        send_after(step)?;
+    }
+    assert!(gap() >= hole, "still reported: {:?}", gap());
+    while seen.elapsed() < Duration::from_millis(1100) {
         send_after(step)?;
     }
     assert!(gap() >= step && gap() < hole, "{:?}", gap());
