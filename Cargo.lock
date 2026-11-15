@@ -6969,6 +6969,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "triq-demo"
+version = "0.1.0"
+dependencies = [
+ "egui_kittest",
+ "serde_json",
+ "triq",
+ "triq-bevy",
+ "triq-workbench",
+ "triq-xbox",
+]
+
+[[package]]
 name = "triq-macros"
 version = "0.1.0"
 dependencies = [
