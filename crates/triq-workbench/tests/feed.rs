@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use triq::{NodeInfo, NodeState, Placement};
 use triq_workbench::feed::{Feed, Request};
+use triq_workbench::history::Connection;
 
 fn node(feed: &Feed, runtime: &str, name: &str) -> Option<NodeInfo> {
     let inventories = feed.inventories();
@@ -34,6 +35,20 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
         imu.pose.send(Pose::default()).expect("send");
         feed.rates().get(&sending).is_some_and(|rate| *rate > 10.0)
     }));
+
+    // And every reading adds to what is kept of each connection's past.
+    let filtered = Connection { to: format!("{robot_name}/smoother/raw"), from: sending.clone() };
+    let points = |feed: &Feed| feed.history().points(&filtered).copied().collect::<Vec<_>>();
+    assert!(wait_for(|| {
+        imu.pose.send(Pose::default()).expect("send");
+        points(&feed).len() >= 3
+    }));
+    let points = points(&feed);
+    assert!(points.iter().any(|point| point.rate > 10.0), "{points:?}");
+    assert!(
+        points.windows(2).all(|pair| pair[1].at - pair[0].at > 0.2),
+        "readings are not taken in a rush: {points:?}"
+    );
 
     // Each request is carried out in the background and shows in the inventory that follows.
     let (runtime, name) = on("extra");

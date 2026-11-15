@@ -1,4 +1,5 @@
 //! One colour per runtime, so that a glance at the graph tells which program a node runs in.
+//! The lines of a chart take their colours from the same palette.
 use eframe::egui::Color32;
 use std::collections::BTreeMap;
 
@@ -44,11 +45,15 @@ impl Colors {
         }
     }
 
-    /// The colour of a runtime. On a light background it is darkened to stand out.
+    /// The colour of a runtime.
     pub fn of(&self, runtime: &str, dark: bool) -> Color32 {
-        let Some(place) = self.given.get(runtime) else { return Color32::GRAY };
-        let (r, g, b) = PALETTE[*place];
-        let shade = |channel: u8| if dark { channel } else { (f32::from(channel) * 0.73) as u8 };
-        Color32::from_rgb(shade(r), shade(g), shade(b))
+        self.given.get(runtime).map_or(Color32::GRAY, |place| shade(*place, dark))
     }
+}
+
+/// A colour of the palette, by its place in it. On a light background it is darkened to stand out.
+pub fn shade(place: usize, dark: bool) -> Color32 {
+    let (r, g, b) = PALETTE[place % PALETTE.len()];
+    let shade = |channel: u8| if dark { channel } else { (f32::from(channel) * 0.73) as u8 };
+    Color32::from_rgb(shade(r), shade(g), shade(b))
 }

@@ -105,7 +105,20 @@ impl Scene {
         Ok(Self { robot, desk, imu, viewer })
     }
 
+    /// What the two runtimes report, the desk first.
     pub fn inventories(&self) -> Vec<triq::Inventory> {
         vec![self.desk.inventory(), self.robot.inventory()]
     }
+}
+
+/// Pretend each runtime took its second reading this long after its first.
+pub fn later(
+    before: &[triq::Inventory],
+    mut after: Vec<triq::Inventory>,
+    elapsed: [Duration; 2],
+) -> Vec<triq::Inventory> {
+    for ((after, before), elapsed) in after.iter_mut().zip(before).zip(elapsed) {
+        after.taken_ns = before.taken_ns + elapsed.as_nanos() as u64;
+    }
+    after
 }

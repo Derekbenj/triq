@@ -1,4 +1,5 @@
-//! The window: the machine on the left, the graph in the middle, details on the right.
+//! The window. One tab is the graph: the machine on the left, the graph in the
+//! middle, details on the right. The other is charts of what connections do over time.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -6,6 +7,7 @@
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
 //! the wires that leave it.
+use crate::charts::Charts;
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
@@ -20,9 +22,18 @@ pub struct Workbench {
     feed: Feed,
     snarl: Snarl<Card>,
     colors: Colors,
+    charts: Charts,
+    tab: Tab,
     focus: Focus,
     /// Bring every card into view on the next frame that has any.
     fit: bool,
+}
+
+/// What fills the window under the top row.
+#[derive(PartialEq)]
+enum Tab {
+    Graph,
+    Charts,
 }
 
 /// What the right-hand panel is about.
@@ -48,7 +59,15 @@ struct Form {
 
 impl Workbench {
     pub fn new(feed: Feed) -> Self {
-        Self { feed, snarl: Snarl::new(), colors: Colors::default(), focus: Focus::Nothing, fit: true }
+        Self {
+            feed,
+            snarl: Snarl::new(),
+            colors: Colors::default(),
+            charts: Charts::default(),
+            tab: Tab::Graph,
+            focus: Focus::Nothing,
+            fit: true,
+        }
     }
 
     /// The drawing: one card per node, one wire per live connection.
@@ -78,21 +97,32 @@ impl Workbench {
         }
 
         egui::Panel::top("status").show(ui, |ui| self.status(ui, &inventories));
+        if self.tab == Tab::Charts {
+            return self.charts.show(ui, &self.feed.history());
+        }
         egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
         let rates = self.feed.rates();
         egui::Panel::right("details").default_size(330.0).show(ui, |ui| self.details(ui, &inventories, &rates));
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, &inventories, &rates));
     }
 
+    /// The top row: the tabs, and what goes with the one that is open.
     fn status(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
         ui.horizontal(|ui| {
-            let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
-            ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
-            if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
-                graph::tidy(&mut self.snarl);
-                self.fit = true;
+            ui.selectable_value(&mut self.tab, Tab::Graph, "Graph");
+            ui.selectable_value(&mut self.tab, Tab::Charts, "Charts");
+            ui.separator();
+            if self.tab == Tab::Charts {
+                self.charts.controls(ui);
+            } else {
+                let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
+                ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
+                if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
+                    graph::tidy(&mut self.snarl);
+                    self.fit = true;
+                }
+                self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
             }
-            self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
             if let Some(problem) = self.feed.problem() {
                 ui.colored_label(ui.visuals().error_fg_color, problem);
                 if ui.small_button("Dismiss").clicked() {
@@ -319,7 +349,10 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, setting
         for source in &input.sources {
             let link = match (&source.problem, source.connected) {
                 (Some(problem), _) => problem.clone(),
-                (None, true) => format!("{} received, {} lost, {} µs", source.received, source.lost, source.latency_us),
+                (None, true) => format!(
+                    "{} received, {} lost, {} µs latency, {} µs longest gap",
+                    source.received, source.lost, source.latency_us, source.gap_us
+                ),
                 (None, false) => "waiting for the output".to_owned(),
             };
             ui.weak(format!("from {}", source.output));

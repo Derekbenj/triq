@@ -1,15 +1,17 @@
 //! The workbench's link to the machine, kept off the thread that draws.
 //!
 //! One thread keeps the list of inventories fresh: it listens for runtimes
-//! announcing a change and asks them again, and works out how fast data is
-//! flowing from one reading of the counters to the next. Another carries out what the user
-//! asked for, one request at a time, so a slow runtime never freezes the window.
+//! announcing a change and asks them again. From one reading of the counters
+//! to the next it works out how fast data is flowing, and it keeps what each
+//! connection did as history. Another thread carries out what the user asked
+//! for, one request at a time, so a slow runtime never freezes the window.
 use crate::graph;
+use crate::history::History;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 use triq::{Inventory, Placement, Remote, Watch};
@@ -64,6 +66,7 @@ struct Shared {
     inventories: Mutex<Arc<Vec<Inventory>>>,
     /// Samples per second through each port, by `runtime/node/port`.
     rates: Mutex<Arc<BTreeMap<String, f64>>>,
+    history: Mutex<History>,
     /// The most recent request that failed, and why.
     problem: Mutex<Option<String>>,
     stop: AtomicBool,
@@ -75,6 +78,7 @@ impl Feed {
         let shared = Arc::new(Shared {
             inventories: Mutex::default(),
             rates: Mutex::default(),
+            history: Mutex::default(),
             problem: Mutex::default(),
             stop: AtomicBool::new(false),
         });
@@ -92,6 +96,7 @@ impl Feed {
                         // rate measured over a few milliseconds would mean little.
                         if reading.0.elapsed() >= REFRESH / 2 {
                             *shared.rates.lock().unwrap() = Arc::new(graph::rates(&reading.1, &found));
+                            shared.history.lock().unwrap().record(&found);
                             reading = (Instant::now(), found.clone());
                         }
                         *shared.inventories.lock().unwrap() = found;
@@ -124,6 +129,12 @@ impl Feed {
     /// Samples per second through each port, by `runtime/node/port`, over the last half second or so.
     pub fn rates(&self) -> Arc<BTreeMap<String, f64>> {
         self.shared.rates.lock().unwrap().clone()
+    }
+
+    /// What every connection did over the last hour, a point for about every half second.
+    /// Readings wait while this is held, so let go of it once a frame is drawn.
+    pub fn history(&self) -> MutexGuard<'_, History> {
+        self.shared.history.lock().unwrap()
     }
 
     /// Carry out a request in the background. Its effect shows in a later inventory.

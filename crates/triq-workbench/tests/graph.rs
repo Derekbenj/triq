@@ -179,14 +179,6 @@ fn tidying_puts_every_card_right_of_what_feeds_it() -> triq::Result {
     Ok(())
 }
 
-/// Pretend each runtime took its second reading this long after its first.
-fn later(before: &[triq::Inventory], mut after: Vec<triq::Inventory>, elapsed: [Duration; 2]) -> Vec<triq::Inventory> {
-    for ((after, before), elapsed) in after.iter_mut().zip(before).zip(elapsed) {
-        after.taken_ns = before.taken_ns + elapsed.as_nanos() as u64;
-    }
-    after
-}
-
 #[test]
 fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
     let scene = Scene::new()?;

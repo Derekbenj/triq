@@ -4,7 +4,7 @@
 mod scene;
 #[path = "support/window.rs"]
 mod window;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use triq::{NodeInfo, NodeState};
 use triq_workbench::graph::Card;
@@ -69,6 +69,19 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
         rated(harness, "raw: Pose") && rated(harness, "smooth: Pose")
     });
     assert!(flowing, "the filter's input and output show a rate");
+
+    // The other tab is about what connections do over time. It lists them, with their numbers as they stand.
+    click(&mut harness, "Charts");
+    let filtered = format!("{robot}/smoother/raw");
+    let listed = until(&mut harness, |harness| {
+        scene.imu.pose.send(Pose::default()).expect("send");
+        let connection = harness.query_by_label(&filtered).and_then(|name| name.parent());
+        connection.is_some_and(|connection| connection.query_all_by_label_contains("/s").next().is_some())
+    });
+    assert!(listed, "the filter's connection is listed, with a rate");
+    assert!(shows(&harness, "Drag a number here.") && !shows(&harness, "Tidy"), "charts take the place of the graph");
+    click(&mut harness, "Graph");
+    assert!(until(&mut harness, |harness| shows(harness, "Tidy") && !shows(harness, "Drag a number here.")));
 
     // Create a node from the factory, through the form.
     click(&mut harness, "New filter");
