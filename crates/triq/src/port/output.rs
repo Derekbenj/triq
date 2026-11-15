@@ -1,0 +1,190 @@
+//! The sending end of a connection: one iceoryx2 service per output.
+use super::{NodeGuard, PortOptions, PortSpec};
+use crate::inventory::OutputInfo;
+use crate::message::now_ns;
+use crate::raw::{IpcNode, Notifier, PubSub, Publisher, RawLoan};
+use crate::{Error, Payload, Result, Stamp};
+use iceoryx2::port::SendError;
+use iceoryx2::prelude::{PortFactory, PortName, ServiceName, ZeroCopySend};
+use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+const DEFAULT_SUBSCRIBERS: usize = 8;
+const DEFAULT_HOLD: usize = 2;
+
+/// Sends messages of type `T` to every connected input.
+///
+/// By default a slow input loses its oldest waiting sample and the sender
+/// never waits. With `#[port(reliable_ms = N)]` the sender instead waits up to
+/// `N` milliseconds for a full input and then fails with [`Error::Undelivered`].
+pub struct Output<T: Payload + ?Sized> {
+    shared: Arc<Shared<T>>,
+    _node: Arc<NodeGuard>,
+}
+
+/// What the runtime keeps of an output after handing it to its node.
+pub(crate) trait OutputPort: Send + Sync {
+    fn info(&self, spec: &PortSpec) -> OutputInfo;
+}
+
+pub(crate) struct Shared<T: Payload + ?Sized> {
+    name: String,
+    publisher: Publisher<T>,
+    /// Wakes the threads waiting on the connected inputs.
+    notifier: Notifier,
+    service: PubSub<T>,
+    seq: AtomicU64,
+    sent: AtomicU64,
+    undelivered: AtomicU64,
+}
+
+impl<T: Payload + ?Sized> Output<T> {
+    pub(crate) fn new(shared: Arc<Shared<T>>, node: Arc<NodeGuard>) -> Self {
+        Self { shared, _node: node }
+    }
+
+    /// The machine-wide name inputs connect to: `runtime/node/port`.
+    pub fn name(&self) -> &str {
+        &self.shared.name
+    }
+
+    /// How many inputs are connected right now. Worth checking before
+    /// producing something expensive that nobody would receive.
+    pub fn subscribers(&self) -> usize {
+        self.shared.service.dynamic_config().number_of_subscribers()
+    }
+}
+
+impl<T: Payload> Output<T> {
+    /// Copy `value` into shared memory and deliver it.
+    /// Returns how many inputs received it.
+    pub fn send(&self, value: T) -> Result<usize> {
+        let loan = self.shared.publisher.loan_uninit()?.write_payload(value);
+        self.shared.deliver(loan)
+    }
+
+    /// Shared memory holding `T::default()`, to be filled in place and sent.
+    pub fn loan(&self) -> Result<Loan<'_, T>>
+    where
+        T: Default,
+    {
+        Ok(Loan { raw: self.shared.publisher.loan()?, output: &self.shared })
+    }
+}
+
+impl<T: Debug + ZeroCopySend + 'static> Output<[T]> {
+    /// Copy `values` into shared memory once and deliver them.
+    pub fn send_slice(&self, values: &[T]) -> Result<usize>
+    where
+        T: Copy,
+    {
+        let loan = self.shared.publisher.loan_slice_uninit(values.len())?.write_from_slice(values);
+        self.shared.deliver(loan)
+    }
+
+    /// Shared memory for `len` default elements, to be filled in place and sent.
+    pub fn loan(&self, len: usize) -> Result<Loan<'_, [T]>>
+    where
+        T: Default,
+    {
+        Ok(Loan { raw: self.shared.publisher.loan_slice(len)?, output: &self.shared })
+    }
+}
+
+/// A message under construction, already in shared memory.
+/// Dropping it without calling [`Loan::send`] gives the memory back.
+pub struct Loan<'a, T: Payload + ?Sized> {
+    raw: RawLoan<T>,
+    output: &'a Shared<T>,
+}
+
+impl<T: Payload + ?Sized> Loan<'_, T> {
+    /// Deliver the message. Returns how many inputs received it.
+    pub fn send(self) -> Result<usize> {
+        self.output.deliver(self.raw)
+    }
+}
+
+impl<T: Payload + ?Sized> Deref for Loan<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        T::loaned(&self.raw)
+    }
+}
+
+impl<T: Payload + ?Sized> DerefMut for Loan<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        T::loaned_mut(&mut self.raw)
+    }
+}
+
+impl<T: Payload + ?Sized> Shared<T> {
+    pub fn create(ipc: &IpcNode, service: &str, port: &str, options: &PortOptions) -> Result<Self> {
+        if options.depth.is_some() {
+            return Err(Error::Mismatch(format!("{service}: `depth` belongs on an input")));
+        }
+        let name = ServiceName::new(service)?;
+        let subscribers = options.subscribers.unwrap_or(DEFAULT_SUBSCRIBERS);
+        // The wake-up service comes first, so an input that finds the data service finds both.
+        // A restarted node reopens the services its subscribers kept alive.
+        let events = ipc
+            .service_builder(&name)
+            .event()
+            .max_listeners(subscribers)
+            .max_nodes(subscribers + 2)
+            .open_or_create()?;
+        let service = T::open_or_create(
+            ipc.service_builder(&name)
+                .publish_subscribe::<T>()
+                .user_header::<Stamp>()
+                .max_publishers(1)
+                .max_subscribers(subscribers)
+                .max_nodes(subscribers + 2)
+                .subscriber_max_buffer_size(options.queue.unwrap_or(T::DEFAULT_QUEUE))
+                .subscriber_max_borrowed_samples(options.hold.unwrap_or(DEFAULT_HOLD))
+                .enable_safe_overflow(options.reliable_ms.is_none()),
+        )?;
+        Ok(Self {
+            name: name.to_string(),
+            publisher: T::publisher(&service, &PortName::new(port)?, options)?,
+            notifier: events.notifier_builder().create()?,
+            service,
+            seq: AtomicU64::new(0),
+            sent: AtomicU64::new(0),
+            undelivered: AtomicU64::new(0),
+        })
+    }
+
+    fn deliver(&self, mut loan: RawLoan<T>) -> Result<usize> {
+        *loan.user_header_mut() = Stamp { seq: self.seq.fetch_add(1, Ordering::Relaxed) + 1, sent_ns: now_ns() };
+        self.sent.fetch_add(1, Ordering::Relaxed);
+        let delivered = match loan.send() {
+            Ok(delivered) => delivered,
+            // A reliable output gave up on one input; the others have the sample.
+            Err(SendError::UnableToDeliver) => {
+                self.undelivered.fetch_add(1, Ordering::Relaxed);
+                self.notifier.notify()?;
+                return Err(Error::Undelivered);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if delivered > 0 {
+            self.notifier.notify()?;
+        }
+        Ok(delivered)
+    }
+}
+
+impl<T: Payload + ?Sized> OutputPort for Shared<T> {
+    fn info(&self, spec: &PortSpec) -> OutputInfo {
+        OutputInfo {
+            port: spec.clone(),
+            service: self.name.clone(),
+            subscribers: self.service.dynamic_config().number_of_subscribers(),
+            sent: self.sent.load(Ordering::Relaxed),
+            undelivered: self.undelivered.load(Ordering::Relaxed),
+        }
+    }
+}
