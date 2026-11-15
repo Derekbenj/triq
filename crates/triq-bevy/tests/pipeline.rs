@@ -140,3 +140,36 @@ fn a_controller_drives_the_rig_and_a_camera_on_it_sends_pictures() -> triq::Resu
     assert!(ended.success());
     Ok(())
 }
+
+#[test]
+fn without_a_window_the_program_keeps_the_pace_it_is_told() -> triq::Result {
+    let bevy = format!("pace{}", std::process::id());
+    let here = format!("watch{}", std::process::id());
+    // A hundred frames a second: more than the sixty it used to be held to.
+    let arguments = [bevy.as_str(), "--headless", "--fps", "100"];
+    let _program =
+        Program(Command::new(env!("CARGO_BIN_EXE_triq-bevy")).args(arguments).stdout(Stdio::null()).spawn()?);
+    let rt = Runtime::new(&here)?;
+    let pilot: Pilot = rt.attach("pad")?;
+    let remote = wait_for("the Bevy program", || {
+        let remote = Remote::open(&bevy).ok()?;
+        (remote.inventory().ok()?.factories.len() == 2).then_some(remote)
+    });
+    remote.spawn(CAMERA, "fast", Placement::Dedicated, json!({ "width": WIDTH, "height": HEIGHT, "hz": 100.0 }))?;
+    triq::connect(&format!("{bevy}/fast/image"), &format!("{here}/pad/image"))?;
+
+    // Two seconds of pictures, each stamped with the time it was sent.
+    next_frame(&pilot);
+    let mut sent = Vec::new();
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until {
+        while let Some(frame) = pilot.image.recv()? {
+            sent.push(frame.stamp().sent_ns);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let rate = (sent.len() - 1) as f64 / ((sent[sent.len() - 1] - sent[0]) as f64 / 1e9);
+    // Each frame is due a fixed time after the one before was due, so the rate is the one asked for.
+    assert!((97.0..=103.0).contains(&rate), "{rate:.1} pictures a second");
+    Ok(())
+}

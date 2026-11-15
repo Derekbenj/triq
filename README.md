@@ -163,15 +163,17 @@ The `Charts` tab, beside `Graph`, shows what connections do over time:
 
 Nothing in it is measured by the workbench. A runtime reports counters for each of its connections,
 and the workbench reads them ten times a second and keeps what they say. So a line has ten points a
-second, whatever the rate of the data. A rate is counted over the half second before each point:
-over a tenth of a second, one sample more or less would look like ten a second. The longest gap is
-the one thing a count cannot tell, so every input keeps it: the longest time from one sample to the
-next, by when they were sent, over the last half second to second. A hiccup of the sender shows
-there, and so does the hole that lost samples leave.
+second, whatever the rate of the data. A rate is taken over the half second before each point, and
+timed by when the samples were sent: both ends of a connection report the send time of their newest
+sample, which the sender stamps on it. Counted against the clock of the readings, sixty samples a
+second would read 58, 60 or 62. The longest gap is the one thing a count cannot tell, so every
+input keeps it: the longest time from one sample to the next, by when they were sent, over the last
+half second to second. A hiccup of the sender shows there, and so does the hole that lost samples
+leave.
 
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections did, as plain data), `charts.rs` (the charts),
-`feed.rs` (two background threads) and `app.rs` (the window) are about 1,590
+`feed.rs` (two background threads) and `app.rs` (the window) are about 1,670
 lines together. The tests drive the real window code without opening one, with
 a pointer where it matters, and write pictures to `target/tmp/workbench.png`,
 `target/tmp/graph.png` and `target/tmp/charts.png`.
@@ -216,6 +218,7 @@ it on real work. Each keeps its own main loop and offers local factories.
 ```sh
 cargo run -p triq-xbox                 # runtime "xbox": game controllers, read with SDL3
 cargo run -p triq-bevy                 # runtime "bevy": a scene; add --headless for no window
+cargo run -p triq-bevy -- --fps 120    # its frame rate when its window is not in front, or it has none
 cargo run -p triq-demo                 # runtime "views": the workbench, and what the views show
 ```
 
@@ -232,10 +235,17 @@ raise it. The Bevy window shows the scene from above and each camera's picture.
 A camera sends its frames as `image: u8[] + Frame` to whatever is wired to it;
 with nothing wired, it copies and sends nothing.
 
+A camera cannot send more pictures than the program has frames. With its
+window in front the program follows the display. Otherwise it keeps time
+itself, sixty frames a second unless `--fps` says otherwise, where Bevy alone
+would fall back to sixty whenever its window is not in front. Asked for as
+many pictures as there are frames, a camera sends every frame; asked for
+fewer, it sends them evenly.
+
 | Crate | Files | What to read it for |
 | --- | --- | --- |
 | `triq-xbox` | `lib.rs` 91, `host.rs` 173, `sdl.rs` 93, `viewer.rs` 130 | a device as a node; which device is a setting, not a wire |
-| `triq-bevy` | `lib.rs` 177, `rig.rs` 67, `scene.rs` 405, `viewer.rs` 140 | nodes inside an engine's own loop; large frames with a header |
+| `triq-bevy` | `lib.rs` 215, `rig.rs` 67, `scene.rs` 446, `viewer.rs` 140 | nodes inside an engine's own loop; large frames with a header |
 | `triq-demo` | `lib.rs` 57, `main.rs` 22 | a project's own window: the workbench and its viewers together |
 
 Their messages and settings build without SDL or Bevy (`default-features = false`),
@@ -331,16 +341,16 @@ convention each side has to know and nothing checks.
 | File | Lines | What it holds |
 | --- | ---: | --- |
 | `message.rs` | 194 | message types, headers, the stamp on every sample |
-| `port.rs`, `port/output.rs`, `port/input.rs` | 702 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
+| `port.rs`, `port/output.rs`, `port/input.rs` | 710 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
 | `node.rs` | 252 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 206 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
 | `runtime.rs` | 652 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 117 | factories whose nodes the application runs |
 | `control.rs`, `remote.rs` | 438 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 295 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 306 | report types, the error type, iceoryx2 type names |
 
-About 2,910 lines including comments, plus the derive macro (66) and the command-line tool (158).
+About 2,930 lines including comments, plus the derive macro (66) and the command-line tool (158).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

@@ -4,15 +4,15 @@
 //! Bevy keeps the main thread, as it must. The rig and the cameras are nodes
 //! that this program runs itself: it offers two factories, takes the ports of
 //! each node that is asked for, and uses them from ordinary Bevy systems.
-use crate::{CameraParams, CameraPorts, Frame, Mounts, Pose, RigParams, RigPorts, RigState, unpadded};
-use bevy::app::{AppExit, ScheduleRunnerPlugin};
+use crate::{CameraParams, CameraPorts, Frame, Mounts, Pacing, Pose, RigParams, RigPorts, RigState, unpadded};
+use bevy::app::{AppExit, PluginsState};
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::window::ExitCondition;
-use bevy::winit::WinitPlugin;
+use bevy::winit::{UpdateMode, WinitPlugin, WinitSettings};
 use std::time::{Duration, Instant};
 use triq::{LocalFactory, Runtime};
 use triq_xbox::XboxState;
@@ -52,8 +52,8 @@ struct CameraNode {
     params: CameraParams,
     paused: bool,
     sent: u64,
-    /// When its next frame is due.
-    next: Instant,
+    /// Which frames it sends.
+    pacing: Pacing,
     /// Something that went wrong while sending, until it has been reported.
     problem: Option<String>,
     /// Its picture in the window, if there is a window.
@@ -70,8 +70,45 @@ struct Previews(Entity);
 #[derive(Resource)]
 struct Headless(bool);
 
+/// How far apart frames come, evened out over the last second or so. One
+/// frame's own time says little: after a long frame comes a short one.
+#[derive(Resource)]
+struct FrameTime(Duration);
+
+fn time_frames(time: Res<Time<Real>>, mut frame: ResMut<FrameTime>) {
+    frame.0 = frame.0.mul_f32(0.95) + time.delta().mul_f32(0.05);
+}
+
+/// Run the program without a window, one frame every `frame`. Each frame is
+/// due that long after the one before was due, not after it was done, so the
+/// rate is the one asked for however long a frame takes.
+fn keep_time(mut app: App, frame: Duration) -> AppExit {
+    // As Bevy's own loops do first: let the plugins finish setting up.
+    while app.plugins_state() == PluginsState::Adding {
+        bevy::tasks::tick_global_task_pools_on_main_thread();
+    }
+    app.finish();
+    app.cleanup();
+    let mut due = Instant::now();
+    loop {
+        app.update();
+        if let Some(exit) = app.should_exit() {
+            return exit;
+        }
+        // A frame that overran is not made up for: the count starts afresh from now.
+        due = (due + frame).max(Instant::now());
+        std::thread::sleep(due - Instant::now().min(due));
+    }
+}
+
 /// Build the program. `name` is its runtime name; `headless` runs it without a window.
-pub fn app(name: &str, headless: bool) -> triq::Result<App> {
+///
+/// `fps` is how many frames a second it runs when it keeps time itself:
+/// without a window, or with its window not in front. A camera cannot send
+/// more pictures than there are frames. With its window in front the program
+/// follows the display.
+pub fn app(name: &str, headless: bool, fps: f64) -> triq::Result<App> {
+    let frame = Duration::from_secs_f64(1.0 / fps.clamp(1.0, 1000.0));
     let runtime = Runtime::new(name)?;
     let requests = Requests { rigs: runtime.local_factory(RIG)?, cameras: runtime.local_factory(CAMERA)?, runtime };
 
@@ -83,14 +120,18 @@ pub fn app(name: &str, headless: bool) -> triq::Result<App> {
     });
     let mut app = App::new();
     if headless {
-        // Without a window nothing paces the loop, so it is run 60 times a second.
-        app.add_plugins(plugins.disable::<WinitPlugin>())
-            .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(1.0 / 60.0)));
+        // Without a window nothing paces the loop, so it is paced here.
+        app.add_plugins(plugins.disable::<WinitPlugin>()).set_runner(move |app| keep_time(app, frame));
     } else {
-        app.add_plugins(plugins);
+        // Bevy would slow to sixty frames a second whenever its window is not in front.
+        let behind = UpdateMode::reactive_low_power(frame);
+        app.add_plugins(plugins)
+            .insert_resource(WinitSettings { focused_mode: UpdateMode::Continuous, unfocused_mode: behind });
     }
     app.insert_non_send(requests)
         .insert_resource(Headless(headless))
+        .insert_resource(FrameTime(frame))
+        .add_systems(First, time_frames)
         .insert_resource(Time::<Fixed>::from_hz(RIG_HZ))
         .insert_resource(ClearColor(Color::srgb(0.12, 0.16, 0.23)))
         .add_systems(Startup, build_world)
@@ -191,8 +232,16 @@ fn spawn_camera(world: &mut World, name: String, params: CameraParams, ports: Ca
     let panel = world.get_resource::<Previews>().map(|previews| previews.0);
     let preview = panel.map(|panel| world.spawn(ChildOf(panel)).id());
     println!("camera {name} created: {} x {}", params.width, params.height);
-    let camera =
-        CameraNode { name, ports, params, paused: false, sent: 0, next: Instant::now(), problem: None, preview };
+    let camera = CameraNode {
+        name,
+        ports,
+        params,
+        paused: false,
+        sent: 0,
+        pacing: Pacing::new(Instant::now()),
+        problem: None,
+        preview,
+    };
     let entity = world
         .spawn((
             camera,
@@ -249,11 +298,15 @@ fn equip(world: &mut World, entity: Entity) {
 }
 
 /// Called with each frame Bevy has read back from the GPU.
-fn send_frame(read: On<ReadbackComplete>, mut cameras: Query<&mut CameraNode>) {
+fn send_frame(read: On<ReadbackComplete>, frame: Res<FrameTime>, mut cameras: Query<&mut CameraNode>) {
     let Ok(mut camera) = cameras.get_mut(read.entity) else { return };
-    let now = Instant::now();
     // Nobody looking means nothing to do.
-    if camera.paused || now < camera.next || camera.ports.image.subscribers() == 0 {
+    if camera.paused || camera.ports.image.subscribers() == 0 {
+        return;
+    }
+    // Of the frames the renderer hands back, as many a second as the camera was asked for.
+    let hz = camera.params.hz;
+    if !camera.pacing.take(Instant::now(), hz, frame.0) {
         return;
     }
     let (width, height) = (camera.params.width, camera.params.height);
@@ -270,11 +323,7 @@ fn send_frame(read: On<ReadbackComplete>, mut cameras: Query<&mut CameraNode>) {
         Ok(true)
     };
     match send() {
-        Ok(true) => {
-            camera.sent = number;
-            let period = Duration::from_secs_f32(1.0 / camera.params.hz.clamp(0.001, 1000.0));
-            camera.next = (camera.next + period).max(now);
-        }
+        Ok(true) => camera.sent = number,
         Ok(false) => {}
         Err(error) => camera.problem = Some(error.to_string()),
     }

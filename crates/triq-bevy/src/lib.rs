@@ -18,6 +18,7 @@ pub use scene::{CAMERA, RIG, app};
 pub use viewer::{FRAME_VIEW, FrameViewPorts, FrameViews};
 
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 use triq::prelude::*;
 use triq_xbox::XboxState;
 
@@ -158,6 +159,43 @@ pub struct CameraParams {
 impl Default for CameraParams {
     fn default() -> Self {
         Self { width: 320, height: 240, mount: 0, fov_degrees: 60.0, hz: 30.0 }
+    }
+}
+
+/// Which of the frames a renderer hands it a camera sends: as many a second
+/// as it was asked for, and no more.
+pub struct Pacing {
+    /// When the next picture is due.
+    next: Instant,
+}
+
+impl Pacing {
+    pub fn new(now: Instant) -> Self {
+        Self { next: now }
+    }
+
+    /// Whether to send the frame that is ready at `now`. `hz` is how many
+    /// pictures a second the camera was asked for, and `frame` how far apart
+    /// frames come.
+    pub fn take(&mut self, now: Instant, hz: f32, frame: Duration) -> bool {
+        let period = Duration::from_secs_f32(1.0 / hz.clamp(0.001, 1000.0));
+        // Asked for as many pictures as there are frames, or more, a camera
+        // sends every frame: there is nothing to choose between. The GPU may
+        // hand back two or three together, and all of them go.
+        if period < frame + frame / 10 {
+            self.next = now;
+            return true;
+        }
+        // Frames are never ready exactly on time. One that is early by less
+        // than half a frame is the one that was due, not one to pass over.
+        if now + frame / 2 < self.next {
+            return false;
+        }
+        // The next is due a period after this one was due, so that the rate is
+        // the one asked for. After a late one, or a long quiet, it is due no
+        // sooner than a frame short of a period from now: nothing is made up for.
+        self.next = (self.next + period).max(now + period - frame);
+        true
     }
 }
 
