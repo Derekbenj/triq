@@ -158,13 +158,48 @@ while let Some(request) = cameras.try_next() {
     match request {
         Local::Spawn { name, params, ports } => { /* keep the ports */ }
         Local::Params { name, params } => { /* new settings */ }
+        Local::Pause { name } | Local::Resume { name } => { /* stop or start its work */ }
         Local::Remove { name } => { /* drop the ports */ }
     }
 }
+if rt.stopping() { /* another program asked this one to shut down */ }
 ```
 
 A spawn request returns at once with the ports already bound, so nobody waits
-for the application's loop. See `examples/app_loop.rs`.
+for the application's loop. The application says what only it knows with
+`rt.report(node, problem)`, which shows as the node's error, and
+`rt.set_factory_info(kind, json)`, which shows beside the factory (the
+controllers that are plugged in, for example). See `examples/app_loop.rs`.
+
+## Two programs built on it
+
+`triq-xbox` and `triq-bevy` are ordinary users of the library, written to try
+it on real work. Each keeps its own main loop and offers local factories.
+
+```sh
+cargo run -p triq-xbox                 # runtime "xbox": game controllers, read with SDL3
+cargo run -p triq-bevy                 # runtime "bevy": a scene; add --headless for no window
+cargo run -p triq-workbench
+```
+
+In the workbench:
+
+1. Create an `xbox` node. The factory lists the controllers it sees; put one's id in the settings, `{"device": 3}`.
+2. Create a `rig` and one or two `camera` nodes (`{"mount": 0}` and `{"mount": 1}` sit side by side).
+3. Drag `state` to the rig's `controller`, and the rig's `mounts` to each camera's `mounts`.
+
+The left stick moves the rig, the right stick turns it, the triggers lower and
+raise it. The Bevy window shows the scene from above and each camera's picture.
+A camera sends its frames as `image: u8[] + Frame` to whatever is wired to it;
+with nothing wired, it copies and sends nothing.
+
+| Crate | Files | What to read it for |
+| --- | --- | --- |
+| `triq-xbox` | `lib.rs` 85, `host.rs` 173, `sdl.rs` 93 | a device as a node; which device is a setting, not a wire |
+| `triq-bevy` | `lib.rs` 171, `rig.rs` 67, `scene.rs` 405 | nodes inside an engine's own loop; large frames with a header |
+
+Their messages and settings build without SDL or Bevy (`default-features = false`),
+so another program can use `XboxState` or `Frame` without either.
 
 ## Delivery
 
@@ -185,21 +220,52 @@ whether anyone is connected, and `input.lost()` counts samples that were overwri
 Sending: `send(value)` copies a value into shared memory once; `loan()` gives
 shared memory to fill in place; slices (`Output<[T]>`) take any length with no declared size.
 
+## Headers
+
+A slice says nothing about itself but its length. What else the receiver needs
+goes in a header: a second, small `#[repr(C)]` type that travels in the same
+sample, beside the data.
+
+```rust
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend)]
+#[repr(C)]
+#[type_name("Frame")]
+struct Frame { width: u32, height: u32, number: u64 }
+
+#[derive(Ports)]
+struct CameraPorts {
+    image: Output<[u8], Frame>,          // pixels, and what they are
+}
+
+let mut frame = ports.image.loan(width * height * 4)?;
+render_into(&mut frame);                 // the pixels, written once, in place
+*frame.header_mut() = Frame { width, height, number };
+frame.send()?;
+
+let frame = viewer.image.recv()?.unwrap();   // viewer.image: Input<[u8], Frame>
+show(&frame, frame.header().width, frame.header().height);
+```
+
+The header is part of the message type, shown as `u8[] + Frame`, so an input
+that expects another header, or none, is refused when it is connected. Without
+it the size would have to be packed into the first bytes of the pixels, by a
+convention each side has to know and nothing checks.
+
 ## Where the code is
 
 | File | Lines | What it holds |
 | --- | ---: | --- |
-| `message.rs` | 145 | message types, the stamp on every sample |
-| `port.rs`, `port/output.rs`, `port/input.rs` | 618 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
-| `node.rs` | 251 | the `Node` trait, `Trigger`, `Placement` |
+| `message.rs` | 194 | message types, headers, the stamp on every sample |
+| `port.rs`, `port/output.rs`, `port/input.rs` | 651 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
+| `node.rs` | 252 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 206 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 591 | `Runtime`: spawn, factories, connect, inventory |
-| `runtime/local.rs` | 98 | factories whose nodes the application runs |
+| `runtime.rs` | 650 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime/local.rs` | 117 | factories whose nodes the application runs |
 | `control.rs`, `remote.rs` | 412 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 273 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 283 | report types, the error type, iceoryx2 type names |
 
-About 2,650 lines including comments, plus the derive macro (66) and the command-line tool (159).
+About 2,820 lines including comments, plus the derive macro (66) and the command-line tool (158).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements
@@ -234,14 +300,16 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 ## Not there yet
 
 - Anything across the network.
-- The workbench does not remember where cards were placed between runs, and has no panels for custom views of a node's data.
+- The workbench does not remember where cards were placed between runs, and has no panels for custom views of a node's data. Nothing yet shows a camera's frames outside the Bevy window.
+- `triq-xbox` has been run against pretend controllers and with none plugged in, not yet with a real one in hand.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 
 ## Build and test
 
 ```sh
-cargo test --workspace
+cargo test -p triq                # the library alone
+cargo test --workspace            # everything; the first build compiles Bevy and SDL3
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run --example pipeline      # one process
 cargo run --example station -- left   # then see the top of examples/station.rs
