@@ -6,7 +6,9 @@ use crate::{Error, Inventory, Placement, Result};
 use iceoryx2::prelude::{CallbackProgression, Config, NodeBuilder, Service, SignalHandlingMode};
 use iceoryx2::service::static_config::messaging_pattern::MessagingPattern;
 use serde_json::Value;
-use std::sync::{Mutex, OnceLock};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// A handle for asking one runtime to change.
@@ -14,7 +16,14 @@ use std::time::Duration;
 /// Every request is carried out by the runtime that owns the nodes involved,
 /// under its own rules; the program asking needs no rights over them.
 pub struct Remote {
-    caller: Caller,
+    caller: Arc<Caller>,
+}
+
+thread_local! {
+    /// The runtimes this thread has opened, by name. Opening a runtime's control
+    /// service costs many times what asking it something does, and a tool that
+    /// shows the machine asks every runtime again and again.
+    static OPENED: RefCell<BTreeMap<String, Arc<Caller>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// Hears every runtime on the machine say that it changed.
@@ -56,6 +65,8 @@ pub fn discover() -> Result<Vec<Inventory>> {
         CallbackProgression::Continue
     })?;
     runtimes.sort();
+    // What this thread still holds open of runtimes that are gone is let go.
+    OPENED.with_borrow_mut(|opened| opened.retain(|runtime, _| runtimes.contains(runtime)));
     // A runtime that exits while we ask is simply not listed.
     Ok(runtimes.iter().filter_map(|runtime| Remote::open(runtime).and_then(|remote| remote.inventory()).ok()).collect())
 }
@@ -81,8 +92,18 @@ fn split(name: &str) -> Result<(&str, &str)> {
 }
 
 impl Remote {
+    /// Fails with [`Error::Unknown`] if no runtime of that name is running.
     pub fn open(runtime: &str) -> Result<Self> {
-        Ok(Self { caller: Caller::open(&client_node()?.lock().unwrap(), runtime)? })
+        OPENED.with_borrow_mut(|opened| {
+            if let Some(caller) = opened.get(runtime).filter(|caller| caller.answering()) {
+                return Ok(Self { caller: caller.clone() });
+            }
+            // Never opened by this thread, or its runtime stopped since.
+            opened.remove(runtime);
+            let caller = Arc::new(Caller::open(&client_node()?.lock().unwrap(), runtime)?);
+            opened.insert(runtime.to_owned(), caller.clone());
+            Ok(Self { caller })
+        })
     }
 
     pub fn inventory(&self) -> Result<Inventory> {

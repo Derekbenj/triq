@@ -235,6 +235,11 @@ impl Caller {
         Ok(Self { client, channel })
     }
 
+    /// Whether the runtime is still running, or running again.
+    pub fn answering(&self) -> bool {
+        answering(&self.channel.requests)
+    }
+
     pub fn ask(&self, request: &Request) -> Result<Reply> {
         let bytes = serde_json::to_vec(request)?;
         let pending = self.client.loan_slice_uninit(bytes.len())?.write_from_slice(&bytes).send()?;
@@ -250,7 +255,7 @@ impl Caller {
             if let Some(answer) = read()? {
                 return answer;
             }
-            if !answering(&self.channel.requests) {
+            if !self.answering() {
                 // It may have answered just before exiting.
                 return read()?.unwrap_or_else(|| Err(Error::Unknown("runtime: it exited before answering".into())));
             }

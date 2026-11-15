@@ -5,7 +5,7 @@ mod helpers;
 use helpers::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use triq::prelude::*;
 use triq::{Local, NodeState, Remote};
 
@@ -283,6 +283,50 @@ fn several_clients_are_served_at_once() -> triq::Result {
         .collect();
     for client in clients {
         client.join().unwrap()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn a_runtime_asked_again_answers_much_sooner() -> triq::Result {
+    let rt = Runtime::new(&unique("again"))?;
+    let ask = || -> triq::Result<Duration> {
+        let asked = Instant::now();
+        assert_eq!(Remote::open(rt.name())?.inventory()?.runtime, rt.name());
+        Ok(asked.elapsed())
+    };
+    // What a program pays once, whichever runtime it talks to first, is not what is measured here.
+    let other = Runtime::new(&unique("other"))?;
+    Remote::open(other.name())?.inventory()?;
+
+    // Opening a runtime's control service costs many times what a request does,
+    // so a thread keeps the ones it has opened: a tool that shows the machine
+    // asks every runtime again and again.
+    let first = ask()?;
+    let again = (0..10).map(|_| ask()).collect::<triq::Result<Vec<_>>>()?.into_iter().min().unwrap();
+    assert!(again * 4 < first, "the first answer took {first:?}, and a later one still {again:?}");
+    Ok(())
+}
+
+#[test]
+fn a_runtime_that_stopped_or_started_again_is_not_mistaken_for_the_old_one() -> triq::Result {
+    let name = unique("comeback");
+    let rt = Runtime::new(&name)?;
+    let _bench: Bench = rt.attach("bench")?;
+    assert_eq!(Remote::open(&name)?.inventory()?.nodes.len(), 1);
+
+    // Gone: the open line to it is no use, and says so.
+    drop(_bench);
+    drop(rt);
+    assert!(matches!(Remote::open(&name), Err(Error::Unknown(_))));
+    assert!(triq::discover()?.iter().all(|inventory| inventory.runtime != name));
+
+    // Back under the same name, twice: once looked for in between, once not.
+    for nodes in [2, 3] {
+        let rt = Runtime::new(&name)?;
+        let _benches: Vec<Bench> = (0..nodes).map(|i| rt.attach(&format!("bench{i}"))).collect::<triq::Result<_>>()?;
+        assert_eq!(Remote::open(&name)?.inventory()?.nodes.len(), nodes);
+        assert!(triq::discover()?.iter().any(|inventory| inventory.runtime == name && inventory.nodes.len() == nodes));
     }
     Ok(())
 }
