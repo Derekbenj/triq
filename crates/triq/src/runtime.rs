@@ -84,6 +84,11 @@ struct Record {
     hosted: Option<Hosted>,
     /// How to tell the application about requests for a node its local factory made.
     notify: Option<Notify>,
+    /// For nodes the application runs: whether it was asked to pause, and what
+    /// it reported going wrong. A node the runtime runs keeps these in its slot.
+    paused: bool,
+    errors: u64,
+    last_error: Option<String>,
 }
 
 /// A node the runtime runs: what to run, and the thread that runs it.
@@ -111,6 +116,7 @@ type Wired = (Arc<dyn InputPort>, Option<Arc<Executor>>);
 /// A request concerning a node that the application runs.
 enum Notice {
     Params(Value),
+    Paused(bool),
     Removed,
 }
 
@@ -269,6 +275,23 @@ impl Runtime {
         self.inner.set_params(node, params)
     }
 
+    /// Record that something is wrong with a node the application runs. It
+    /// shows in the inventory as the node's last error.
+    pub fn report(&self, node: &str, problem: &str) -> Result {
+        let mut state = self.inner.state.lock().unwrap();
+        let record = state.nodes.get_mut(node).ok_or_else(|| Error::Unknown(format!("node {node:?}")))?;
+        if record.hosted.is_some() {
+            return Err(Error::Mismatch(format!(
+                "node {node:?} is run by the runtime, which reports its errors itself"
+            )));
+        }
+        record.errors += 1;
+        record.last_error = Some(problem.into());
+        drop(state);
+        self.inner.changed();
+        Ok(())
+    }
+
     /// Everything this runtime owns, with live counters.
     pub fn inventory(&self) -> Inventory {
         self.inner.inventory()
@@ -282,6 +305,12 @@ impl Runtime {
 
     pub fn shutdown(&self) {
         self.inner.shut_down();
+    }
+
+    /// Whether the program has been asked to exit. A program with its own
+    /// loop checks this where others would sleep in [`Runtime::wait`].
+    pub fn stopping(&self) -> bool {
+        *self.inner.shutdown.0.lock().unwrap()
     }
 }
 
@@ -360,7 +389,19 @@ impl Inner {
             let id = state.next_id;
             // Reserves the name while the ports are being created.
             let (inputs, outputs) = (Vec::new(), Vec::new());
-            let record = Record { id, kind: kind.into(), placement, params, inputs, outputs, hosted: None, notify };
+            let record = Record {
+                id,
+                kind: kind.into(),
+                placement,
+                params,
+                inputs,
+                outputs,
+                hosted: None,
+                notify,
+                paused: false,
+                errors: 0,
+                last_error: None,
+            };
             state.nodes.insert(node.into(), record);
             id
         };
@@ -456,12 +497,25 @@ impl Inner {
     }
 
     pub(crate) fn set_paused(&self, node: &str, paused: bool) -> Result {
-        let hosted = self
-            .hosted(node)?
-            .ok_or_else(|| Error::Mismatch(format!("node {node:?} is run by the application, not by the runtime")))?;
-        hosted.slot.paused.store(paused, Ordering::Release);
-        // On resume the thread looks at the node again and runs it for what queued up.
-        hosted.executor.refresh();
+        let hosted = self.hosted(node)?;
+        let notify = self.state.lock().unwrap().nodes.get(node).and_then(|record| record.notify.clone());
+        match (hosted, notify) {
+            (Some(hosted), _) => {
+                hosted.slot.paused.store(paused, Ordering::Release);
+                // On resume the thread looks at the node again and runs it for what queued up.
+                hosted.executor.refresh();
+            }
+            // What a pause means for a node the application runs is up to the application.
+            (None, Some(notify)) => {
+                notify(node, Notice::Paused(paused))?;
+                if let Some(record) = self.state.lock().unwrap().nodes.get_mut(node) {
+                    record.paused = paused;
+                }
+            }
+            (None, None) => {
+                return Err(Error::Mismatch(format!("node {node:?} is held by the application, which is not asked")));
+            }
+        }
         self.changed();
         Ok(())
     }
@@ -555,10 +609,11 @@ impl Inner {
 impl Record {
     fn info(&self, name: &str) -> NodeInfo {
         let slot = self.hosted.as_ref().map(|hosted| &hosted.slot);
-        let state = match slot {
-            Some(slot) if slot.stopped.get().is_some() => NodeState::Stopped(slot.stopped.get().cloned().unwrap()),
-            Some(slot) if slot.paused.load(Ordering::Acquire) => NodeState::Paused,
-            _ => NodeState::Running,
+        let paused = slot.map_or(self.paused, |slot| slot.paused.load(Ordering::Acquire));
+        let state = match slot.and_then(|slot| slot.stopped.get()) {
+            Some(panic) => NodeState::Stopped(panic.clone()),
+            None if paused => NodeState::Paused,
+            None => NodeState::Running,
         };
         NodeInfo {
             name: name.into(),
@@ -567,8 +622,8 @@ impl Record {
             state,
             params: self.params.clone(),
             runs: slot.map_or(0, |slot| slot.runs.load(Ordering::Relaxed)),
-            errors: slot.map_or(0, |slot| slot.errors.load(Ordering::Relaxed)),
-            last_error: slot.and_then(|slot| slot.last_error.lock().unwrap().clone()),
+            errors: slot.map_or(self.errors, |slot| slot.errors.load(Ordering::Relaxed)),
+            last_error: slot.map_or(self.last_error.clone(), |slot| slot.last_error.lock().unwrap().clone()),
             inputs: self
                 .inputs
                 .iter()

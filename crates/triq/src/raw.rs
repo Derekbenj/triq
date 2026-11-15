@@ -3,19 +3,23 @@
 //! Everything uses the thread-safe IPC service variant: a port may be created
 //! on one thread and used on another, and the same code path serves threads
 //! of one process and separate processes.
-use crate::Stamp;
+use crate::message::Headed;
 
 pub type Svc = iceoryx2::service::ipc_threadsafe::Service;
 pub type IpcNode = iceoryx2::node::Node<Svc>;
 pub type Listener = iceoryx2::port::listener::Listener<Svc>;
 pub type Notifier = iceoryx2::port::notifier::Notifier<Svc>;
-pub type ServiceBuilder<T> = iceoryx2::service::builder::publish_subscribe::Builder<T, Stamp, Svc>;
-pub type PubSub<T> = iceoryx2::service::port_factory::publish_subscribe::PortFactory<Svc, T, Stamp>;
-pub type Publisher<T> = iceoryx2::port::publisher::Publisher<Svc, T, Stamp>;
-pub type PublisherBuilder<'a, T> = iceoryx2::service::port_factory::publisher::PortFactoryPublisher<'a, Svc, T, Stamp>;
-pub type Subscriber<T> = iceoryx2::port::subscriber::Subscriber<Svc, T, Stamp>;
-pub type RawSample<T> = iceoryx2::sample::Sample<Svc, T, Stamp>;
-pub type RawLoan<T> = iceoryx2::sample_mut::SampleMut<Svc, T, Stamp>;
+
+// A port of message type `T` with header type `H`. iceoryx2 carries triq's
+// stamp and the port's header together, as its "user header".
+pub type ServiceBuilder<T, H> = iceoryx2::service::builder::publish_subscribe::Builder<T, Headed<H>, Svc>;
+pub type PubSub<T, H> = iceoryx2::service::port_factory::publish_subscribe::PortFactory<Svc, T, Headed<H>>;
+pub type Publisher<T, H> = iceoryx2::port::publisher::Publisher<Svc, T, Headed<H>>;
+pub type PublisherBuilder<'a, T, H> =
+    iceoryx2::service::port_factory::publisher::PortFactoryPublisher<'a, Svc, T, Headed<H>>;
+pub type Subscriber<T, H> = iceoryx2::port::subscriber::Subscriber<Svc, T, Headed<H>>;
+pub type RawSample<T, H> = iceoryx2::sample::Sample<Svc, T, Headed<H>>;
+pub type RawLoan<T, H> = iceoryx2::sample_mut::SampleMut<Svc, T, Headed<H>>;
 
 /// Whether any of `owners`, the iceoryx2 nodes that created a service's sending
 /// ports, is still alive. A port count alone cannot tell: a process that was

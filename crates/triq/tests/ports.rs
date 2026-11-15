@@ -345,3 +345,67 @@ fn asking_about_an_input_does_not_hold_up_its_reader() -> triq::Result {
     assert!(slow < 400, "{slow} of 20000 reads were held up");
     Ok(())
 }
+
+/// What a frame is, beside its pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend)]
+#[repr(C)]
+#[type_name("FrameInfo")]
+struct FrameInfo {
+    width: u32,
+    height: u32,
+    frame: u64,
+}
+
+#[derive(Ports)]
+struct HeadedCamera {
+    image: Output<[u8], FrameInfo>,
+    exposure: Output<f32, FrameInfo>,
+}
+
+#[derive(Ports)]
+struct HeadedViewer {
+    image: Input<[u8], FrameInfo>,
+    exposure: Input<f32, FrameInfo>,
+}
+
+#[test]
+fn a_message_can_carry_a_typed_header_beside_its_data() -> triq::Result {
+    let rt = Runtime::new(&unique("header"))?;
+    let camera: HeadedCamera = rt.attach("camera")?;
+    let viewer: HeadedViewer = rt.attach("viewer")?;
+    rt.connect("camera/image", "viewer/image")?;
+    rt.connect("camera/exposure", "viewer/exposure")?;
+
+    // Filled in place: the pixels and what they are travel together.
+    let mut frame = camera.image.loan(6)?;
+    *frame.header_mut() = FrameInfo { width: 3, height: 2, frame: 7 };
+    frame.copy_from_slice(&[1, 2, 3, 4, 5, 6]);
+    frame.send()?;
+    let sample = viewer.image.recv()?.expect("a frame");
+    assert_eq!(*sample.header(), FrameInfo { width: 3, height: 2, frame: 7 });
+    assert_eq!(*sample, [1, 2, 3, 4, 5, 6]);
+    assert_eq!(sample.stamp().seq, 1, "the stamp is still there");
+
+    // Copied in, with and without saying what the header is.
+    camera.image.send_slice_with(&[9, 9], FrameInfo { width: 2, height: 1, frame: 8 })?;
+    assert_eq!(viewer.image.recv()?.unwrap().header().frame, 8);
+    camera.image.send_slice(&[0])?;
+    assert_eq!(*viewer.image.recv()?.unwrap().header(), FrameInfo::default());
+    camera.exposure.send_with(0.5, FrameInfo { frame: 9, ..Default::default() })?;
+    let exposure = viewer.exposure.recv()?.unwrap();
+    assert_eq!((*exposure, exposure.header().frame), (0.5, 9));
+    Ok(())
+}
+
+#[test]
+fn a_header_is_part_of_the_message_type() -> triq::Result {
+    assert_eq!(HeadedCamera::spec()[0].message.header, "FrameInfo");
+    assert_eq!(Camera::spec()[0].message.header, "", "no header unless one is named");
+    assert_ne!(HeadedCamera::spec()[0].message, Camera::spec()[0].message);
+
+    let rt = Runtime::new(&unique("headers"))?;
+    let _camera: HeadedCamera = rt.attach("camera")?;
+    let _plain: Viewer = rt.attach("plain")?;
+    assert!(matches!(rt.connect("camera/image", "plain/image"), Err(Error::Mismatch(_))));
+    Ok(())
+}

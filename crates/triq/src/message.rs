@@ -28,6 +28,21 @@ pub(crate) fn now_ns() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_nanos() as u64)
 }
 
+/// Data that travels with every message of a port, beside the payload: for a
+/// camera frame, its width and height. A port without one uses `()`.
+pub trait Header: Debug + Default + ZeroCopySend + 'static {}
+
+impl<H: Debug + Default + ZeroCopySend + 'static> Header for H {}
+
+/// What iceoryx2 carries beside every payload: triq's stamp and the port's header.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend)]
+#[repr(C)]
+pub struct Headed<H: Header> {
+    pub(crate) stamp: Stamp,
+    pub(crate) header: H,
+}
+
 /// The identity iceoryx2 checks when an input opens an output's service.
 /// An input and an output can be connected when their message types are equal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +53,8 @@ pub struct MessageType {
     pub align: usize,
     /// True for `[T]`: a sequence whose length is chosen per sample.
     pub slice: bool,
+    /// The name of the port's header type; empty when it has none.
+    pub header: String,
 }
 
 /// A message type: any `T: ZeroCopySend`, or a slice `[T]` of it.
@@ -50,42 +67,51 @@ pub trait Payload: Debug + ZeroCopySend + IceoryxSend + 'static {
     /// are usually large frames where only the newest ones matter.
     const DEFAULT_QUEUE: usize;
 
-    fn message_type() -> MessageType;
+    /// How a port of this message, with header `H`, is advertised.
+    fn message_type<H: Header>() -> MessageType;
     #[doc(hidden)]
-    fn publisher(service: &PubSub<Self>, name: &PortName, options: &PortOptions) -> Result<Publisher<Self>>;
+    fn publisher<H: Header>(
+        service: &PubSub<Self, H>,
+        name: &PortName,
+        options: &PortOptions,
+    ) -> Result<Publisher<Self, H>>;
     #[doc(hidden)]
-    fn open(service: ServiceBuilder<Self>) -> std::result::Result<PubSub<Self>, PublishSubscribeOpenError>;
+    fn open<H: Header>(
+        service: ServiceBuilder<Self, H>,
+    ) -> std::result::Result<PubSub<Self, H>, PublishSubscribeOpenError>;
     #[doc(hidden)]
-    fn open_or_create(service: ServiceBuilder<Self>) -> Result<PubSub<Self>>;
+    fn open_or_create<H: Header>(service: ServiceBuilder<Self, H>) -> Result<PubSub<Self, H>>;
     #[doc(hidden)]
-    fn receive(subscriber: &Subscriber<Self>) -> Result<Option<RawSample<Self>>>;
+    fn receive<H: Header>(subscriber: &Subscriber<Self, H>) -> Result<Option<RawSample<Self, H>>>;
     #[doc(hidden)]
-    fn received(sample: &RawSample<Self>) -> &Self;
+    fn received<H: Header>(sample: &RawSample<Self, H>) -> &Self;
     #[doc(hidden)]
-    fn loaned(loan: &RawLoan<Self>) -> &Self;
+    fn loaned<H: Header>(loan: &RawLoan<Self, H>) -> &Self;
     #[doc(hidden)]
-    fn loaned_mut(loan: &mut RawLoan<Self>) -> &mut Self;
+    fn loaned_mut<H: Header>(loan: &mut RawLoan<Self, H>) -> &mut Self;
 }
 
 /// The hooks that read the same for both shapes but resolve to different iceoryx2 methods.
 macro_rules! shared_hooks {
     () => {
-        fn open(service: ServiceBuilder<Self>) -> std::result::Result<PubSub<Self>, PublishSubscribeOpenError> {
+        fn open<H: Header>(
+            service: ServiceBuilder<Self, H>,
+        ) -> std::result::Result<PubSub<Self, H>, PublishSubscribeOpenError> {
             service.open()
         }
-        fn open_or_create(service: ServiceBuilder<Self>) -> Result<PubSub<Self>> {
+        fn open_or_create<H: Header>(service: ServiceBuilder<Self, H>) -> Result<PubSub<Self, H>> {
             Ok(service.open_or_create()?)
         }
-        fn receive(subscriber: &Subscriber<Self>) -> Result<Option<RawSample<Self>>> {
+        fn receive<H: Header>(subscriber: &Subscriber<Self, H>) -> Result<Option<RawSample<Self, H>>> {
             Ok(subscriber.receive()?)
         }
-        fn received(sample: &RawSample<Self>) -> &Self {
+        fn received<H: Header>(sample: &RawSample<Self, H>) -> &Self {
             sample.payload()
         }
-        fn loaned(loan: &RawLoan<Self>) -> &Self {
+        fn loaned<H: Header>(loan: &RawLoan<Self, H>) -> &Self {
             loan.payload()
         }
-        fn loaned_mut(loan: &mut RawLoan<Self>) -> &mut Self {
+        fn loaned_mut<H: Header>(loan: &mut RawLoan<Self, H>) -> &mut Self {
             loan.payload_mut()
         }
     };
@@ -94,10 +120,14 @@ macro_rules! shared_hooks {
 impl<T: Debug + ZeroCopySend + 'static> Payload for T {
     const DEFAULT_QUEUE: usize = 32;
 
-    fn message_type() -> MessageType {
-        describe(TypeDetail::new::<T>(TypeVariant::FixedSize), false)
+    fn message_type<H: Header>() -> MessageType {
+        describe::<H>(TypeDetail::new::<T>(TypeVariant::FixedSize), false)
     }
-    fn publisher(service: &PubSub<Self>, name: &PortName, options: &PortOptions) -> Result<Publisher<Self>> {
+    fn publisher<H: Header>(
+        service: &PubSub<Self, H>,
+        name: &PortName,
+        options: &PortOptions,
+    ) -> Result<Publisher<Self, H>> {
         Ok(configure(service.publisher_builder(), name, options).create()?)
     }
     shared_hooks!();
@@ -106,10 +136,14 @@ impl<T: Debug + ZeroCopySend + 'static> Payload for T {
 impl<T: Debug + ZeroCopySend + 'static> Payload for [T] {
     const DEFAULT_QUEUE: usize = 2;
 
-    fn message_type() -> MessageType {
-        describe(TypeDetail::new::<T>(TypeVariant::Dynamic), true)
+    fn message_type<H: Header>() -> MessageType {
+        describe::<H>(TypeDetail::new::<T>(TypeVariant::Dynamic), true)
     }
-    fn publisher(service: &PubSub<Self>, name: &PortName, options: &PortOptions) -> Result<Publisher<Self>> {
+    fn publisher<H: Header>(
+        service: &PubSub<Self, H>,
+        name: &PortName,
+        options: &PortOptions,
+    ) -> Result<Publisher<Self, H>> {
         // No size is declared: iceoryx2 grows the shared memory when a longer slice is sent.
         Ok(configure(service.publisher_builder(), name, options)
             .initial_max_slice_len(1024)
@@ -119,16 +153,23 @@ impl<T: Debug + ZeroCopySend + 'static> Payload for [T] {
     shared_hooks!();
 }
 
-fn describe(detail: TypeDetail, slice: bool) -> MessageType {
-    MessageType { name: detail.type_name().to_string(), size: detail.size(), align: detail.alignment(), slice }
+fn describe<H: Header>(detail: TypeDetail, slice: bool) -> MessageType {
+    let header = TypeDetail::new::<H>(TypeVariant::FixedSize).type_name().to_string();
+    MessageType {
+        name: detail.type_name().to_string(),
+        size: detail.size(),
+        align: detail.alignment(),
+        slice,
+        header: if header == "()" { String::new() } else { header },
+    }
 }
 
 /// A reliable output keeps retrying a full subscriber for `reliable_ms`, then gives up on it.
-fn configure<'a, T: Payload + ?Sized>(
-    builder: PublisherBuilder<'a, T>,
+fn configure<'a, T: Payload + ?Sized, H: Header>(
+    builder: PublisherBuilder<'a, T, H>,
     name: &PortName,
     options: &PortOptions,
-) -> PublisherBuilder<'a, T> {
+) -> PublisherBuilder<'a, T, H> {
     let builder = builder.name(name);
     let Some(patience) = options.reliable_ms.map(Duration::from_millis) else {
         return builder;

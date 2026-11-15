@@ -34,9 +34,15 @@ fn a_port_struct_lists_its_fields_in_order() {
 #[test]
 fn a_port_carries_the_message_type_iceoryx2_will_check() {
     let spec = FilterPorts::spec();
-    assert_eq!(spec[0].message, MessageType { name: "Pose".into(), size: 28, align: 4, slice: false });
+    assert_eq!(
+        spec[0].message,
+        MessageType { name: "Pose".into(), size: 28, align: 4, slice: false, header: String::new() }
+    );
     assert_eq!(spec[1].message.name, "u32");
-    assert_eq!(spec[3].message, MessageType { name: "u8".into(), size: 1, align: 1, slice: true });
+    assert_eq!(
+        spec[3].message,
+        MessageType { name: "u8".into(), size: 1, align: 1, slice: true, header: String::new() }
+    );
     // An output and an input can be wired when their message types are equal.
     assert_eq!(spec[0].message, spec[2].message);
     assert_ne!(spec[0].message, spec[1].message);

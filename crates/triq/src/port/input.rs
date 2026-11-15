@@ -1,9 +1,10 @@
 //! The receiving end of a connection: one iceoryx2 subscriber per connected output.
 use super::{NodeGuard, PortOptions};
 use crate::inventory::SourceInfo;
+use crate::message::Headed;
 use crate::message::now_ns;
 use crate::raw::{IpcNode, Listener, PubSub, RawSample, Subscriber, any_alive};
-use crate::{Error, Payload, Result, Stamp};
+use crate::{Error, Header, Payload, Result, Stamp};
 use iceoryx2::prelude::{CallbackProgression, PortFactory, PortName, ServiceName};
 use iceoryx2::service::builder::event::EventOpenError;
 use iceoryx2::service::builder::publish_subscribe::PublishSubscribeOpenError;
@@ -16,8 +17,8 @@ use std::time::Duration;
 /// Connections are made and removed while the node runs, by the node's own
 /// runtime or on request from any other program. The node only ever calls
 /// [`Input::recv`] or [`Input::latest`].
-pub struct Input<T: Payload + ?Sized> {
-    shared: Arc<Shared<T>>,
+pub struct Input<T: Payload + ?Sized, H: Header = ()> {
+    shared: Arc<Shared<T, H>>,
     _node: Arc<NodeGuard>,
 }
 
@@ -33,24 +34,24 @@ pub(crate) trait InputPort: Send + Sync {
     fn info(&self) -> Vec<SourceInfo>;
 }
 
-pub(crate) struct Shared<T: Payload + ?Sized> {
+pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
     /// `node/port`: the name every subscriber of this input carries in iceoryx2.
     port: PortName,
     depth: Option<usize>,
-    sources: Mutex<Sources<T>>,
+    sources: Mutex<Sources<T, H>>,
 }
 
-struct Sources<T: Payload + ?Sized> {
-    list: Vec<Source<T>>,
+struct Sources<T: Payload + ?Sized, H: Header> {
+    list: Vec<Source<T, H>>,
     /// Where the next `recv` starts looking, so one busy output cannot starve the others.
     next: usize,
 }
 
 /// One output this input wants to hear from.
-struct Source<T: Payload + ?Sized> {
+struct Source<T: Payload + ?Sized, H: Header> {
     output: Arc<str>,
     /// `None` while the output does not exist yet.
-    link: Option<Link<T>>,
+    link: Option<Link<T, H>>,
     /// Why the last attempt to link failed, other than the output not existing.
     problem: Option<String>,
     last_seq: u64,
@@ -59,14 +60,14 @@ struct Source<T: Payload + ?Sized> {
     latency_ns: u64,
 }
 
-struct Link<T: Payload + ?Sized> {
-    subscriber: Subscriber<T>,
+struct Link<T: Payload + ?Sized, H: Header> {
+    subscriber: Subscriber<T, H>,
     listener: Arc<Listener>,
-    service: Arc<PubSub<T>>,
+    service: Arc<PubSub<T, H>>,
 }
 
 /// Whether the node behind an output is running.
-fn has_sender<T: Payload + ?Sized>(service: &PubSub<T>) -> bool {
+fn has_sender<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>) -> bool {
     let mut publishers = Vec::new();
     service.dynamic_config().list_publishers(|publisher| {
         publishers.push(publisher.node_id);
@@ -80,13 +81,13 @@ enum LinkError {
     Failed(Error),
 }
 
-impl<T: Payload + ?Sized> Input<T> {
-    pub(crate) fn new(shared: Arc<Shared<T>>, node: Arc<NodeGuard>) -> Self {
+impl<T: Payload + ?Sized, H: Header> Input<T, H> {
+    pub(crate) fn new(shared: Arc<Shared<T, H>>, node: Arc<NodeGuard>) -> Self {
         Self { shared, _node: node }
     }
 
     /// The next waiting sample, from whichever connected output has one.
-    pub fn recv(&self) -> Result<Option<Sample<T>>> {
+    pub fn recv(&self) -> Result<Option<Sample<T, H>>> {
         let mut sources = self.shared.sources.lock().unwrap();
         let count = sources.list.len();
         for offset in 0..count {
@@ -94,7 +95,7 @@ impl<T: Payload + ?Sized> Input<T> {
             let source = &mut sources.list[index];
             let Some(link) = &source.link else { continue };
             if let Some(raw) = T::receive(&link.subscriber)? {
-                source.count(*raw.user_header());
+                source.count(raw.user_header().stamp);
                 let output = source.output.clone();
                 sources.next = index + 1;
                 return Ok(Some(Sample { raw, output }));
@@ -104,7 +105,7 @@ impl<T: Payload + ?Sized> Input<T> {
     }
 
     /// The newest waiting sample; everything older is skipped.
-    pub fn latest(&self) -> Result<Option<Sample<T>>> {
+    pub fn latest(&self) -> Result<Option<Sample<T, H>>> {
         let mut newest = None;
         while let Some(sample) = self.recv()? {
             newest = Some(sample);
@@ -122,15 +123,20 @@ impl<T: Payload + ?Sized> Input<T> {
 ///
 /// An output limits how many samples each input may hold at once (`hold`,
 /// 2 by default). Copy the data out to keep it longer.
-pub struct Sample<T: Payload + ?Sized> {
-    raw: RawSample<T>,
+pub struct Sample<T: Payload + ?Sized, H: Header = ()> {
+    raw: RawSample<T, H>,
     output: Arc<str>,
 }
 
-impl<T: Payload + ?Sized> Sample<T> {
+impl<T: Payload + ?Sized, H: Header> Sample<T, H> {
     /// Sequence number and send time, written by the output.
     pub fn stamp(&self) -> Stamp {
-        *self.raw.user_header()
+        self.raw.user_header().stamp
+    }
+
+    /// What the output sent beside the message, if its port has a header type.
+    pub fn header(&self) -> &H {
+        &self.raw.user_header().header
     }
 
     /// The output this sample came from: `runtime/node/port`.
@@ -144,14 +150,14 @@ impl<T: Payload + ?Sized> Sample<T> {
     }
 }
 
-impl<T: Payload + ?Sized> Deref for Sample<T> {
+impl<T: Payload + ?Sized, H: Header> Deref for Sample<T, H> {
     type Target = T;
     fn deref(&self) -> &T {
         T::received(&self.raw)
     }
 }
 
-impl<T: Payload + ?Sized> Source<T> {
+impl<T: Payload + ?Sized, H: Header> Source<T, H> {
     fn new(output: &str) -> Self {
         Self { output: output.into(), link: None, problem: None, last_seq: 0, received: 0, lost: 0, latency_ns: 0 }
     }
@@ -168,7 +174,7 @@ impl<T: Payload + ?Sized> Source<T> {
     }
 }
 
-impl<T: Payload + ?Sized> Shared<T> {
+impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
     pub fn create(port: &str, options: &PortOptions) -> Result<Self> {
         let output_only = [
             ("queue", options.queue.is_some()),
@@ -187,14 +193,14 @@ impl<T: Payload + ?Sized> Shared<T> {
     }
 
     /// Open the output's services and subscribe. iceoryx2 refuses a different message type.
-    fn link(&self, ipc: &IpcNode, output: &str) -> std::result::Result<Link<T>, LinkError> {
+    fn link(&self, ipc: &IpcNode, output: &str) -> std::result::Result<Link<T, H>, LinkError> {
         let failed = |error: Error| LinkError::Failed(error);
         let name = ServiceName::new(output).map_err(|error| failed(error.into()))?;
-        let service = match T::open(ipc.service_builder(&name).publish_subscribe::<T>().user_header::<Stamp>()) {
+        let service = match T::open(ipc.service_builder(&name).publish_subscribe::<T>().user_header::<Headed<H>>()) {
             Ok(service) => service,
             Err(PublishSubscribeOpenError::DoesNotExist) => return Err(LinkError::Absent),
             Err(PublishSubscribeOpenError::IncompatibleTypes) => {
-                let expected = T::message_type();
+                let expected = T::message_type::<H>();
                 return Err(failed(Error::Mismatch(format!(
                     "{output} does not carry {}{}",
                     expected.name,
@@ -223,9 +229,9 @@ impl<T: Payload + ?Sized> Shared<T> {
 // The lock on `sources` is the one a node takes in `recv`. Everything below
 // holds it only to read or change the list; calls into iceoryx2, which open
 // services and look at other processes, are made without it.
-impl<T: Payload + ?Sized> InputPort for Shared<T> {
+impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
     fn connect(&self, ipc: &IpcNode, output: &str) -> Result {
-        let wanted = |sources: &Sources<T>| sources.list.iter().any(|source| &*source.output == output);
+        let wanted = |sources: &Sources<T, H>| sources.list.iter().any(|source| &*source.output == output);
         if wanted(&self.sources.lock().unwrap()) {
             return Ok(());
         }
@@ -248,7 +254,7 @@ impl<T: Payload + ?Sized> InputPort for Shared<T> {
         sources.list = kept;
         drop(sources);
         // Unsubscribing happens here, after the lock is released.
-        let _: Vec<Source<T>> = gone;
+        let _: Vec<Source<T, H>> = gone;
     }
 
     fn link_pending(&self, ipc: &IpcNode) -> bool {
@@ -284,9 +290,10 @@ impl<T: Payload + ?Sized> InputPort for Shared<T> {
     }
 
     fn info(&self) -> Vec<SourceInfo> {
-        let snapshot: Vec<(SourceInfo, Option<Arc<PubSub<T>>>)> = {
+        // The services are looked at after the lock is released.
+        let (mut infos, services): (Vec<SourceInfo>, Vec<_>) = {
             let sources = self.sources.lock().unwrap();
-            let describe = |source: &Source<T>| SourceInfo {
+            let describe = |source: &Source<T, H>| SourceInfo {
                 output: source.output.to_string(),
                 connected: false,
                 problem: source.problem.clone(),
@@ -294,13 +301,12 @@ impl<T: Payload + ?Sized> InputPort for Shared<T> {
                 lost: source.lost,
                 latency_us: source.latency_ns / 1000,
             };
-            let service = |source: &Source<T>| source.link.as_ref().map(|link| link.service.clone());
-            sources.list.iter().map(|source| (describe(source), service(source))).collect()
+            let service = |source: &Source<T, H>| source.link.as_ref().map(|link| link.service.clone());
+            sources.list.iter().map(|source| (describe(source), service(source))).unzip()
         };
-        let checked = |(info, service): (SourceInfo, Option<Arc<PubSub<T>>>)| SourceInfo {
-            connected: service.is_some_and(|service| has_sender(&service)),
-            ..info
-        };
-        snapshot.into_iter().map(checked).collect()
+        for (info, service) in infos.iter_mut().zip(services) {
+            info.connected = service.is_some_and(|service| has_sender(&service));
+        }
+        infos
     }
 }

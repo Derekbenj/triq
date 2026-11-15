@@ -69,6 +69,7 @@ fn main() -> triq::Result {
                     }
                 }
                 Local::Remove { name } => cameras.retain(|camera| camera.name != name),
+                Local::Pause { .. } | Local::Resume { .. } => {}
             }
         }
         // Then the application's own work.

@@ -314,14 +314,12 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String) {
 /// The buttons that act on a node. True if one was pressed.
 fn actions(ui: &mut Ui, feed: &Feed, card: &Card) -> bool {
     let (runtime, node) = (card.runtime.clone(), card.node.name.clone());
-    // Only nodes that a runtime runs can be paused; an application runs its own as it likes.
-    let toggle = match (&card.node.placement, &card.node.state) {
-        (Some(_), NodeState::Running) => {
-            Some(("Pause", Request::Pause { runtime: runtime.clone(), node: node.clone() }))
-        }
-        (Some(_), NodeState::Paused) => {
-            Some(("Resume", Request::Resume { runtime: runtime.clone(), node: node.clone() }))
-        }
+    // A node that came from a factory can be paused: by its runtime, or by the
+    // application that offered the factory. Ports an application merely holds cannot.
+    let pausable = card.node.placement.is_some() || !card.node.kind.is_empty();
+    let toggle = match (pausable, &card.node.state) {
+        (true, NodeState::Running) => Some(("Pause", Request::Pause { runtime: runtime.clone(), node: node.clone() })),
+        (true, NodeState::Paused) => Some(("Resume", Request::Resume { runtime: runtime.clone(), node: node.clone() })),
         _ => None,
     };
     let mut pressed = false;

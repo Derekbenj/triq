@@ -1,9 +1,9 @@
 //! The sending end of a connection: one iceoryx2 service per output.
 use super::{NodeGuard, PortOptions, PortSpec};
 use crate::inventory::OutputInfo;
-use crate::message::now_ns;
+use crate::message::{Headed, now_ns};
 use crate::raw::{IpcNode, Notifier, PubSub, Publisher, RawLoan};
-use crate::{Error, Payload, Result, Stamp};
+use crate::{Error, Header, Payload, Result, Stamp};
 use iceoryx2::port::SendError;
 use iceoryx2::prelude::{PortFactory, PortName, ServiceName, ZeroCopySend};
 use std::fmt::Debug;
@@ -19,8 +19,11 @@ const DEFAULT_HOLD: usize = 2;
 /// By default a slow input loses its oldest waiting sample and the sender
 /// never waits. With `#[port(reliable_ms = N)]` the sender instead waits up to
 /// `N` milliseconds for a full input and then fails with [`Error::Undelivered`].
-pub struct Output<T: Payload + ?Sized> {
-    shared: Arc<Shared<T>>,
+///
+/// `H` is an optional header sent beside every message, such as the width and
+/// height of a frame whose pixels are the message.
+pub struct Output<T: Payload + ?Sized, H: Header = ()> {
+    shared: Arc<Shared<T, H>>,
     _node: Arc<NodeGuard>,
 }
 
@@ -29,19 +32,19 @@ pub(crate) trait OutputPort: Send + Sync {
     fn info(&self, spec: &PortSpec) -> OutputInfo;
 }
 
-pub(crate) struct Shared<T: Payload + ?Sized> {
+pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
     name: String,
-    publisher: Publisher<T>,
+    publisher: Publisher<T, H>,
     /// Wakes the threads waiting on the connected inputs.
     notifier: Notifier,
-    service: PubSub<T>,
+    service: PubSub<T, H>,
     seq: AtomicU64,
     sent: AtomicU64,
     undelivered: AtomicU64,
 }
 
-impl<T: Payload + ?Sized> Output<T> {
-    pub(crate) fn new(shared: Arc<Shared<T>>, node: Arc<NodeGuard>) -> Self {
+impl<T: Payload + ?Sized, H: Header> Output<T, H> {
+    pub(crate) fn new(shared: Arc<Shared<T, H>>, node: Arc<NodeGuard>) -> Self {
         Self { shared, _node: node }
     }
 
@@ -57,70 +60,93 @@ impl<T: Payload + ?Sized> Output<T> {
     }
 }
 
-impl<T: Payload> Output<T> {
+impl<T: Payload, H: Header> Output<T, H> {
     /// Copy `value` into shared memory and deliver it.
     /// Returns how many inputs received it.
     pub fn send(&self, value: T) -> Result<usize> {
+        self.send_with(value, H::default())
+    }
+
+    /// Like [`Output::send`], with a header.
+    pub fn send_with(&self, value: T, header: H) -> Result<usize> {
         let loan = self.shared.publisher.loan_uninit()?.write_payload(value);
-        self.shared.deliver(loan)
+        self.shared.deliver(loan, header)
     }
 
     /// Shared memory holding `T::default()`, to be filled in place and sent.
-    pub fn loan(&self) -> Result<Loan<'_, T>>
+    pub fn loan(&self) -> Result<Loan<'_, T, H>>
     where
         T: Default,
     {
-        Ok(Loan { raw: self.shared.publisher.loan()?, output: &self.shared })
+        Ok(Loan { raw: self.shared.publisher.loan()?, header: H::default(), output: &self.shared })
     }
 }
 
-impl<T: Debug + ZeroCopySend + 'static> Output<[T]> {
+impl<T: Debug + ZeroCopySend + 'static, H: Header> Output<[T], H> {
     /// Copy `values` into shared memory once and deliver them.
     pub fn send_slice(&self, values: &[T]) -> Result<usize>
     where
         T: Copy,
     {
+        self.send_slice_with(values, H::default())
+    }
+
+    /// Like [`Output::send_slice`], with a header.
+    pub fn send_slice_with(&self, values: &[T], header: H) -> Result<usize>
+    where
+        T: Copy,
+    {
         let loan = self.shared.publisher.loan_slice_uninit(values.len())?.write_from_slice(values);
-        self.shared.deliver(loan)
+        self.shared.deliver(loan, header)
     }
 
     /// Shared memory for `len` default elements, to be filled in place and sent.
-    pub fn loan(&self, len: usize) -> Result<Loan<'_, [T]>>
+    pub fn loan(&self, len: usize) -> Result<Loan<'_, [T], H>>
     where
         T: Default,
     {
-        Ok(Loan { raw: self.shared.publisher.loan_slice(len)?, output: &self.shared })
+        Ok(Loan { raw: self.shared.publisher.loan_slice(len)?, header: H::default(), output: &self.shared })
     }
 }
 
 /// A message under construction, already in shared memory.
 /// Dropping it without calling [`Loan::send`] gives the memory back.
-pub struct Loan<'a, T: Payload + ?Sized> {
-    raw: RawLoan<T>,
-    output: &'a Shared<T>,
+pub struct Loan<'a, T: Payload + ?Sized, H: Header = ()> {
+    raw: RawLoan<T, H>,
+    header: H,
+    output: &'a Shared<T, H>,
 }
 
-impl<T: Payload + ?Sized> Loan<'_, T> {
+impl<T: Payload + ?Sized, H: Header> Loan<'_, T, H> {
+    pub fn header(&self) -> &H {
+        &self.header
+    }
+
+    /// The header to send with the message; it starts as `H::default()`.
+    pub fn header_mut(&mut self) -> &mut H {
+        &mut self.header
+    }
+
     /// Deliver the message. Returns how many inputs received it.
     pub fn send(self) -> Result<usize> {
-        self.output.deliver(self.raw)
+        self.output.deliver(self.raw, self.header)
     }
 }
 
-impl<T: Payload + ?Sized> Deref for Loan<'_, T> {
+impl<T: Payload + ?Sized, H: Header> Deref for Loan<'_, T, H> {
     type Target = T;
     fn deref(&self) -> &T {
         T::loaned(&self.raw)
     }
 }
 
-impl<T: Payload + ?Sized> DerefMut for Loan<'_, T> {
+impl<T: Payload + ?Sized, H: Header> DerefMut for Loan<'_, T, H> {
     fn deref_mut(&mut self) -> &mut T {
         T::loaned_mut(&mut self.raw)
     }
 }
 
-impl<T: Payload + ?Sized> Shared<T> {
+impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
     pub fn create(ipc: &IpcNode, service: &str, port: &str, options: &PortOptions) -> Result<Self> {
         if options.depth.is_some() {
             return Err(Error::Mismatch(format!("{service}: `depth` belongs on an input")));
@@ -138,7 +164,7 @@ impl<T: Payload + ?Sized> Shared<T> {
         let service = T::open_or_create(
             ipc.service_builder(&name)
                 .publish_subscribe::<T>()
-                .user_header::<Stamp>()
+                .user_header::<Headed<H>>()
                 .max_publishers(1)
                 .max_subscribers(subscribers)
                 .max_nodes(subscribers + 2)
@@ -157,8 +183,9 @@ impl<T: Payload + ?Sized> Shared<T> {
         })
     }
 
-    fn deliver(&self, mut loan: RawLoan<T>) -> Result<usize> {
-        *loan.user_header_mut() = Stamp { seq: self.seq.fetch_add(1, Ordering::Relaxed) + 1, sent_ns: now_ns() };
+    fn deliver(&self, mut loan: RawLoan<T, H>, header: H) -> Result<usize> {
+        let stamp = Stamp { seq: self.seq.fetch_add(1, Ordering::Relaxed) + 1, sent_ns: now_ns() };
+        *loan.user_header_mut() = Headed { stamp, header };
         self.sent.fetch_add(1, Ordering::Relaxed);
         let delivered = match loan.send() {
             Ok(delivered) => delivered,
@@ -177,7 +204,7 @@ impl<T: Payload + ?Sized> Shared<T> {
     }
 }
 
-impl<T: Payload + ?Sized> OutputPort for Shared<T> {
+impl<T: Payload + ?Sized, H: Header> OutputPort for Shared<T, H> {
     fn info(&self, spec: &PortSpec) -> OutputInfo {
         OutputInfo {
             port: spec.clone(),

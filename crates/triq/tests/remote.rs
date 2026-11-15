@@ -195,6 +195,20 @@ fn a_local_factory_hands_ports_to_the_application() -> triq::Result {
     let Some(Local::Params { name, params }) = cameras.try_next() else { panic!("a params request") };
     assert_eq!((name.as_str(), params), ("left", CameraParams { fps: 60 }));
 
+    // Pausing is passed on too; what it means is up to the application.
+    remote.pause("left")?;
+    assert!(matches!(cameras.try_next(), Some(Local::Pause { name }) if name == "left"));
+    assert_eq!(remote.inventory()?.nodes[1].state, NodeState::Paused);
+    remote.resume("left")?;
+    assert!(matches!(cameras.try_next(), Some(Local::Resume { name }) if name == "left"));
+    assert_eq!(remote.inventory()?.nodes[1].state, NodeState::Running);
+    assert!(matches!(remote.pause("bench"), Err(Error::Mismatch(_))), "nobody was asked to honour a pause there");
+
+    // The application says when something is wrong with a node it runs.
+    rt.report("left", "sensor unplugged")?;
+    let node = &remote.inventory()?.nodes[1];
+    assert_eq!((node.errors, node.last_error.as_deref()), (1, Some("sensor unplugged")));
+
     remote.remove("left")?;
     let Some(Local::Remove { name }) = cameras.try_next() else { panic!("a remove request") };
     assert_eq!(name, "left");
@@ -202,6 +216,11 @@ fn a_local_factory_hands_ports_to_the_application() -> triq::Result {
 
     drop(cameras);
     assert!(remote.inventory()?.factories.is_empty(), "the factory goes with its handle");
+
+    // A program with its own loop looks at this instead of sleeping in `wait`.
+    assert!(!rt.stopping());
+    remote.shutdown()?;
+    assert!(rt.stopping());
     Ok(())
 }
 

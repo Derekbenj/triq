@@ -13,7 +13,7 @@ pub(crate) use input::InputPort;
 pub(crate) use output::OutputPort;
 
 use crate::raw::IpcNode;
-use crate::{MessageType, Payload, Result, runtime};
+use crate::{Header, MessageType, Payload, Result, runtime};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Weak};
 
@@ -49,8 +49,8 @@ pub struct PortSpec {
 }
 
 impl PortSpec {
-    fn new<T: Payload + ?Sized>(name: &str, direction: Direction, options: PortOptions) -> Self {
-        Self { name: name.into(), direction, message: T::message_type(), options }
+    fn new<T: Payload + ?Sized, H: Header>(name: &str, direction: Direction, options: PortOptions) -> Self {
+        Self { name: name.into(), direction, message: T::message_type::<H>(), options }
     }
 }
 
@@ -94,9 +94,9 @@ impl Drop for NodeGuard {
     }
 }
 
-impl<T: Payload + ?Sized> PortField for Output<T> {
+impl<T: Payload + ?Sized, H: Header> PortField for Output<T, H> {
     fn spec(name: &str, options: PortOptions) -> PortSpec {
-        PortSpec::new::<T>(name, Direction::Output, options)
+        PortSpec::new::<T, H>(name, Direction::Output, options)
     }
     fn bind(binder: &mut Binder, name: &str, options: PortOptions) -> Result<Self> {
         let spec = Self::spec(name, options);
@@ -108,9 +108,9 @@ impl<T: Payload + ?Sized> PortField for Output<T> {
     }
 }
 
-impl<T: Payload + ?Sized> PortField for Input<T> {
+impl<T: Payload + ?Sized, H: Header> PortField for Input<T, H> {
     fn spec(name: &str, options: PortOptions) -> PortSpec {
-        PortSpec::new::<T>(name, Direction::Input, options)
+        PortSpec::new::<T, H>(name, Direction::Input, options)
     }
     fn bind(binder: &mut Binder, name: &str, options: PortOptions) -> Result<Self> {
         let spec = Self::spec(name, options);

@@ -22,11 +22,27 @@ pub struct LocalFactory<P: Ports, A> {
 /// What a [`LocalFactory`] asks of the application.
 pub enum Local<P, A> {
     /// A node was created. Keep `ports`; the node lives as long as they do.
-    Spawn { name: String, params: A, ports: P },
+    Spawn {
+        name: String,
+        params: A,
+        ports: P,
+    },
     /// New settings for a node.
-    Params { name: String, params: A },
+    Params {
+        name: String,
+        params: A,
+    },
+    /// Stop doing the node's work until it is resumed.
+    Pause {
+        name: String,
+    },
+    Resume {
+        name: String,
+    },
     /// The node was removed. Drop its ports.
-    Remove { name: String },
+    Remove {
+        name: String,
+    },
 }
 
 impl<P: Ports, A> LocalFactory<P, A> {
@@ -62,6 +78,8 @@ impl Runtime {
                 let name = name.to_owned();
                 let (request, shown) = match notice {
                     Notice::Removed => (Local::Remove { name }, Value::Null),
+                    Notice::Paused(true) => (Local::Pause { name }, Value::Null),
+                    Notice::Paused(false) => (Local::Resume { name }, Value::Null),
                     Notice::Params(params) => {
                         let params: A = serde_json::from_value(params)?;
                         let shown = serde_json::to_value(&params)?;

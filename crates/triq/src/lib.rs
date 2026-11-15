@@ -61,7 +61,7 @@ mod runtime;
 
 pub use error::{Error, Result};
 pub use inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo};
-pub use message::{MessageType, Payload, Stamp};
+pub use message::{Headed, Header, MessageType, Payload, Stamp};
 pub use node::{Node, Placement, Trigger};
 pub use port::{Binder, Direction, Input, Loan, Output, PortField, PortOptions, PortSpec, Ports, Sample};
 pub use remote::{Remote, Watch, connect, disconnect, discover};
