@@ -3,6 +3,7 @@
 use eframe::egui::{Color32, Pos2, Vec2, ecolor::Hsva, pos2, vec2};
 use egui_snarl::{InPinId, OutPinId, Snarl};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::time::Duration;
 use triq::{Direction, Inventory, MessageType, NodeInfo, PortSpec};
 
 /// One node of one runtime, as drawn.
@@ -144,6 +145,39 @@ fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
 /// Roughly how large a card is drawn; used to lay cards out and to frame the view.
 pub fn size(card: &Card) -> Vec2 {
     vec2(250.0, 56.0 + 30.0 * card.node.inputs.len().max(card.node.outputs.len()) as f32)
+}
+
+/// How many samples each port has handled so far, by `runtime/node/port`:
+/// what an output has sent, and what an input has received from all its sources.
+pub fn counts(inventories: &[Inventory]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for inventory in inventories {
+        for node in &inventory.nodes {
+            for input in &node.inputs {
+                let received = input.sources.iter().map(|source| source.received).sum();
+                counts.insert(format!("{}/{}/{}", inventory.runtime, node.name, input.port.name), received);
+            }
+            for output in &node.outputs {
+                counts.insert(output.service.clone(), output.sent);
+            }
+        }
+    }
+    counts
+}
+
+/// Samples per second through every port, from two readings of the counters
+/// taken `elapsed` apart. A port that is new has no rate yet, and neither has
+/// one whose counter went back because its program started again.
+pub fn rates(
+    before: &BTreeMap<String, u64>,
+    after: &BTreeMap<String, u64>,
+    elapsed: Duration,
+) -> BTreeMap<String, f64> {
+    let rate = |(port, now): (&String, &u64)| {
+        let passed = now.checked_sub(*before.get(port)?)?;
+        Some((port.clone(), passed as f64 / elapsed.as_secs_f64()))
+    };
+    after.iter().filter_map(rate).collect()
 }
 
 /// Whether an output may be wired to an input: iceoryx2 will insist on the same message type.

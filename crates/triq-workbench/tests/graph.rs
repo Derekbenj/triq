@@ -2,6 +2,7 @@
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
+use std::time::Duration;
 use triq_workbench::graph::{self, Card};
 use triq_workbench::snarl::Snarl;
 
@@ -146,5 +147,32 @@ fn tidying_puts_every_card_right_of_what_feeds_it() -> triq::Result {
     assert!(position(&snarl, "smoother").x < position(&snarl, "late").x);
     assert_eq!(position(&snarl, "late").x, position(&snarl, "viewer").x, "both are fed by the smoother");
     assert_ne!(position(&snarl, "late").y, position(&snarl, "viewer").y);
+    Ok(())
+}
+
+#[test]
+fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name();
+    let (sent, received, passed_on) =
+        (format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"), format!("{robot}/smoother/smooth"));
+    let before = graph::counts(&scene.inventories());
+    assert_eq!((before[&sent], before[&received]), (0, 0), "every port is counted, by its full name");
+
+    for _ in 0..30 {
+        scene.imu.pose.send(Pose::default())?;
+    }
+    assert!(wait_for(|| graph::counts(&scene.inventories())[&passed_on] == 30));
+    let after = graph::counts(&scene.inventories());
+    let rates = graph::rates(&before, &after, Duration::from_millis(500));
+    assert_eq!((rates[&sent], rates[&received], rates[&passed_on]), (60.0, 60.0, 60.0));
+
+    // A port that was not there the first time has no rate yet. A counter
+    // that went back belongs to a program that restarted: no rate either.
+    let late: ImuPorts = scene.robot.attach("late")?;
+    late.pose.send(Pose::default())?;
+    let later = graph::counts(&scene.inventories());
+    assert!(!graph::rates(&after, &later, Duration::from_millis(500)).contains_key(&format!("{robot}/late/pose")));
+    assert!(!graph::rates(&after, &before, Duration::from_millis(500)).contains_key(&sent));
     Ok(())
 }

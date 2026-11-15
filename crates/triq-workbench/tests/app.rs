@@ -72,6 +72,14 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     assert!(shows(&harness, "waiting"), "a connection without its output says so");
     assert_eq!(wires(&harness, [&robot, &desk]), 2);
 
+    // Where data flows, the pins say how fast.
+    assert!(harness.query_all_by_label_contains("/s").next().is_none(), "nothing is flowing yet");
+    let flowing = until(&mut harness, |harness| {
+        scene.imu.pose.send(Pose::default()).expect("send");
+        harness.query_all_by_label_contains("/s").count() >= 3
+    });
+    assert!(flowing, "the sensor's output, and the filter's input and output, show a rate");
+
     // Create a node from the factory, through the form.
     click(&mut harness, "New filter");
     assert!(until(&mut harness, |harness| shows(harness, "Create")));

@@ -1,14 +1,17 @@
 //! The workbench's link to the machine, kept off the thread that draws.
 //!
 //! One thread keeps the list of inventories fresh: it listens for runtimes
-//! announcing a change and asks them again. Another carries out what the user
+//! announcing a change and asks them again, and works out how fast data is
+//! flowing from one reading of the counters to the next. Another carries out what the user
 //! asked for, one request at a time, so a slow runtime never freezes the window.
+use crate::graph;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use triq::{Inventory, Placement, Remote, Watch};
 
 /// How often counters are refreshed when nothing announces a change.
@@ -59,6 +62,8 @@ pub struct Feed {
 
 struct Shared {
     inventories: Mutex<Arc<Vec<Inventory>>>,
+    /// Samples per second through each port, by `runtime/node/port`.
+    rates: Mutex<Arc<BTreeMap<String, f64>>>,
     /// The most recent request that failed, and why.
     problem: Mutex<Option<String>>,
     stop: AtomicBool,
@@ -67,15 +72,28 @@ struct Shared {
 impl Feed {
     /// `redraw` is called from the background whenever there is something new to show.
     pub fn start(redraw: impl Fn() + Send + Sync + 'static) -> triq::Result<Self> {
-        let shared =
-            Arc::new(Shared { inventories: Mutex::default(), problem: Mutex::default(), stop: AtomicBool::new(false) });
+        let shared = Arc::new(Shared {
+            inventories: Mutex::default(),
+            rates: Mutex::default(),
+            problem: Mutex::default(),
+            stop: AtomicBool::new(false),
+        });
         let redraw = Arc::new(redraw);
         let watch = Watch::new()?;
         thread::Builder::new().name("workbench-watch".into()).spawn({
             let (shared, redraw) = (shared.clone(), redraw.clone());
             move || {
+                let mut reading = (Instant::now(), BTreeMap::new());
                 while !shared.stop.load(Ordering::Acquire) {
                     if let Ok(found) = triq::discover() {
+                        // Changes can be announced in quick succession, and a
+                        // rate measured over a few milliseconds would mean little.
+                        let elapsed = reading.0.elapsed();
+                        if elapsed >= REFRESH / 2 {
+                            let counts = graph::counts(&found);
+                            *shared.rates.lock().unwrap() = Arc::new(graph::rates(&reading.1, &counts, elapsed));
+                            reading = (Instant::now(), counts);
+                        }
                         *shared.inventories.lock().unwrap() = Arc::new(found);
                         redraw();
                     }
@@ -101,6 +119,11 @@ impl Feed {
     /// What every runtime on the machine last reported.
     pub fn inventories(&self) -> Arc<Vec<Inventory>> {
         self.shared.inventories.lock().unwrap().clone()
+    }
+
+    /// Samples per second through each port, by `runtime/node/port`, over the last half second or so.
+    pub fn rates(&self) -> Arc<BTreeMap<String, f64>> {
+        self.shared.rates.lock().unwrap().clone()
     }
 
     /// Carry out a request in the background. Its effect shows in a later inventory.

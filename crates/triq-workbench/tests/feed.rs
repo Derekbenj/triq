@@ -21,11 +21,19 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
         let redraws = redraws.clone();
         move || _ = redraws.fetch_add(1, Ordering::Relaxed)
     })?;
-    let Scene { robot, desk, imu: _imu, viewer } = Scene::new()?;
+    let Scene { robot, desk, imu, viewer } = Scene::new()?;
     let (robot_name, desk_name) = (robot.name().to_owned(), desk.name().to_owned());
     let on = |node: &str| (robot_name.clone(), node.to_owned());
     assert!(wait_for(|| node(&feed, &robot_name, "smoother").is_some()), "runtimes show up by themselves");
     assert!(redraws.load(Ordering::Relaxed) > 0, "and the screen is asked to redraw");
+
+    // Rates come by themselves too, from one reading of the counters to the next.
+    let sending = format!("{robot_name}/imu/pose");
+    assert!(feed.rates().get(&sending).is_none_or(|rate| *rate == 0.0), "nothing is flowing yet");
+    assert!(wait_for(|| {
+        imu.pose.send(Pose::default()).expect("send");
+        feed.rates().get(&sending).is_some_and(|rate| *rate > 10.0)
+    }));
 
     // Each request is carried out in the background and shows in the inventory that follows.
     let (runtime, name) = on("extra");

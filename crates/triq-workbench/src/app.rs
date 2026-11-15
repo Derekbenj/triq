@@ -9,6 +9,7 @@ use eframe::egui::{self, Color32, Rect, Stroke, Ui, emath::TSTransform};
 use egui_snarl::ui::{PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PortSpec};
 
 pub struct Workbench {
@@ -72,8 +73,9 @@ impl Workbench {
 
         egui::Panel::top("status").show(ui, |ui| self.status(ui, &inventories));
         egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
-        egui::Panel::right("details").default_size(330.0).show(ui, |ui| self.details(ui, &inventories));
-        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, &inventories));
+        let rates = self.feed.rates();
+        egui::Panel::right("details").default_size(330.0).show(ui, |ui| self.details(ui, &inventories, &rates));
+        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, &inventories, &rates));
     }
 
     fn status(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
@@ -123,7 +125,7 @@ impl Workbench {
         });
     }
 
-    fn details(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
+    fn details(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
         egui::ScrollArea::vertical().show(ui, |ui| match &mut self.focus {
             Focus::Nothing => {
                 ui.weak("Select a node to see it here, or pick a kind of node on the left to create one.");
@@ -131,7 +133,7 @@ impl Workbench {
             }
             Focus::Node { key, settings } => {
                 if let Some(card) = self.snarl.nodes().find(|card| card.key() == *key) {
-                    node_details(ui, &self.feed, card, settings);
+                    node_details(ui, &self.feed, card, settings, rates);
                 }
             }
             Focus::Form(form) => {
@@ -142,7 +144,7 @@ impl Workbench {
         });
     }
 
-    fn canvas(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
+    fn canvas(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
         let style = SnarlStyle {
             collapsible: Some(false),
             pin_size: Some(11.0),
@@ -154,7 +156,7 @@ impl Workbench {
         // The first cards to appear are framed, and again whenever the user asks.
         let frame = (self.fit && self.snarl.nodes().next().is_some()).then(|| framing(&self.snarl, ui.max_rect()));
         self.fit = frame.is_none();
-        let mut viewer = Viewer { feed: &self.feed, focus: &mut self.focus, inventories, frame };
+        let mut viewer = Viewer { feed: &self.feed, focus: &mut self.focus, inventories, rates, frame };
         SnarlWidget::new().id_salt("triq-graph").style(style).show(&mut self.snarl, &mut viewer, ui);
     }
 }
@@ -241,7 +243,7 @@ impl Form {
     }
 }
 
-fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String) {
+fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String, rates: &Rates) {
     let node = &card.node;
     ui.heading(&node.name);
     ui.weak(format!("in {}", card.runtime));
@@ -282,7 +284,7 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String) {
 
     for (index, input) in node.inputs.iter().enumerate() {
         ui.separator();
-        ui.label(port(&input.port));
+        ui.horizontal(|ui| port_with_rate(ui, &input.port, rates, &card.input(index)));
         if input.sources.is_empty() {
             ui.weak("not connected");
         }
@@ -303,7 +305,7 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, settings: &mut String) {
     }
     for output in &node.outputs {
         ui.separator();
-        ui.label(port(&output.port));
+        ui.horizontal(|ui| port_with_rate(ui, &output.port, rates, &output.service));
         ui.weak(format!("{} sent to {} inputs", output.sent, output.subscribers));
         if output.undelivered > 0 {
             ui.weak(format!("{} could not be delivered", output.undelivered));
@@ -370,6 +372,7 @@ struct Viewer<'a> {
     feed: &'a Feed,
     focus: &'a mut Focus,
     inventories: &'a [Inventory],
+    rates: &'a Rates,
     /// A view to switch to this frame.
     frame: Option<TSTransform>,
 }
@@ -423,7 +426,8 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let input = &card.node.inputs[pin.id.input];
         let received: u64 = input.sources.iter().map(|source| source.received).sum();
         let lost: u64 = input.sources.iter().map(|source| source.lost).sum();
-        ui.label(port(&input.port)).on_hover_text(format!("{received} received, {lost} lost"));
+        let label = port_with_rate(ui, &input.port, self.rates, &card.input(pin.id.input));
+        label.on_hover_text(format!("{received} received, {lost} lost"));
         let waiting = card.waiting(pin.id.input);
         if !waiting.is_empty() {
             ui.weak("waiting").on_hover_text(format!("waiting for {}", waiting.join(", ")));
@@ -433,7 +437,8 @@ impl SnarlViewer<Card> for Viewer<'_> {
 
     fn show_output(&mut self, pin: &OutPin, ui: &mut Ui, snarl: &mut Snarl<Card>) -> impl SnarlPin + 'static {
         let output = &snarl[pin.id.node].node.outputs[pin.id.output];
-        ui.label(port(&output.port)).on_hover_text(format!("{} sent to {} inputs", output.sent, output.subscribers));
+        let label = port_with_rate(ui, &output.port, self.rates, &output.service);
+        label.on_hover_text(format!("{} sent to {} inputs", output.sent, output.subscribers));
         PinInfo::circle().with_fill(graph::color(&output.port.message))
     }
 
@@ -496,9 +501,23 @@ fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
+/// Samples per second through each port, by `runtime/node/port`.
+type Rates = BTreeMap<String, f64>;
+
 /// `name: Type`, as written beside a pin.
 fn port(spec: &PortSpec) -> String {
     format!("{}: {}", spec.name, spec.message)
+}
+
+/// A port, followed by how fast data is passing through it if any is: `pose: Pose  120/s`.
+fn port_with_rate(ui: &mut Ui, spec: &PortSpec, rates: &Rates, name: &str) -> egui::Response {
+    let label = ui.label(port(spec));
+    match rates.get(name) {
+        Some(rate) if *rate >= 10.0 => _ = ui.weak(format!("{rate:.0}/s")),
+        Some(rate) if *rate > 0.0 => _ = ui.weak(format!("{rate:.1}/s")),
+        _ => {}
+    }
+    label
 }
 
 fn state(state: &NodeState) -> String {
