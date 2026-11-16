@@ -31,12 +31,6 @@ pub struct Workbench {
     fit: bool,
 }
 
-/// How far behind the present the right edge of a chart is, in seconds. The
-/// machine is read ten times a second, so the newest point is up to a tenth
-/// of a second old, and a little more by the time it has been fetched. Drawn
-/// this far behind, a line always has a point beyond the edge to run on to.
-const BEHIND: f64 = 0.15;
-
 /// What fills the window under the top row.
 #[derive(PartialEq)]
 enum Tab {
@@ -170,14 +164,14 @@ impl Workbench {
     }
 
     fn charts_body(&mut self, ui: &mut Ui) {
-        // A chart ends a moment before the present, and the present moves on. While
-        // there is a line to slide along, the window is drawn again as soon as it can be.
+        // A chart ends at the present, and the present moves on. While there is a
+        // line to slide along, the window is drawn again as soon as it can be.
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
         if !self.charts.is_empty() {
             ui.ctx().request_repaint();
         }
         let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
-        self.charts.show(ui, recorded, now - BEHIND);
+        self.charts.show(ui, recorded, now);
     }
 
     /// Every runtime with its pools, the kinds of node it offers, and its nodes.

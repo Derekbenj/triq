@@ -10,9 +10,9 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use scene::*;
 use std::time::Duration;
-use triq_workbench::charts::{self, Charts, Recorded};
+use triq_workbench::charts::{self, Charts, Recorded, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
-use triq_workbench::history::History;
+use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
 use window::drag;
 
@@ -48,6 +48,14 @@ fn history(scene: &Scene) -> triq::Result<History> {
 fn number<'a>(harness: &'a Window<'_>, input: &'a str, stat: &'a str) -> Node<'a> {
     let connection = harness.get_by_label(input).parent().expect("the connection's part of the list");
     connection.get_by_label(stat)
+}
+
+/// Where to press on one number in the list. Topics of other programs on the
+/// machine may be listed above it, so it is brought into view first.
+fn grab(harness: &mut Window<'_>, entry: &str, word: &str) -> egui::Pos2 {
+    number(harness, entry, word).scroll_to_me();
+    harness.run_steps(3);
+    number(harness, entry, word).rect().center()
 }
 
 fn shows(harness: &Window<'_>, label: &str) -> bool {
@@ -99,7 +107,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert_eq!(empty(&harness).len(), 1, "one chart to begin with, with nothing on it");
 
     // Drag the rate onto the chart: it is drawn there, and named.
-    let (rate, chart) = (number(&harness, &filtered, "rate").rect().center(), empty(&harness)[0]);
+    let (rate, chart) = (grab(&mut harness, &filtered, "rate"), empty(&harness)[0]);
     drag(&mut harness, rate, chart);
     let line = format!("{filtered} rate");
     assert!(shows(&harness, &line), "the chart names what it draws");
@@ -124,14 +132,14 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
 
     // A second number on the same chart: the chart reaches down to take it in.
     set(&mut harness, 0, 30.0);
-    let lost = number(&harness, &filtered, "lost").rect().center();
+    let lost = grab(&mut harness, &filtered, "lost");
     drag(&mut harness, lost, chart);
     assert!(shows(&harness, &line) && shows(&harness, &format!("{filtered} lost")));
     assert!(shows(&harness, "80.0") && shows(&harness, "0.00"), "nothing was lost, so the bottom is zero");
     drag(&mut harness, lost, chart);
     assert_eq!(harness.query_all_by_label(format!("{filtered} lost").as_str()).count(), 1, "once is enough");
     // How fast an output sends is drawn like any other number.
-    let sent = number(&harness, &sensor, "rate").rect().center();
+    let sent = grab(&mut harness, &sensor, "rate");
     drag(&mut harness, sent, chart);
     assert!(shows(&harness, &format!("{sensor} rate")));
 
@@ -151,7 +159,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(read, "the number is listed as it stands");
     assert_eq!(scene.imu.pose.subscribers(), 2);
     // A number from inside a message is dragged onto a chart like the others, and drawn from then on.
-    let inside = number(&harness, &sensor, "translation[0]").rect().center();
+    let inside = grab(&mut harness, &sensor, "translation[0]");
     drag(&mut harness, inside, chart);
     let line = format!("{sensor} translation[0]");
     assert!(shows(&harness, &line));
@@ -171,7 +179,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     set(&mut harness, 1, 2.0);
     let beside = empty(&harness)[0];
     assert!(beside.x > chart.x && (beside.y - chart.y).abs() < 1.0, "side by side now");
-    let latency = number(&harness, &viewed, "latency").rect().center();
+    let latency = grab(&mut harness, &viewed, "latency");
     drag(&mut harness, latency, beside);
     assert!(shows(&harness, &format!("{viewed} latency")) && empty(&harness).is_empty());
 
@@ -198,6 +206,65 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     harness.run_steps(3);
     assert!(!shows(&harness, &format!("{viewed} latency")), "the second chart is gone");
     assert!(!shows(&harness, "Remove chart"), "and the last chart stays");
+    Ok(())
+}
+
+#[test]
+fn what_comes_with_every_message_is_drawn_up_to_the_present() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    let (sensor, filtered) = (format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"));
+    // What the runtimes report: 20 samples a second, then 80, read at two seconds and at four.
+    let mut history = History::default();
+    let mut reading = scene.inventories();
+    history.record(&reading);
+    for samples in [40, 160] {
+        for _ in 0..samples {
+            scene.imu.pose.send(Pose::default())?;
+            assert!(wait_for(|| scene.viewer.pose.recv().expect("recv").is_some()));
+        }
+        reading = later(&reading, scene.inventories(), [Duration::from_secs(2); 2]);
+        history.record(&reading);
+    }
+    let reported = history.newest().expect("points");
+    let mut charts = Charts::default();
+    let connection = Connection { to: filtered, from: sensor.clone() };
+    charts.add(0, Trace::Heard { connection, stat: Stat::Rate });
+    let shown = Shown { charts, history, signals: Signals::start()?, now: reported + 0.05 };
+    let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
+        |ui, shown: &mut Shown| {
+            let recorded = Recorded { history: &shown.history, signals: &shown.signals };
+            shown.charts.show(ui, recorded, shown.now);
+        },
+        shown,
+    );
+    harness.run_steps(3);
+
+    // A report comes every tenth of a second and takes a moment to arrive. So its line is
+    // drawn a little behind the present, where it always has a point to run on to: a
+    // twentieth of a second after the newest reading, the line is on its way up to it.
+    assert!(shows(&harness, "77.0") && !shows(&harness, "80.0"));
+    harness.state_mut().now = reported + 0.2;
+    harness.run_steps(2);
+    assert!(shows(&harness, "80.0"));
+
+    // A number inside a message comes with the message, and is drawn as soon as it is there.
+    let height = "translation[1]";
+    harness.state_mut().charts = Charts::default();
+    harness.state_mut().charts.add(0, Trace::Inside { topic: sensor.clone(), number: height.to_owned() });
+    let pose = |y: f32| Pose { translation: [0.0, y, 0.0], ..Pose::default() };
+    let read = wait_for(|| {
+        scene.imu.pose.send(pose(1.0)).expect("send");
+        harness.step();
+        harness.state().signals.latest(&sensor, height) == Some(1.0)
+    });
+    assert!(read, "a number on a chart is read");
+    scene.imu.pose.send(pose(5.0))?;
+    assert!(wait_for(|| harness.state().signals.latest(&sensor, height) == Some(5.0)));
+    let sent = harness.state().signals.line(&sensor, height, 0.0, f64::MAX).last().expect("its point").0;
+    harness.state_mut().now = sent + 0.05;
+    harness.run_steps(2);
+    assert!(shows(&harness, "5.00"), "a twentieth of a second after it was sent, the chart reaches up to it");
     Ok(())
 }
 

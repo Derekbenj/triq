@@ -6,8 +6,10 @@
 //! time; several can share a chart, and there can be several charts. The top
 //! and bottom of a chart are always the largest and the smallest value in view.
 //!
-//! A chart ends at a time it is told, which the window moves on with every
-//! frame it draws: the lines slide along evenly, however often points arrive.
+//! A chart ends at the present, which the window moves on with every frame it
+//! draws: the lines slide along evenly, however often points arrive. A number
+//! from inside a message is drawn right up to the present. What a runtime
+//! reports is drawn a moment behind it, where the report has arrived.
 use crate::colors;
 use crate::history::{Connection, History, Stat};
 use crate::signals::{Signals, Wanted};
@@ -21,6 +23,13 @@ pub struct Recorded<'a> {
     pub history: &'a History,
     pub signals: &'a Signals,
 }
+
+/// How far behind the present the lines of what runtimes report end, in
+/// seconds. The machine is read ten times a second, so the newest point is up
+/// to a tenth of a second old, and a little more by the time it has been
+/// fetched. Ended this far back, such a line always has a point to run on to,
+/// and slides along instead of jumping forward with every reading.
+const BEHIND: f64 = 0.15;
 
 /// One line on a chart: a number, over time.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -69,12 +78,14 @@ impl Trace {
         }
     }
 
-    /// The number between two times: pairs of time and value, oldest first.
-    fn line(&self, recorded: Recorded<'_>, since: f64, until: f64) -> Vec<(f64, f64)> {
+    /// The number from the time `since` to the present, `now`, as far as it
+    /// is drawn: pairs of time and value, oldest first.
+    fn line(&self, recorded: Recorded<'_>, since: f64, now: f64) -> Vec<(f64, f64)> {
         match self {
-            Trace::Heard { connection, stat } => recorded.history.line(connection, *stat, since, until),
-            Trace::Sent { output } => recorded.history.sent(output, since, until),
-            Trace::Inside { topic, number } => recorded.signals.line(topic, number, since, until),
+            Trace::Heard { connection, stat } => recorded.history.line(connection, *stat, since, now - BEHIND),
+            Trace::Sent { output } => recorded.history.sent(output, since, now - BEHIND),
+            // It came with a message, and the message is here.
+            Trace::Inside { topic, number } => recorded.signals.line(topic, number, since, now),
         }
     }
 }
@@ -119,8 +130,8 @@ impl Charts {
         self.charts.iter().all(Vec::is_empty)
     }
 
-    /// Draw the list of numbers and the charts. `now` is the time at the
-    /// right edge of every chart, in seconds since 1970.
+    /// Draw the list of numbers and the charts. `now` is the present, the time
+    /// at the right edge of every chart, in seconds since 1970.
     pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, now: f64) {
         let opened = egui::Panel::left("numbers").default_size(300.0).show(ui, |ui| numbers(ui, recorded)).inner;
         egui::CentralPanel::default().show(ui, |ui| self.grid(ui, recorded, now));
