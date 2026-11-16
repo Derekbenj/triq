@@ -23,6 +23,7 @@ use crate::signals::{Signals, Wanted};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use triq_views::panes;
 
@@ -41,8 +42,10 @@ pub struct Recorded<'a> {
 /// and slides along instead of jumping forward with every reading.
 const BEHIND: f64 = 0.15;
 
-/// What a line on a chart follows: a number, over time.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// What a line on a chart follows: a number, over time. It is known by what
+/// it is called, so a chart that is kept from one run to the next draws it
+/// again when something of those names is running.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Trace {
     /// One number of a connection.
     Heard { connection: Connection, stat: Stat },
@@ -101,6 +104,7 @@ impl Trace {
 }
 
 /// One line on a chart: the number it follows, and the colour it is drawn in.
+#[derive(Serialize, Deserialize)]
 struct Line {
     trace: Trace,
     /// Which of the colours that lines take in turn it was given.
@@ -116,6 +120,7 @@ impl Line {
 }
 
 /// One chart: the number it is called by, and the lines drawn on it.
+#[derive(Serialize, Deserialize)]
 struct Chart {
     number: usize,
     lines: Vec<Line>,
@@ -141,6 +146,8 @@ impl Chart {
     }
 }
 
+/// The charts, with all that the next run of the workbench is to find as it was.
+#[derive(Serialize, Deserialize)]
 pub struct Charts {
     /// The charts, and how they share the room: side by side, one under
     /// another, or in one place with one of them in front. Each of those can
@@ -176,6 +183,11 @@ impl Charts {
     /// True when no chart has a line on it: nothing moves, so nothing needs drawing again.
     pub fn is_empty(&self) -> bool {
         self.traces().next().is_none()
+    }
+
+    /// Whether there is a chart at all. What was kept from another run might be anything.
+    pub(crate) fn has_a_chart(&self) -> bool {
+        self.panes.tiles.tiles().any(|tile| tile.is_pane())
     }
 
     /// Draw the list of numbers and the charts. `now` is the present, the time
@@ -423,9 +435,11 @@ fn names(ui: &mut Ui, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
                     if let Trace::Heard { connection, .. } = &line.trace {
                         name.on_hover_text(format!("from {}", connection.from));
                     }
-                    if let Some(value) = line.trace.latest(recorded) {
-                        ui.weak(written(value) + line.trace.unit());
-                    }
+                    // A number may be on a chart before anything by its name is running.
+                    match line.trace.latest(recorded) {
+                        Some(value) => ui.weak(written(value) + line.trace.unit()),
+                        None => ui.weak("nothing yet"),
+                    };
                     ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
                 })
             });

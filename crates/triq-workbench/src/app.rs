@@ -5,6 +5,9 @@
 //! it as a group (see `panes.rs`), closed by the cross beside the name, and
 //! opened again from the row along the top. `egui_tiles` does the arranging.
 //!
+//! How the windows and the charts are arranged, and what is on the charts, is
+//! kept from one run to the next.
+//!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
 //! a request to a runtime. A wire appears when its owner says it exists.
@@ -19,6 +22,7 @@ use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilde
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tabs, TileId, Tiles, Tree, UiResponse};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -32,8 +36,18 @@ pub struct Workbench {
     contents: Contents,
 }
 
+/// What the arrangement is kept under, between one run and the next.
+const LAYOUT: &str = "layout";
+
+/// What is kept: [`Workbench::layout`], read back.
+#[derive(Deserialize)]
+struct Kept {
+    windows: Tree<Window>,
+    charts: Charts,
+}
+
 /// One of the windows within the window.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 enum Window {
     /// Every runtime on the machine: its pools, the kinds of node it offers, and its nodes.
     Runtimes,
@@ -125,6 +139,32 @@ impl Workbench {
     /// Ask for a connection to be removed.
     pub fn unwire(&mut self, from: OutPinId, to: InPinId) {
         unwire(&self.contents.feed, &self.contents.snarl, from, to);
+    }
+
+    /// How the windows and the charts are arranged, and what is on the
+    /// charts, to be handed to [`Workbench::arrange`] by the next run.
+    pub fn layout(&self) -> String {
+        serde_json::json!({ "windows": self.windows, "charts": self.contents.charts }).to_string()
+    }
+
+    /// Be as [`Workbench::layout`] said the workbench was. A number on a chart
+    /// is known by what it is called: it is drawn when something of those
+    /// names is running, and waits until then. What cannot be read as a
+    /// layout changes nothing.
+    pub fn arrange(&mut self, layout: &str) {
+        let Ok(Kept { windows, charts }) = serde_json::from_str(layout) else { return };
+        // Whatever wrote it, a workbench has its four windows and a chart.
+        if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) && charts.has_a_chart() {
+            (self.windows, self.contents.charts) = (windows, charts);
+        }
+    }
+
+    /// As it was when it last closed, if anything was kept of that.
+    pub fn remembered(mut self, kept: Option<&dyn eframe::Storage>) -> Self {
+        if let Some(layout) = kept.and_then(|kept| kept.get_string(LAYOUT)) {
+            self.arrange(&layout);
+        }
+        self
     }
 
     /// Draw one frame: a row with the name of every window, and under it the windows that are open.
@@ -394,6 +434,11 @@ impl Contents {
 impl eframe::App for Workbench {
     fn ui(&mut self, ui: &mut Ui, _: &mut eframe::Frame) {
         self.show(ui);
+    }
+
+    /// Called now and then, and when the window closes.
+    fn save(&mut self, kept: &mut dyn eframe::Storage) {
+        kept.set_string(LAYOUT, self.layout());
     }
 }
 

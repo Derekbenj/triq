@@ -199,7 +199,13 @@ fn read(taps: &Taps, shared: &Shared) {
     while !shared.stop.load(Ordering::Acquire) {
         if listed.is_none_or(|at| at.elapsed() >= LISTED) {
             if let Ok(topics) = taps.topics() {
-                shared.state.lock().unwrap().topics = topics;
+                // A topic that could not be opened is forgotten once it is there, and so opened
+                // again below: a chart may want a number of a program that only starts later.
+                let there = |name: &String| topics.iter().any(|topic| topic.name == *name);
+                open.retain(|name, open| open.tap.is_some() || !there(name));
+                let mut state = shared.state.lock().unwrap();
+                state.read.retain(|name, _| open.contains_key(name));
+                state.topics = topics;
             }
             listed = Some(Instant::now());
         }

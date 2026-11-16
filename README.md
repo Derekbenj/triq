@@ -182,6 +182,9 @@ begin with the first three are side by side and the charts are under them.
   elsewhere: see "Arranging panes" below. Drag the line between two windows to give one more room.
 - The cross beside a name closes the window. The row along the top has the name of every window,
   and opens or closes it. A window that is opened again is where it was.
+- The workbench is as it was when it last closed: the size and place of its window, how the
+  four windows and the charts are arranged and which are open, and what is on each chart. It keeps
+  that now and then, and when it closes.
 
 ### Arranging panes
 
@@ -247,6 +250,10 @@ In `Runtimes`, `Graph` and `Details`:
   chart stays.
 - `Numbers` hides the list and shows it again, to give the charts its room. While it is hidden,
   only the numbers that are on charts are read out of messages.
+- A number on a chart is known by what it is called: the names of its runtime, node and port.
+  Kept from one run to the next, it says `nothing yet` while nothing of those names is running,
+  and is drawn as soon as something is. What runs now that was not there before is in the list as
+  always, and on no chart until it is dragged onto one. The `×` beside a name takes a line off.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
 - The top and bottom of a chart are always the largest and the smallest value in view, written at
   its right edge. Hover over a chart to read the lines at that moment.
@@ -275,7 +282,7 @@ from when it is put on a chart.
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
 (the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the windows) are about 2,400 lines together,
+background threads) and `app.rs` (the windows) are about 2,470 lines together,
 and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
@@ -554,8 +561,7 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 ## Not there yet
 
 - Anything across the network.
-- The workbench does not remember where cards were placed between runs, nor how its windows and
-  charts were arranged. A views program does remember how its views were.
+- The workbench does not remember where cards were placed in the graph between runs.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 

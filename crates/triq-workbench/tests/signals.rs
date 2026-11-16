@@ -91,6 +91,31 @@ fn the_numbers_inside_a_topic_are_kept_while_it_is_watched() -> triq::Result {
 }
 
 #[test]
+fn a_topic_that_is_not_there_yet_is_read_once_it_is() -> triq::Result {
+    // A chart may remember a number of a program that is not running: the name of its topic is all there is.
+    let robot = unique("late");
+    let sensor = format!("{robot}/imu/pose");
+    let signals = Signals::start()?;
+    signals.watch(wanted([(&sensor, &["translation[0]"])]));
+    assert!(wait_for(|| signals.watched(&sensor).is_some_and(|watched| watched.problem.is_some())));
+    assert!(
+        signals.watched(&sensor).unwrap().numbers.is_empty() && signals.latest(&sensor, "translation[0]").is_none()
+    );
+
+    // The program starts. Nobody asks again: the topic is found, and read from then on.
+    let runtime = Runtime::new(&robot)?;
+    let imu: ImuPorts = runtime.attach("imu")?;
+    let read = wait_for(|| {
+        imu.pose.send(pose(4.5)).expect("send");
+        signals.latest(&sensor, "translation[0]") == Some(4.5)
+    });
+    assert!(read, "the number is read");
+    assert!(signals.watched(&sensor).unwrap().problem.is_none() && imu.pose.subscribers() == 1);
+    assert!(!signals.line(&sensor, "translation[0]", 0.0, f64::MAX).is_empty(), "and its past is kept for the chart");
+    Ok(())
+}
+
+#[test]
 fn a_slice_says_how_long_it_is_and_a_header_what_it_holds() -> triq::Result {
     let scene = Scene::new()?;
     let camera: CameraPorts = scene.robot.attach("camera")?;

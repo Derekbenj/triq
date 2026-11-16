@@ -11,7 +11,8 @@ fn main() -> eframe::Result {
         Box::new(|creation| {
             let window = creation.egui_ctx.clone();
             let feed = Feed::start(move || window.request_repaint())?;
-            Ok(Box::new(Workbench::new(feed)))
+            // As it was when it last closed: its windows, its charts, and what was on them.
+            Ok(Box::new(Workbench::new(feed).remembered(creation.storage)))
         }),
     )
 }

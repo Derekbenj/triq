@@ -7,11 +7,12 @@
 //! point. A rate is taken over the half second before it, and timed by when
 //! the samples were sent, so that a steady stream draws a steady line.
 use crate::graph::{Reading, seconds_between};
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use triq::Inventory;
 
 /// An input and one output it hears. Both are `runtime/node/port`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Connection {
     pub to: String,
     pub from: String,
@@ -33,7 +34,7 @@ pub struct Point {
 }
 
 /// One of the numbers a point holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Stat {
     Rate,
     Lost,
