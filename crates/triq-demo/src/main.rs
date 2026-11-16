@@ -16,7 +16,9 @@ fn main() -> eframe::Result {
         Box::new(move |creation| {
             let window = creation.egui_ctx.clone();
             let feed = Feed::start(move || window.request_repaint())?;
-            Ok(Box::new(Demo::new(feed, Runtime::new(&name)?)?))
+            // Frame views scale pictures down, which is work: they get threads of their own to share.
+            let runtime = Runtime::builder(&name).pool("views", 2).start()?;
+            Ok(Box::new(Demo::new(feed, runtime)?))
         }),
     )
 }

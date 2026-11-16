@@ -1,140 +1,193 @@
 //! A node that shows camera frames, for any program drawn with egui.
 //!
-//! This is all a viewer is: a kind of node with an input, run by the program
-//! that has the window, and a function that draws what its nodes last
-//! received. triq does not know it is a viewer, and neither does the workbench.
+//! A frame is large, and a window has one thread to draw with. So a frame
+//! view is an ordinary node: the runtime runs it on the thread or the pool it
+//! was placed on, where it scales the newest frame down to what a window can
+//! use. The window only draws what its views left for it.
+//!
+//! triq does not know it is a viewer, and neither does the workbench.
 use crate::Frame;
-use egui::{ColorImage, Image, TextureHandle, TextureOptions, Ui, vec2};
+use egui::{Color32, ColorImage, Image, TextureHandle, TextureOptions, Ui, vec2};
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use triq::prelude::*;
-use triq::{Local, LocalFactory};
 
 /// The kind of node this offers.
 pub const FRAME_VIEW: &str = "frame_view";
 
-/// Frames arrive whether or not anything else on screen changes, so a
-/// window with a view in it is redrawn this often.
+/// How often a view looks for a new frame, and how often a window with a view in it is redrawn.
 const REFRESH: Duration = Duration::from_millis(16);
 
 /// How tall a picture is drawn, in points.
 const HEIGHT: f32 = 180.0;
+
+/// How many rows of pixels a picture is scaled down to: enough for `HEIGHT`
+/// on a screen with two pixels to the point.
+const ROWS: usize = 360;
 
 #[derive(Ports)]
 pub struct FrameViewPorts {
     pub image: Input<[u8], Frame>,
 }
 
-/// Every frame view of one program. Make one, and call [`FrameViews::show`]
-/// where the pictures should be drawn.
-pub struct FrameViews {
-    requests: LocalFactory<FrameViewPorts, ()>,
-    views: BTreeMap<String, View>,
-}
+/// What every view of one program has for its window, by the view's name.
+type Shown = Arc<Mutex<BTreeMap<String, Picture>>>;
 
-struct View {
-    ports: FrameViewPorts,
-    paused: bool,
-    /// The newest good frame, as a texture the window can draw.
-    picture: Option<(Frame, TextureHandle)>,
+/// What one view has to show.
+#[derive(Default)]
+struct Picture {
+    /// The newest good frame.
+    frame: Option<Frame>,
+    /// Its pixels, scaled down, until the window has taken them.
+    pixels: Option<ColorImage>,
     /// Why the newest frame could not be drawn, if it could not.
     problem: Option<String>,
 }
 
+/// Every frame view of one program. Make one, and call [`FrameViews::show`]
+/// where the pictures should be drawn.
+pub struct FrameViews {
+    shown: Shown,
+    /// The picture of each view, as the window draws it.
+    textures: BTreeMap<String, TextureHandle>,
+}
+
 impl FrameViews {
-    /// Offer `frame_view` nodes on `runtime`.
+    /// Offer `frame_view` nodes on `runtime`, which runs each where it is placed.
     pub fn new(runtime: &Runtime) -> triq::Result<Self> {
-        Ok(Self { requests: runtime.local_factory(FRAME_VIEW)?, views: BTreeMap::new() })
+        let shown = Shown::default();
+        runtime.register_with(FRAME_VIEW, {
+            let shown = shown.clone();
+            move |name, ()| Ok(FrameView::new(name, shown.clone()))
+        })?;
+        Ok(Self { shown, textures: BTreeMap::new() })
     }
 
     pub fn is_empty(&self) -> bool {
-        self.views.is_empty()
+        self.shown.lock().unwrap().is_empty()
     }
 
     /// Draw every view, one after the other in the direction `ui` lays things out.
     /// Call it once per frame.
     pub fn show(&mut self, ui: &mut Ui) {
-        self.serve();
-        for (name, view) in &mut self.views {
-            ui.vertical(|ui| view.show(ui, name));
-        }
-        if !self.views.is_empty() {
-            ui.ctx().request_repaint_after(REFRESH);
-        }
-    }
-
-    /// Do what other programs asked for since the last frame.
-    fn serve(&mut self) {
-        while let Some(request) = self.requests.try_next() {
-            match request {
-                Local::Spawn { name, ports, .. } => {
-                    self.views.insert(name, View { ports, paused: false, picture: None, problem: None });
+        let mut shown = self.shown.lock().unwrap();
+        self.textures.retain(|name, _| shown.contains_key(name));
+        for (name, picture) in shown.iter_mut() {
+            // Pixels a view left since the last frame go into its texture.
+            if let Some(pixels) = picture.pixels.take() {
+                match self.textures.get_mut(name) {
+                    Some(texture) => texture.set(pixels, TextureOptions::LINEAR),
+                    None => {
+                        let texture = ui.ctx().load_texture(name, pixels, TextureOptions::LINEAR);
+                        self.textures.insert(name.clone(), texture);
+                    }
                 }
-                Local::Pause { name } => self.set_paused(&name, true),
-                Local::Resume { name } => self.set_paused(&name, false),
-                // Dropping the view drops its ports, which is what ends the node.
-                Local::Remove { name } => _ = self.views.remove(&name),
-                Local::Params { .. } => {}
             }
+            ui.vertical(|ui| draw(ui, name, picture, self.textures.get(name)));
         }
-    }
-
-    fn set_paused(&mut self, name: &str, paused: bool) {
-        if let Some(view) = self.views.get_mut(name) {
-            view.paused = paused;
+        if !shown.is_empty() {
+            ui.ctx().request_repaint_after(REFRESH);
         }
     }
 }
 
-impl View {
-    fn show(&mut self, ui: &mut Ui, name: &str) {
-        ui.strong(name);
-        // A paused view reads nothing and keeps what it shows.
-        if !self.paused {
-            self.take_newest(ui, name);
-        }
-        if let Some(problem) = &self.problem {
-            ui.colored_label(ui.visuals().error_fg_color, problem);
-        }
-        let Some((frame, texture)) = &self.picture else {
-            ui.weak("no frame yet");
-            return;
-        };
-        let paused = if self.paused { ", paused" } else { "" };
-        ui.weak(format!("{} x {}, frame {}{paused}", frame.width, frame.height, frame.number));
-        let size = vec2(HEIGHT * frame.width as f32 / frame.height as f32, HEIGHT);
-        ui.add(Image::new(texture).fit_to_exact_size(size));
+fn draw(ui: &mut Ui, name: &str, picture: &Picture, texture: Option<&TextureHandle>) {
+    ui.strong(name);
+    if let Some(problem) = &picture.problem {
+        ui.colored_label(ui.visuals().error_fg_color, problem);
+    }
+    let (Some(frame), Some(texture)) = (&picture.frame, texture) else {
+        ui.weak("no frame yet");
+        return;
+    };
+    ui.weak(format!("{} x {}, frame {}", frame.width, frame.height, frame.number));
+    let size = vec2(HEIGHT * frame.width as f32 / frame.height as f32, HEIGHT);
+    ui.add(Image::new(texture).fit_to_exact_size(size));
+}
+
+/// The node behind one view. It runs on the runtime's threads.
+struct FrameView {
+    name: String,
+    shown: Shown,
+}
+
+impl FrameView {
+    fn new(name: &str, shown: Shown) -> Self {
+        // The view is there for the window from the start, before any frame.
+        shown.lock().unwrap().insert(name.to_owned(), Picture::default());
+        Self { name: name.to_owned(), shown }
+    }
+}
+
+impl Node for FrameView {
+    type Ports = FrameViewPorts;
+    type Params = ();
+
+    /// A view that no window draws. Those of a window are made by its [`FrameViews`].
+    fn new(_: ()) -> triq::Result<Self> {
+        Ok(Self::new("", Shown::default()))
     }
 
-    /// Only the newest frame is worth drawing. Its pixels are read where they
-    /// lie in shared memory and copied once, into a texture for the window.
-    fn take_newest(&mut self, ui: &Ui, name: &str) {
-        let sample = match self.ports.image.latest() {
-            Ok(Some(sample)) => sample,
-            Ok(None) => return,
-            Err(error) => return self.problem = Some(error.to_string()),
-        };
+    /// Frames may come faster than a window is drawn, and each is large. So
+    /// a view looks for the newest one as often as a window could show it.
+    fn trigger(&self) -> Trigger {
+        Trigger::Every(REFRESH)
+    }
+
+    fn run(&mut self, ports: &mut FrameViewPorts) -> triq::Result {
+        let Some(sample) = ports.image.latest()? else { return Ok(()) };
         let frame = *sample.header();
-        let (width, height, number) = (frame.width as usize, frame.height as usize, frame.number);
-        let largest = ui.ctx().input(|input| input.max_texture_side);
+        let (width, height) = (frame.width as usize, frame.height as usize);
         // The header is another program's word for what the bytes are. Check it before trusting it.
-        self.problem = if sample.is_empty() || width as u128 * height as u128 * 4 != sample.len() as u128 {
-            Some(format!("frame {number}: {} bytes is not {width} x {height} pixels", sample.len()))
-        } else if width > largest || height > largest {
-            Some(format!("frame {number}: {width} x {height} is too large to draw"))
-        } else {
-            None
-        };
-        if self.problem.is_some() {
-            return;
-        }
-        let image = ColorImage::from_rgba_unmultiplied([width, height], &sample);
-        match &mut self.picture {
-            Some((shown, texture)) => {
-                *shown = frame;
-                texture.set(image, TextureOptions::LINEAR);
+        let fits = !sample.is_empty() && width as u128 * height as u128 * 4 == sample.len() as u128;
+        // The pixels are read where they lie in shared memory, and only as many are kept as a window needs.
+        let pixels = fits.then(|| thumbnail(&sample, width, height, ROWS));
+        let mut shown = self.shown.lock().unwrap();
+        let picture = shown.entry(self.name.clone()).or_default();
+        match pixels {
+            Some(pixels) => *picture = Picture { frame: Some(frame), pixels: Some(pixels), problem: None },
+            // The last good frame stays on screen, with the complaint above it.
+            None => {
+                let size = format!("{} bytes is not {width} x {height} pixels", sample.len());
+                picture.problem = Some(format!("frame {}: {size}", frame.number));
             }
-            None => self.picture = Some((frame, ui.ctx().load_texture(name, image, TextureOptions::LINEAR))),
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FrameView {
+    fn drop(&mut self) {
+        self.shown.lock().unwrap().remove(&self.name);
+    }
+}
+
+/// A picture of `width` by `height` pixels, four bytes each, scaled down to
+/// at most `rows` rows and four times as many columns: every pixel of the
+/// result is the average of a square of the original. A picture that is
+/// small enough is taken as it is.
+pub fn thumbnail(pixels: &[u8], width: usize, height: usize, rows: usize) -> ColorImage {
+    let step = height.div_ceil(rows).max(width.div_ceil(4 * rows));
+    if step <= 1 {
+        return ColorImage::from_rgba_unmultiplied([width, height], pixels);
+    }
+    // A picture too thin to hold one square in a direction keeps one pixel there.
+    let (wide, tall) = ((width / step).max(1), (height / step).max(1));
+    let (across, down) = (step.min(width), step.min(height));
+    let mut small = Vec::with_capacity(wide * tall);
+    for row in 0..tall {
+        for column in 0..wide {
+            let mut sum = [0u32; 4];
+            for line in 0..down {
+                let start = ((row * step + line) * width + column * step) * 4;
+                for pixel in pixels[start..start + across * 4].chunks_exact(4) {
+                    sum.iter_mut().zip(pixel).for_each(|(total, part)| *total += u32::from(*part));
+                }
+            }
+            let [red, green, blue, alpha] = sum.map(|total| (total / (across * down) as u32) as u8);
+            small.push(Color32::from_rgba_unmultiplied(red, green, blue, alpha));
         }
     }
+    ColorImage::new([wide, tall], small)
 }

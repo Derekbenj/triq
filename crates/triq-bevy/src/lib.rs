@@ -15,7 +15,7 @@ pub use rig::RigState;
 #[cfg(feature = "engine")]
 pub use scene::{CAMERA, RIG, app};
 #[cfg(feature = "viewer")]
-pub use viewer::{FRAME_VIEW, FrameViewPorts, FrameViews};
+pub use viewer::{FRAME_VIEW, FrameViewPorts, FrameViews, thumbnail};
 
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
