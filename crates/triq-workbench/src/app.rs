@@ -21,6 +21,7 @@ use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
 
@@ -59,6 +60,10 @@ impl Window {
 /// What the windows show.
 struct Contents {
     feed: Feed,
+    /// What the runtimes last reported, as it stood when this frame began:
+    /// every window shows the same reading of the machine.
+    inventories: Arc<Vec<Inventory>>,
+    rates: Arc<Rates>,
     snarl: Snarl<Card>,
     colors: Colors,
     charts: Charts,
@@ -94,6 +99,8 @@ impl Workbench {
     pub fn new(feed: Feed) -> Self {
         let contents = Contents {
             feed,
+            inventories: Arc::default(),
+            rates: Arc::default(),
             snarl: Snarl::new(),
             colors: Colors::default(),
             charts: Charts::default(),
@@ -136,7 +143,7 @@ impl Workbench {
                     }
                 }
                 ui.separator();
-                let inventories = self.contents.feed.inventories();
+                let inventories = &self.contents.inventories;
                 let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
                 ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
                 self.contents.problem(ui);
@@ -249,11 +256,11 @@ impl Behavior<Window> for Shown<'_> {
 }
 
 impl Contents {
-    /// Bring the drawing in line with what the runtimes last reported.
+    /// Take what the runtimes last reported, and bring the drawing in line with it.
     fn refresh(&mut self) {
-        let inventories = self.feed.inventories();
-        graph::sync(&mut self.snarl, &inventories);
-        self.colors.update(inventories.iter().map(|inventory| inventory.runtime.as_str()));
+        (self.inventories, self.rates) = (self.feed.inventories(), self.feed.rates());
+        graph::sync(&mut self.snarl, &self.inventories);
+        self.colors.update(self.inventories.iter().map(|inventory| inventory.runtime.as_str()));
         if let Focus::Node { key, .. } = &self.focus
             && !self.snarl.nodes().any(|card| card.key() == *key)
         {
@@ -273,7 +280,7 @@ impl Contents {
 
     /// Every runtime with its pools, the kinds of node it offers, and its nodes.
     fn runtimes(&mut self, ui: &mut Ui) {
-        let inventories = self.feed.inventories();
+        let inventories = self.inventories.clone();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if inventories.is_empty() {
                 ui.weak("No runtime is running on this machine.");
@@ -306,7 +313,7 @@ impl Contents {
     }
 
     fn details(&mut self, ui: &mut Ui) {
-        let (inventories, rates) = (self.feed.inventories(), self.feed.rates());
+        let (inventories, rates) = (self.inventories.clone(), self.rates.clone());
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match &mut self.focus {
             Focus::Nothing => {
                 ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
@@ -346,7 +353,7 @@ impl Contents {
     }
 
     fn canvas(&mut self, ui: &mut Ui) {
-        let (inventories, rates) = (self.feed.inventories(), self.feed.rates());
+        let (inventories, rates) = (self.inventories.clone(), self.rates.clone());
         let style = SnarlStyle {
             collapsible: Some(false),
             header_drag_space: Some(egui::vec2(3.0, 3.0)),
