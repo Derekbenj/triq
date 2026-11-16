@@ -130,18 +130,22 @@ impl Taps {
         };
         let service = service.map_err(while_trying(&opening))?;
         let subscriber = service.subscriber_builder().create().map_err(while_trying(&opening))?;
-        Ok(Tap { subscriber, beside: types.user_header.size() })
+        Ok(Tap { subscriber, topic: Topic::new(topic, config) })
     }
 }
 
 /// One reader of one topic. Dropping it stops reading.
 pub struct Tap {
     subscriber: Subscriber<Svc, [CustomPayloadMarker], CustomHeaderMarker>,
-    /// How many bytes travel beside each message.
-    beside: usize,
+    topic: Topic,
 }
 
 impl Tap {
+    /// What is being read.
+    pub fn topic(&self) -> &Topic {
+        &self.topic
+    }
+
     /// Take the oldest message that is waiting, if there is one, and show it
     /// to `read`: the bytes that travel beside it, and its own. They lie in
     /// shared memory and are not copied; they are gone when `read` returns.
@@ -150,12 +154,12 @@ impl Tap {
             return Ok(None);
         };
         let header: *const CustomHeaderMarker = sample.user_header();
-        // SAFETY: iceoryx2 keeps `beside` bytes for the user header at this
-        // address, the size the topic declares, and the sample keeps them
+        // SAFETY: iceoryx2 keeps `topic.beside` bytes for the user header at
+        // this address, the size the topic declares, and the sample keeps them
         // alive and unchanged for as long as it is held. The bytes between
         // the members of a struct hold whatever was there before, which is
         // still bytes.
-        let beside = unsafe { std::slice::from_raw_parts(header.cast::<u8>(), self.beside) };
+        let beside = unsafe { std::slice::from_raw_parts(header.cast::<u8>(), self.topic.beside) };
         let payload = sample.payload();
         // SAFETY: a `CustomPayloadMarker` is one byte, so the same memory is
         // a slice of as many bytes; the sample keeps it alive as above.

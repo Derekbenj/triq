@@ -10,14 +10,16 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use scene::*;
 use std::time::Duration;
-use triq_workbench::charts::{self, Charts};
+use triq_workbench::charts::{self, Charts, Recorded};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::History;
+use triq_workbench::signals::Signals;
 use window::drag;
 
 struct Shown {
     charts: Charts,
     history: History,
+    signals: Signals,
     /// The time at the right edge of every chart.
     now: f64,
 }
@@ -70,11 +72,12 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     let (filtered, viewed) = (format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose"));
     let history = history(&scene)?;
     let now = history.newest().expect("points");
-    let shown = Shown { charts: Charts::default(), history, now };
+    let shown = Shown { charts: Charts::default(), history, signals: Signals::start()?, now };
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
         |ui, shown: &mut Shown| {
             egui::Panel::top("controls").show(ui, |ui| ui.horizontal(|ui| shown.charts.controls(ui)));
-            shown.charts.show(ui, &shown.history, shown.now);
+            let recorded = Recorded { history: &shown.history, signals: &shown.signals };
+            shown.charts.show(ui, recorded, shown.now);
         },
         shown,
     );
@@ -131,6 +134,34 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     let sent = number(&harness, &sensor, "rate").rect().center();
     drag(&mut harness, sent, chart);
     assert!(shows(&harness, &format!("{sensor} rate")));
+
+    // What is inside its messages is listed once the output is opened: from then on the topic is read.
+    assert!(!shows(&harness, "translation[0]") && scene.imu.pose.subscribers() == 1);
+    harness.get_by_label(sensor.as_str()).parent().unwrap().get_by_label("numbers inside").click();
+    let listed = |harness: &Window<'_>, value: &str| {
+        let entry = harness.get_by_label(sensor.as_str()).parent().unwrap();
+        let number = entry.query_by_label("translation[0]").and_then(|number| number.parent());
+        number.is_some_and(|number| number.query_by_label(value).is_some())
+    };
+    let read = wait_for(|| {
+        scene.imu.pose.send(Pose { translation: [2.5, 0.0, 0.0], ..Pose::default() }).expect("send");
+        harness.step();
+        listed(&harness, "2.50")
+    });
+    assert!(read, "the number is listed as it stands");
+    assert_eq!(scene.imu.pose.subscribers(), 2);
+    // A number from inside a message is dragged onto a chart like the others, and drawn from then on.
+    let inside = number(&harness, &sensor, "translation[0]").rect().center();
+    drag(&mut harness, inside, chart);
+    let line = format!("{sensor} translation[0]");
+    assert!(shows(&harness, &line));
+    let drawn = wait_for(|| {
+        scene.imu.pose.send(Pose { translation: [7.25, 0.0, 0.0], ..Pose::default() }).expect("send");
+        harness.step();
+        harness.get_by_label(line.as_str()).parent().unwrap().query_by_label("7.25").is_some()
+    });
+    assert!(drawn, "the chart says where the line is now");
+    let line = format!("{filtered} rate");
 
     // More charts, one under the other or side by side, each with its own numbers.
     harness.get_by_label("Add chart").click();

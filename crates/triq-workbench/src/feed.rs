@@ -5,9 +5,10 @@
 //! of the counters to another it works out how fast data is flowing, and it
 //! keeps what each connection did as history. Another thread carries out what
 //! the user asked for, one request at a time, so a slow runtime never freezes
-//! the window.
+//! the window. A third reads the topics whose messages the user looks into.
 use crate::graph;
 use crate::history::History;
+use crate::signals::Signals;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -66,6 +67,7 @@ pub enum Request {
 pub struct Feed {
     shared: Arc<Shared>,
     requests: mpsc::Sender<Request>,
+    signals: Signals,
 }
 
 struct Shared {
@@ -134,7 +136,12 @@ impl Feed {
                 }
             }
         })?;
-        Ok(Self { shared, requests })
+        Ok(Self { shared, requests, signals: Signals::start()? })
+    }
+
+    /// The numbers inside the messages of the topics that are watched.
+    pub fn signals(&self) -> &Signals {
+        &self.signals
     }
 
     /// What every runtime on the machine last reported.

@@ -7,11 +7,15 @@ license.workspace = true
 
 [dependencies]
 triq = { path = "../triq" }
+# Reads topics as bytes, for the numbers inside messages whose type the workbench was not built with.
+triq-tap = { path = "../triq-tap" }
 eframe = "=0.37.0"
 # The fork carries the egui 0.37 port and the wire and menu behaviour the graph relies on.
 egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5d137ac3aaa6abe4eae8b99916a7a09cc546", default-features = false }
 serde_json.workspace = true
 
 [dev-dependencies]
+# For a test that publishes a topic without triq.
+iceoryx2.workspace = true
 egui_kittest.workspace = true
 serde.workspace = true

@@ -83,6 +83,7 @@ fn a_tap_shows_each_message_as_bytes() -> Checked {
 
     // A message of fixed size: its bytes are the value as it lies in memory.
     let pose = taps.open(&name("pose"))?;
+    assert_eq!((pose.topic().name.as_str(), pose.topic().message.as_str()), (name("pose").as_str(), "Pose"));
     assert_eq!(ports.pose.subscribers(), 1, "a tap is one more reader");
     assert_eq!(pose.take(copied)?, None, "nothing was sent yet");
     ports.pose.send(Pose { translation: [1.5, -2.0, 3.25], rotation: [0.0, 0.0, 0.0, 1.0] })?;

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, VecDeque};
 use triq::Inventory;
 
 /// An input and one output it hears. Both are `runtime/node/port`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Connection {
     pub to: String,
     pub from: String,
@@ -33,7 +33,7 @@ pub struct Point {
 }
 
 /// One of the numbers a point holds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stat {
     Rate,
     Lost,
@@ -140,24 +140,27 @@ impl Trace {
         !self.recent.is_empty() || !self.points.is_empty()
     }
 
-    /// One number between two times, as a chart draws it: pairs of time and
-    /// value, oldest first. Where the line crosses either time on its way
-    /// from one point to the next, it is cut there. The points are found
-    /// without looking through the whole hour.
+    /// One number between two times, as a chart draws it.
     fn line(&self, stat: Stat, since: f64, until: f64) -> Vec<(f64, f64)> {
-        let points = &self.points;
-        let first = points.partition_point(|point| point.at < since);
-        let end = points.partition_point(|point| point.at <= until);
-        // Where the line is at `time`, if that lies between the point at `index` and the one before it.
-        let cut = |index: usize, time: f64| {
-            let (before, after) = (points.get(index.checked_sub(1)?)?, points.get(index)?);
-            let along = (time - before.at) / (after.at - before.at);
-            let value = stat.of(before) + (stat.of(after) - stat.of(before)) * along;
-            (before.at < time && time < after.at).then_some((time, value))
-        };
-        let in_view = points.range(first.min(end)..end).map(|point| (point.at, stat.of(point)));
-        cut(first, since).into_iter().chain(in_view).chain(cut(end, until)).collect()
+        between(&self.points, |point| (point.at, stat.of(point)), since, until)
     }
+}
+
+/// The part of a line between two times, as a chart draws it: pairs of time
+/// and value, oldest first. `place` says when a point was and how high. Where
+/// the line crosses either time on its way from one point to the next, it is
+/// cut there. The points are found without looking through all of them.
+pub fn between<P>(points: &VecDeque<P>, place: impl Fn(&P) -> (f64, f64), since: f64, until: f64) -> Vec<(f64, f64)> {
+    let first = points.partition_point(|point| place(point).0 < since);
+    let end = points.partition_point(|point| place(point).0 <= until);
+    // Where the line is at `time`, if that lies between the point at `index` and the one before it.
+    let cut = |index: usize, time: f64| {
+        let (before, after) = (place(points.get(index.checked_sub(1)?)?), place(points.get(index)?));
+        let along = (time - before.0) / (after.0 - before.0);
+        (before.0 < time && time < after.0).then_some((time, before.1 + (after.1 - before.1) * along))
+    };
+    let in_view = points.range(first.min(end)..end).map(&place);
+    cut(first, since).into_iter().chain(in_view).chain(cut(end, until)).collect()
 }
 
 impl History {

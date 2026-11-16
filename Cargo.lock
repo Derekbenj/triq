@@ -7004,9 +7004,11 @@ dependencies = [
  "eframe",
  "egui-snarl",
  "egui_kittest",
+ "iceoryx2",
  "serde",
  "serde_json",
  "triq",
+ "triq-tap",
 ]
 
 [[package]]

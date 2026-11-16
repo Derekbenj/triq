@@ -7,7 +7,7 @@
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
 //! the wires that leave it.
-use crate::charts::Charts;
+use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
@@ -111,7 +111,8 @@ impl Workbench {
             if !self.charts.is_empty() {
                 ui.ctx().request_repaint();
             }
-            return self.charts.show(ui, &self.feed.history(), now - BEHIND);
+            let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
+            return self.charts.show(ui, recorded, now - BEHIND);
         }
         egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
         let rates = self.feed.rates();

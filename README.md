@@ -159,6 +159,11 @@ The `Charts` tab, beside `Graph`, shows what connections and outputs do over tim
   second it lost, the longest gap between two samples of late, and the latency of the newest sample.
   Every output is there too, with the rate it sends at. They are in order of name, so what a node
   takes in and what it sends stand together.
+- An output opens to show the `numbers inside` its messages, each as it stands in the newest one:
+  `translation[0]`, `header.width`, the `length` of a slice. They are dragged onto charts like the
+  rest, and drawn for every message, by when it was sent.
+- A topic that another iceoryx2 program publishes is listed as well. Nobody says what is inside its
+  messages, so only the length of a slice can be drawn.
 - Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart, and
   `Add chart` and `Charts side by side` arrange as many charts as wanted in rows and columns.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
@@ -176,6 +181,13 @@ second would read 58, 60 or 62. The longest gap is the one thing a count cannot 
 input keeps it: the longest time from one sample to the next, by when they were sent, over the last
 half second to second. A hiccup of the sender shows there, and so does the hole that lost samples
 leave.
+
+The numbers inside messages are the one thing the workbench reads for itself, as bytes
+(`triq-tap`), with the list of numbers the output's runtime gives for its message type. While an
+output is open in the list or has a number on a chart, the workbench is one more of its readers:
+it takes one of the places the output has for inputs, and it never makes the sender wait. An output
+that does wait for its readers (`reliable_ms`) is not read at all. The past of a number is kept
+from when it is put on a chart.
 
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections did, as plain data), `charts.rs` (the charts),
