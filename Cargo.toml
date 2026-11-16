@@ -13,6 +13,5 @@ iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d93639
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 triq-macros = { path = "crates/triq-macros" }
-# What windows are drawn with: the workbench, and the viewers other crates ship.
-egui = "=0.37.0"
+# Drives the workbench's window code in its tests, without opening a window.
 egui_kittest = { version = "=0.37.0", features = ["wgpu", "snapshot"] }
