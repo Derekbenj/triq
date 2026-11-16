@@ -1,5 +1,5 @@
-//! What the windows and the charts have in common: how `egui_tiles` is asked
-//! to arrange panes, here and there alike. Anything can go into anything.
+//! How `egui_tiles` is asked to arrange panes: the views here, and the windows
+//! and charts of the workbench, by the same rules. Anything can go into anything.
 //!
 //! A pane is put down on a half of another, or on its middle, and it matters
 //! how high. High, where the highlight takes in the bar above the other pane,

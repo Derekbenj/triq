@@ -21,6 +21,8 @@ triq adds no transport of its own:
 ```toml
 [dependencies]
 triq = { git = "ssh://git@github.com/Derekbenj/triq.git" }
+# Only for a program that draws the project's own views of its messages:
+triq-views = { git = "ssh://git@github.com/Derekbenj/triq.git" }
 # Only for a program that draws the workbench in its own window:
 triq-workbench = { git = "ssh://git@github.com/Derekbenj/triq.git" }
 ```
@@ -41,6 +43,7 @@ project does not name iceoryx2 itself.
 | `triq` | the library, and the `triq` command-line tool |
 | `triq-macros` | `#[derive(Ports)]` and `#[derive(Fields)]`; comes with `triq` |
 | `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own |
+| `triq-views` | a window for a project's own views of its messages; see [Views of your own](#views-of-your-own) |
 | `triq-tap` | reads any iceoryx2 topic as bytes; the workbench uses it, and it holds the only `unsafe` |
 | `triq-bench` | the benchmarks under [Measurements](#measurements) |
 
@@ -182,8 +185,8 @@ begin with the first three are side by side and the charts are under them.
 
 ### Arranging panes
 
-The four windows are panes, and so are the charts within `Charts`. They are arranged the same way,
-and anything goes into anything. A pane is taken by its name and put down on a half of another, or
+The four windows are panes, and so are the charts within `Charts`, and the views of a project's
+own views program. They are arranged the same way, and anything goes into anything. A pane is taken by its name and put down on a half of another, or
 on its middle. The highlight shows where it will land, and it matters how high it is put down:
 
 | Put down | High: the highlight takes in the other's bar | Low: the highlight is all under that bar |
@@ -271,11 +274,11 @@ from when it is put on a chart.
 
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
-(the numbers inside messages), `charts.rs` (the charts), `panes.rs` (how
-windows and charts are arranged), `feed.rs` (the background threads) and
-`app.rs` (the windows) are about 2,500 lines together,
+(the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
+background threads) and `app.rs` (the windows) are about 2,400 lines together,
 and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
-windows and the charts are arranged with `egui_tiles`. The tests drive the
+windows and the charts are arranged with `egui_tiles`, by the rules that
+`triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening one, with a pointer where it matters, and
 write pictures to `target/tmp`: `windows.png`, `workbench.png`, `graph.png`,
 `charts.png` and `chart-colours.png`.
@@ -329,28 +332,85 @@ draw a controller's sticks or a camera's picture, and it does not try. That
 is a **view**, and a view is two ordinary things in a program of the project:
 
 - a kind of node with an input;
-- something that draws what those nodes last received, in a window of any toolkit.
+- something that draws what a node of that kind last received.
 
-Because a view is a node, every tool already lists it, wires it, pauses it and
-removes it, the workbench included, and iceoryx2 already refuses to wire it
-to the wrong kind of output. triq has no notion of a viewer and the workbench
-has no plug-ins; nothing in either limits what a view looks like.
+`triq-views` is the program around them: a runtime, and a window with a list
+of the views there are and a pane for each. A project writes its kinds of
+view and this:
 
-Who runs the node depends on how much work a message is:
+```rust
+fn main() -> triq_views::eframe::Result {
+    triq_views::run(Runtime::builder("views"), |views| {
+        views.add(ControllerViews::new(views.runtime())?);             // a kind that a crate wrote
+        views.add(FrameViews::new(views.runtime(), views.window())?);  // and another
+        views.add(Latest::new(views.runtime(), "gauge", degrees)?);    // one that is written right here
+        Ok(())
+    })
+}
 
-| | The window runs it | The runtime runs it |
+/// All of a view of a small message: the message it listens to, and how the newest is drawn.
+fn degrees(ui: &mut egui::Ui, reading: &Reading) {
+    ui.label(format!("{:.1} degrees", reading.celsius));
+}
+```
+
+`run` starts the runtime it is given, opens the window, and hands over `views`
+to be told the kinds. Each kind offers its nodes on `views.runtime()`. The
+runtime is the project's to shape, as for any program: one whose views do
+work gives it a pool for them, `Runtime::builder("views").pool("views", 2)`,
+and each such view is placed in the pool or on a thread of its own when it is
+created.
+
+Who owns what:
+
+| | Owner |
+| --- | --- |
+| What a kind of view listens to, and how it draws | the crate that writes the kind |
+| The views (they are nodes), their inputs, the window and how it is arranged | the views program, in its own runtime |
+| Saying which kinds of view can be created | that runtime, as every runtime says what it offers |
+| Finding the kinds, creating a view, wiring it, pausing and removing it | the workbench, the `triq` tool, or any other program |
+| Knowing that a node is a view | nobody: to triq and to the workbench it is a node with an input |
+
+So a new kind of view is written in a crate of the project and handed to its
+views program. triq is not touched, and neither is the workbench, which is
+run as it comes and lists the new kind as soon as that program runs. Each of
+the two windows draws at its own pace, and neither stops when the other does.
+
+What the views program does for every kind:
+
+- Every view is listed as soon as its node exists, and has a pane, which the user arranges like
+  the workbench's windows: see [Arranging panes](#arranging-panes). The cross on a pane closes the
+  view, not its node; a click in the list opens it again, and it is dragged from the list to where
+  it should be.
+- It remembers the size and place of its window and how the views were arranged. Nodes are not
+  kept from one run to the next, so a view takes its old place when a node of its name exists again.
+
+A kind of view is anything that says which views there are and draws one:
+
+```rust
+pub trait Kind {
+    fn names(&mut self) -> Vec<String>;                 // the views of this kind there are now
+    fn show(&mut self, ui: &mut egui::Ui, name: &str);  // draw one, in the room it is given
+}
+```
+
+Who runs the nodes behind the views depends on how much work a message is:
+
+| | The window runs them | The runtime runs them |
 | --- | --- | --- |
-| Offered with | `rt.local_nodes(kind)` | `rt.register_with(kind, ...)` |
+| Written as | `Latest::new(runtime, kind, draw)` | a `Kind` of the project's own |
+| Offered with | `rt.local_nodes(kind)`, by `Latest` | `rt.register_with(kind, ...)` |
 | A message is read | by the window, as it draws | on the thread or pool the node was placed on |
 | The window | reads each node's input, then draws | draws what the nodes left for it |
 | Right for | small messages: a controller's state | large ones: a camera's frame, scaled down first |
 | Example | `triq-xbox/src/viewer.rs` | `triq-bevy/src/viewer.rs` |
 
-A view lives in a window of the project's own, beside the workbench and
-apart from it. The workbench is run as it comes and is never built with a
-project's code; the project's window is laid out however the project likes,
-with whatever draws best. Each draws at its own pace, and neither stops when
-the other does. `triq-demo` is such a window.
+A project that has a window already makes its own `Views::new(runtime,
+window)` and draws it with `Views::show`. Views are drawn with the egui that
+`triq-views` was
+built with, re-exported as `triq_views::egui`; a crate that only writes a
+kind of view depends on `triq-views` without its default features, and builds
+no window. The crate is about 490 lines.
 
 The workbench is also a widget, `Workbench::show`, for a project that does
 want everything in one window. That window is then drawn with the egui the
@@ -364,9 +424,9 @@ this one. They depend on triq the way any project does.
 
 | Repository | What to read it for |
 | --- | --- |
-| `triq-xbox` | a device as a node; which device is a setting, not a wire; a view the window runs |
-| `triq-bevy` | nodes inside an engine's own loop; large frames with a header; a view the runtime runs |
-| `triq-demo` | a project's own window, apart from the workbench: those two views, laid out its own way |
+| `triq-xbox` | a device as a node; which device is a setting, not a wire; a view of a small message, in one call |
+| `triq-bevy` | nodes inside an engine's own loop; large frames with a header; a view whose nodes the runtime runs |
+| `triq-demo` | a views program, and the template for one: those two kinds of view and one of its own, in 46 lines |
 
 ## Delivery
 
@@ -494,7 +554,8 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 ## Not there yet
 
 - Anything across the network.
-- The workbench does not remember where cards were placed between runs.
+- The workbench does not remember where cards were placed between runs, nor how its windows and
+  charts were arranged. A views program does remember how its views were.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 

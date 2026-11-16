@@ -17,13 +17,14 @@
 //! draws: the lines slide along evenly, however often points arrive. A number
 //! from inside a message is drawn right up to the present. What a runtime
 //! reports is drawn a moment behind it, where the report has arrived.
+use crate::colors;
 use crate::history::{Connection, History, Stat};
 use crate::signals::{Signals, Wanted};
-use crate::{colors, panes};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
 use std::collections::BTreeSet;
+use triq_views::panes;
 
 /// Where the numbers come from: what the runtimes report of their connections
 /// and outputs, and what is read out of the messages themselves.

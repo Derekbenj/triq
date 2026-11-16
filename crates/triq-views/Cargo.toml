@@ -1,0 +1,24 @@
+[package]
+name = "triq-views"
+description = "A window for a project's own views of its messages, each in a pane that the user arranges"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[features]
+default = ["window"]
+# `run`: the window itself, which also remembers how the views were arranged.
+# Leave it off in a crate that only defines a kind of view.
+window = ["dep:eframe"]
+
+[dependencies]
+triq = { path = "../triq" }
+egui = "=0.37.0"
+# Gives every view a pane, which is put down beside others, in with them, or in their place.
+egui_tiles = { version = "=0.18.0", default-features = false, features = ["serde"] }
+eframe = { version = "=0.37.0", optional = true, features = ["persistence"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true

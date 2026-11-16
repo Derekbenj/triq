@@ -10,7 +10,6 @@ pub mod colors;
 pub mod feed;
 pub mod graph;
 pub mod history;
-mod panes;
 pub mod signals;
 
 pub use app::Workbench;

@@ -15,7 +15,6 @@ use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
-use crate::panes;
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
@@ -25,6 +24,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
+use triq_views::panes;
 
 pub struct Workbench {
     /// The four windows: which of them are open, and how they share the room.

@@ -12,8 +12,10 @@ triq-tap = { path = "../triq-tap" }
 eframe = "=0.37.0"
 # The fork carries the egui 0.37 port and the wire and menu behaviour the graph relies on.
 egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5d137ac3aaa6abe4eae8b99916a7a09cc546", default-features = false }
-# Lays the charts out as panes within panes, which are split, resized and dragged about.
+# Lays the windows and the charts out as panes, which are resized and dragged about.
 egui_tiles = { version = "=0.18.0", default-features = false }
+# The rules that panes are arranged by, shared with the windows that projects make for their views.
+triq-views = { path = "../triq-views", default-features = false }
 serde_json.workspace = true
 
 [dev-dependencies]
