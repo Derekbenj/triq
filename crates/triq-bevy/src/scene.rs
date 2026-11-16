@@ -4,10 +4,12 @@
 //! Bevy keeps the main thread, as it must. The rig and the cameras are nodes
 //! that this program runs itself: it offers two factories, takes the ports of
 //! each node that is asked for, and uses them from ordinary Bevy systems.
-use crate::{CameraParams, CameraPorts, Frame, Mounts, Pacing, Pose, RigParams, RigPorts, RigState, unpadded};
+use crate::{CameraParams, CameraPorts, Frame, Mounts, Pacing, Pose, RigParams, RigPorts, RigState};
+use crate::{next_frame, unpad};
 use bevy::app::{AppExit, PluginsState};
 use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
+use bevy::ecs::batching::BatchingStrategy;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{Readback, ReadbackComplete};
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
@@ -54,6 +56,8 @@ struct CameraNode {
     sent: u64,
     /// Which frames it sends.
     pacing: Pacing,
+    /// Frames the GPU has handed back that are still to be sent, oldest first.
+    waiting: Vec<Vec<u8>>,
     /// Something that went wrong while sending, until it has been reported.
     problem: Option<String>,
     /// Its picture in the window, if there is a window.
@@ -79,9 +83,7 @@ fn time_frames(time: Res<Time<Real>>, mut frame: ResMut<FrameTime>) {
     frame.0 = frame.0.mul_f32(0.95) + time.delta().mul_f32(0.05);
 }
 
-/// Run the program without a window, one frame every `frame`. Each frame is
-/// due that long after the one before was due, not after it was done, so the
-/// rate is the one asked for however long a frame takes.
+/// Run the program without a window, one frame every `frame`.
 fn keep_time(mut app: App, frame: Duration) -> AppExit {
     // As Bevy's own loops do first: let the plugins finish setting up.
     while app.plugins_state() == PluginsState::Adding {
@@ -95,9 +97,8 @@ fn keep_time(mut app: App, frame: Duration) -> AppExit {
         if let Some(exit) = app.should_exit() {
             return exit;
         }
-        // A frame that overran is not made up for: the count starts afresh from now.
-        due = (due + frame).max(Instant::now());
-        std::thread::sleep(due - Instant::now().min(due));
+        due = next_frame(due, frame, Instant::now());
+        std::thread::sleep(due.saturating_duration_since(Instant::now()));
     }
 }
 
@@ -131,7 +132,7 @@ pub fn app(name: &str, headless: bool, fps: f64) -> triq::Result<App> {
     app.insert_non_send(requests)
         .insert_resource(Headless(headless))
         .insert_resource(FrameTime(frame))
-        .add_systems(First, time_frames)
+        .add_systems(First, (time_frames, send_frames))
         .insert_resource(Time::<Fixed>::from_hz(RIG_HZ))
         .insert_resource(ClearColor(Color::srgb(0.12, 0.16, 0.23)))
         .add_systems(Startup, build_world)
@@ -239,6 +240,7 @@ fn spawn_camera(world: &mut World, name: String, params: CameraParams, ports: Ca
         paused: false,
         sent: 0,
         pacing: Pacing::new(Instant::now()),
+        waiting: Vec::new(),
         problem: None,
         preview,
     };
@@ -253,7 +255,7 @@ fn spawn_camera(world: &mut World, name: String, params: CameraParams, ports: Ca
             Msaa::Off,
             placed(RigState::new(&RigParams::default()).pose()),
         ))
-        .observe(send_frame)
+        .observe(take_frame)
         .id();
     equip(world, entity);
 }
@@ -274,7 +276,7 @@ fn change_camera(world: &mut World, name: &str, params: CameraParams) {
 
 /// Give a camera the lens its settings ask for and a picture of its own to
 /// render into. Bevy reads that picture back from the GPU after every frame
-/// and hands it to `send_frame`.
+/// and hands it to `take_frame`.
 fn equip(world: &mut World, entity: Entity) {
     let Some(camera) = world.get::<CameraNode>(entity) else { return };
     let (width, height, preview) = (camera.params.width, camera.params.height, camera.preview);
@@ -297,8 +299,10 @@ fn equip(world: &mut World, entity: Entity) {
     }
 }
 
-/// Called with each frame Bevy has read back from the GPU.
-fn send_frame(read: On<ReadbackComplete>, frame: Res<FrameTime>, mut cameras: Query<&mut CameraNode>) {
+/// Called with each frame Bevy has read back from the GPU. That is at the one
+/// moment in a frame when both halves of Bevy stand still, and with one camera
+/// after another, so the frame is only taken here. `send_frames` sends it.
+fn take_frame(mut read: On<ReadbackComplete>, frame: Res<FrameTime>, mut cameras: Query<&mut CameraNode>) {
     let Ok(mut camera) = cameras.get_mut(read.entity) else { return };
     // Nobody looking means nothing to do.
     if camera.paused || camera.ports.image.subscribers() == 0 {
@@ -306,27 +310,31 @@ fn send_frame(read: On<ReadbackComplete>, frame: Res<FrameTime>, mut cameras: Qu
     }
     // Of the frames the renderer hands back, as many a second as the camera was asked for.
     let hz = camera.params.hz;
-    if !camera.pacing.take(Instant::now(), hz, frame.0) {
-        return;
+    if camera.pacing.take(Instant::now(), hz, frame.0) {
+        camera.waiting.push(std::mem::take(&mut read.event_mut().data));
     }
-    let (width, height) = (camera.params.width, camera.params.height);
-    let number = camera.sent + 1;
-    let send = || -> triq::Result<bool> {
-        // The pixels go straight into shared memory, with their size beside them.
-        let mut frame = camera.ports.image.loan(width as usize * height as usize * 4)?;
-        // A frame of another size was rendered before the camera's size changed.
-        if !unpadded(&read.data, width, height, &mut frame) {
-            return Ok(false);
+}
+
+/// Send the frames the cameras took, all cameras at once: every frame is
+/// megabytes to copy into shared memory, and the cameras need not wait for
+/// each other.
+fn send_frames(mut cameras: Query<&mut CameraNode>) {
+    cameras.par_iter_mut().batching_strategy(BatchingStrategy::fixed(1)).for_each(|mut camera| {
+        let camera = &mut *camera;
+        let (width, height) = (camera.params.width, camera.params.height);
+        for mut pixels in camera.waiting.drain(..) {
+            // A frame of another size was rendered before the camera's size changed.
+            if !unpad(&mut pixels, width, height) {
+                continue;
+            }
+            // The pixels are copied once, with their size beside them.
+            let number = camera.sent + 1;
+            match camera.ports.image.send_slice_with(&pixels, Frame { width, height, number }) {
+                Ok(_) => camera.sent = number,
+                Err(error) => camera.problem = Some(error.to_string()),
+            }
         }
-        *frame.header_mut() = Frame { width, height, number };
-        frame.send()?;
-        Ok(true)
-    };
-    match send() {
-        Ok(true) => camera.sent = number,
-        Ok(false) => {}
-        Err(error) => camera.problem = Some(error.to_string()),
-    }
+    });
 }
 
 /// Move every rig by what its controller says, and tell the world where it is.

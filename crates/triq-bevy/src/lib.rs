@@ -199,17 +199,30 @@ impl Pacing {
     }
 }
 
-/// Copy a frame as the GPU returns it, with every row padded to a fixed
-/// stride, into `pixels` without the padding. False, with nothing copied,
-/// when `padded` is not a frame of this size.
-pub fn unpadded(padded: &[u8], width: u32, height: u32, pixels: &mut [u8]) -> bool {
-    let row = width as usize * 4;
-    let stride = padded.len() / height.max(1) as usize;
-    if row == 0 || stride < row || pixels.len() != row * height as usize {
+/// When the next frame of a program that keeps its own time is due: `frame`
+/// after this one was due, not after it was done at `now`, so that the rate
+/// is the one asked for however long a frame takes. A frame that overran is
+/// not made up for: the count starts again from `now`.
+pub fn next_frame(due: Instant, frame: Duration, now: Instant) -> Instant {
+    (due + frame).max(now)
+}
+
+/// Take the padding out of a frame as the GPU returns it, where every row is
+/// padded to a fixed stride. Many widths, 1920 among them, have rows that
+/// fill their stride, and the frame is left as it is. False, with nothing
+/// changed, when `frame` is not a frame of this size.
+pub fn unpad(frame: &mut Vec<u8>, width: u32, height: u32) -> bool {
+    let (row, rows) = (width as usize * 4, height as usize);
+    if row == 0 || rows == 0 || !frame.len().is_multiple_of(rows) || frame.len() / rows < row {
         return false;
     }
-    for (source, target) in padded.chunks(stride).zip(pixels.chunks_mut(row)) {
-        target.copy_from_slice(&source[..row]);
+    let stride = frame.len() / rows;
+    if stride > row {
+        // Each row moves up to where the one before it now ends.
+        for index in 1..rows {
+            frame.copy_within(index * stride..index * stride + row, index * row);
+        }
+        frame.truncate(row * rows);
     }
     true
 }

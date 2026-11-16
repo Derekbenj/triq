@@ -242,10 +242,14 @@ would fall back to sixty whenever its window is not in front. Asked for as
 many pictures as there are frames, a camera sends every frame; asked for
 fewer, it sends them evenly.
 
+Bevy hands each frame back as bytes of its own, so a picture is copied once
+more on its way into shared memory. The cameras do that copying all at once,
+on Bevy's pool of threads, not one after another.
+
 | Crate | Files | What to read it for |
 | --- | --- | --- |
 | `triq-xbox` | `lib.rs` 91, `host.rs` 173, `sdl.rs` 93, `viewer.rs` 130 | a device as a node; which device is a setting, not a wire |
-| `triq-bevy` | `lib.rs` 215, `rig.rs` 67, `scene.rs` 446, `viewer.rs` 140 | nodes inside an engine's own loop; large frames with a header |
+| `triq-bevy` | `lib.rs` 228, `rig.rs` 67, `scene.rs` 462, `viewer.rs` 140 | nodes inside an engine's own loop; large frames with a header |
 | `triq-demo` | `lib.rs` 57, `main.rs` 22 | a project's own window: the workbench and its viewers together |
 
 Their messages and settings build without SDL or Bevy (`default-features = false`),
@@ -304,6 +308,9 @@ whether anyone is connected, and `input.lost()` counts samples that were overwri
 
 Sending: `send(value)` copies a value into shared memory once; `loan()` gives
 shared memory to fill in place; slices (`Output<[T]>`) take any length with no declared size.
+A loan holds default values when it is handed over, which for a slice is one
+quick pass over the memory. Data that already sits somewhere else goes with
+`send_slice`, which copies it in once and sets nothing first.
 
 ## Headers
 
@@ -323,7 +330,7 @@ struct CameraPorts {
 }
 
 let mut frame = ports.image.loan(width * height * 4)?;
-render_into(&mut frame);                 // the pixels, written once, in place
+render_into(&mut frame);                 // the pixels, written in place
 *frame.header_mut() = Frame { width, height, number };
 frame.send()?;
 

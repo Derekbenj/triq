@@ -1,7 +1,7 @@
 //! How a controller moves the rig, and where its cameras sit. No engine involved.
 use std::f32::consts::FRAC_PI_2;
 use std::time::Duration;
-use triq_bevy::{Mounts, Pose, RigParams, RigState, unpadded};
+use triq_bevy::{Mounts, Pose, RigParams, RigState, unpad};
 use triq_xbox::XboxState;
 
 const SECOND: Duration = Duration::from_secs(1);
@@ -73,18 +73,29 @@ fn cameras_mount_on_a_row_of_points_that_turns_with_the_rig() {
 fn a_frame_read_from_the_gpu_loses_its_row_padding() {
     // Two rows of three RGBA pixels, each row padded to 16 bytes.
     let padded: Vec<u8> = (0..32).collect();
-    let mut pixels = [0u8; 24];
-    assert!(unpadded(&padded, 3, 2, &mut pixels));
-    assert_eq!(pixels[..12], padded[..12]);
-    assert_eq!(pixels[12..], padded[16..28]);
+    let mut frame = padded.clone();
+    assert!(unpad(&mut frame, 3, 2));
+    assert_eq!(frame.len(), 24);
+    assert_eq!(frame[..12], padded[..12]);
+    assert_eq!(frame[12..], padded[16..28]);
+
+    // Rows that fill their stride have no padding, and the frame is left as it is.
+    let exact: Vec<u8> = (0..32).collect();
+    let mut frame = exact.clone();
+    assert!(unpad(&mut frame, 4, 2));
+    assert_eq!(frame, exact);
 }
 
 #[test]
 fn a_frame_of_another_size_is_refused() {
     // A camera that was just resized may still be handed a frame of its old size.
-    let mut pixels = [7u8; 24];
-    assert!(!unpadded(&[0; 16], 3, 2, &mut pixels), "rows too short for the width");
-    assert!(!unpadded(&[], 3, 2, &mut pixels), "no data at all");
-    assert!(!unpadded(&[0; 32], 3, 2, &mut [0; 20]), "nowhere to put it");
-    assert_eq!(pixels, [7u8; 24], "and nothing is written");
+    for (what, wrong) in [
+        ("rows too short for the width", vec![7u8; 16]),
+        ("no data at all", vec![]),
+        ("not a whole number of rows", vec![7u8; 33]),
+    ] {
+        let mut frame = wrong.clone();
+        assert!(!unpad(&mut frame, 3, 2), "{what}");
+        assert_eq!(frame, wrong, "and it is left alone");
+    }
 }

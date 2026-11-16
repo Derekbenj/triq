@@ -1,6 +1,6 @@
 //! Which of the frames a renderer hands it a camera sends. No engine involved.
 use std::time::{Duration, Instant};
-use triq_bevy::Pacing;
+use triq_bevy::{Pacing, next_frame};
 
 /// A frame every `frame`, each early or late by a different amount of up to `wobble`.
 fn frames(start: Instant, count: u32, frame: Duration, wobble: Duration) -> Vec<Instant> {
@@ -72,4 +72,20 @@ fn a_camera_does_not_make_up_for_frames_it_never_had() {
     let after: Vec<Duration> =
         pictures.windows(2).filter(|pair| pair[0] > resumed).map(|pair| pair[1] - pair[0]).collect();
     assert!(after.iter().all(|gap| *gap >= Duration::from_millis(24)), "no burst to catch up: {after:?}");
+}
+
+#[test]
+fn a_program_without_a_window_keeps_to_its_frame_rate() {
+    let start = Instant::now();
+    let frame = Duration::from_millis(10);
+    // However long a frame took, the next is due a frame after this one was due:
+    // a hundred frames are due a second after the first, not a second and a hundred delays.
+    let mut due = start;
+    for took in (0..100).map(|number| Duration::from_micros(500 + 70 * number)) {
+        due = next_frame(due, frame, due + took);
+    }
+    assert_eq!(due, start + Duration::from_secs(1));
+    // A frame that overran is not made up for with a rush of frames: the count starts again.
+    let late = due + Duration::from_millis(35);
+    assert_eq!(next_frame(due, frame, late), late);
 }
