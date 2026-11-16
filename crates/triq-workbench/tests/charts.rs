@@ -14,7 +14,7 @@ use triq_workbench::charts::{self, Charts, Recorded, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::drag;
+use window::{alone, drag, drag_by_way_of};
 
 struct Shown {
     charts: Charts,
@@ -67,20 +67,14 @@ fn empty(harness: &Window<'_>) -> Vec<egui::Pos2> {
     harness.query_all_by_label("Drag a number here.").map(|hint| hint.rect().center()).collect()
 }
 
-/// Type a number into one of the boxes above the charts.
-fn set(harness: &mut Window<'_>, which: usize, value: f64) {
-    harness.query_all_by_role(Role::SpinButton).nth(which).expect("a number box").set_value_accesskit(value);
+/// Type into the box above the charts that says how much of the past they show.
+fn show_the_last(harness: &mut Window<'_>, seconds: f64) {
+    harness.get_by_role(Role::SpinButton).set_value_accesskit(seconds);
     harness.run_steps(3);
 }
 
-#[test]
-fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
-    let scene = Scene::new()?;
-    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
-    let (filtered, viewed) = (format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose"));
-    let history = history(&scene)?;
-    let now = history.newest().expect("points");
-    let shown = Shown { charts: Charts::default(), history, signals: Signals::start()?, now };
+/// The charts in a window, under the box that says how much of the past they show.
+fn open(shown: Shown) -> Window<'static> {
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
         |ui, shown: &mut Shown| {
             egui::Panel::top("controls").show(ui, |ui| ui.horizontal(|ui| shown.charts.controls(ui)));
@@ -90,6 +84,48 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         shown,
     );
     harness.run_steps(3);
+    harness
+}
+
+/// Where the name of a chart is, on the bar above it: the thing to take a chart by.
+fn name(harness: &Window<'_>, chart: &str) -> egui::Rect {
+    harness.get_by_label(chart).rect()
+}
+
+/// A button on the bar above a chart: the first one to the right of the chart's name.
+fn on_bar<'a>(harness: &'a Window<'_>, chart: &str, button: &'a str) -> Node<'a> {
+    let name = name(harness, chart);
+    let after = |button: &Node<'_>| {
+        let place = button.rect();
+        (place.center().y - name.center().y).abs() < name.height() && place.left() >= name.right()
+    };
+    let buttons = harness.query_all_by_label(button).filter(after);
+    buttons.min_by(|a, b| a.rect().left().total_cmp(&b.rect().left())).unwrap_or_else(|| panic!("no {button:?}"))
+}
+
+/// Press a button on the bar above a chart.
+fn split(harness: &mut Window<'_>, chart: &str, button: &str) {
+    on_bar(harness, chart, button).click();
+    harness.run_steps(3);
+}
+
+/// Press the cross beside the name of a chart.
+fn close(harness: &mut Window<'_>, chart: &str) {
+    let name = name(harness, chart);
+    let cross = harness.query_all_by_label("Close").find(|cross| name.contains(cross.rect().center()));
+    cross.expect("a cross beside the name").click();
+    harness.run_steps(3);
+}
+
+#[test]
+fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    let (filtered, viewed) = (format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose"));
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let mut harness = open(Shown { charts: Charts::default(), history, signals: Signals::start()?, now });
 
     // The list holds every connection, with where it comes from and its numbers as they stand.
     for label in [filtered.clone(), format!("from {robot}/imu/pose"), viewed.clone()] {
@@ -119,7 +155,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
 
     // With only the last five seconds in view, the 80 of six seconds ago is not among them:
     // the line comes in at the left edge at 70, on its way down to 60.
-    set(&mut harness, 0, 5.0);
+    show_the_last(&mut harness, 5.0);
     assert!(shows(&harness, "70.0") && shows(&harness, "20.0") && shows(&harness, "5 s ago"));
     assert!(!shows(&harness, "80.0"));
 
@@ -131,7 +167,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     harness.state_mut().now -= 3.0;
 
     // A second number on the same chart: the chart reaches down to take it in.
-    set(&mut harness, 0, 30.0);
+    show_the_last(&mut harness, 30.0);
     let lost = grab(&mut harness, &filtered, "lost");
     drag(&mut harness, lost, chart);
     assert!(shows(&harness, &line) && shows(&harness, &format!("{filtered} lost")));
@@ -171,14 +207,10 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(drawn, "the chart says where the line is now");
     let line = format!("{filtered} rate");
 
-    // More charts, one under the other or side by side, each with its own numbers.
-    harness.get_by_label("Add chart").click();
-    harness.run_steps(3);
-    let below = empty(&harness)[0];
-    assert!(below.y > chart.y && (below.x - chart.x).abs() < 1.0, "the new chart is under the first");
-    set(&mut harness, 1, 2.0);
+    // More charts, each with its own numbers: a chart is split, and the new one takes half its room.
+    split(&mut harness, "Chart 1", "Split right");
     let beside = empty(&harness)[0];
-    assert!(beside.x > chart.x && (beside.y - chart.y).abs() < 1.0, "side by side now");
+    assert!(beside.x > chart.x && (beside.y - chart.y).abs() < 1.0, "the new chart is beside the first");
     let latency = grab(&mut harness, &viewed, "latency");
     drag(&mut harness, latency, beside);
     assert!(shows(&harness, &format!("{viewed} latency")) && empty(&harness).is_empty());
@@ -197,20 +229,179 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         Err(reason) => eprintln!("no picture: {reason}"),
     }
 
-    // A line is taken off with the button beside its name, and a chart with its own.
-    let name = harness.get_by_label(line.as_str());
-    name.parent().expect("the names on a chart").query_all_by_label("×").next().expect("a button").click();
+    // A line is taken off with the button beside its name, and a chart with the cross beside its own.
+    let named = harness.get_by_label(line.as_str());
+    named.parent().expect("the names on a chart").query_all_by_label("×").next().expect("a button").click();
     harness.run_steps(3);
     assert!(!shows(&harness, &line) && shows(&harness, &format!("{filtered} lost")));
-    harness.query_all_by_label("Remove chart").last().expect("a button").click();
-    harness.run_steps(3);
+    close(&mut harness, "Chart 2");
     assert!(!shows(&harness, &format!("{viewed} latency")), "the second chart is gone");
-    assert!(!shows(&harness, "Remove chart"), "and the last chart stays");
+    assert!(!shows(&harness, "Close"), "and the last chart stays");
+    Ok(())
+}
+
+/// A window for arranging charts in. The scene was read twice while nothing
+/// happened in it: enough to put numbers on charts, though every line is flat.
+fn arranging(scene: &Scene, charts: Charts) -> triq::Result<Window<'static>> {
+    let (mut history, reading) = (History::default(), scene.inventories());
+    history.record(&reading);
+    history.record(&later(&reading, scene.inventories(), [Duration::from_secs(2); 2]));
+    let now = history.newest().expect("a point");
+    Ok(open(Shown { charts, history, signals: Signals::start()?, now }))
+}
+
+/// The lines on the charts by name, row by row from the top, and from left to right in a row.
+fn lines(harness: &Window<'_>, scene: &Scene) -> Vec<String> {
+    // The list on the left names the same things. It is 300 points wide.
+    let named = harness.query_all_by_label_contains(scene.robot.name());
+    let mut drawn: Vec<_> = named.filter(|line| line.rect().left() > 320.0).collect();
+    drawn.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
+    drawn.iter().filter_map(|line| line.value()).collect()
+}
+
+/// A place on a chart, by where its name is: well inside it, under the bar.
+fn on(name: egui::Rect) -> egui::Pos2 {
+    name.left_bottom() + egui::vec2(150.0, 150.0)
+}
+
+#[test]
+fn a_chart_is_split_and_its_parts_are_resized_and_closed() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let filtered = format!("{}/smoother/raw", scene.robot.name());
+    let (rate, lost, gap) = (format!("{filtered} rate"), format!("{filtered} lost"), format!("{filtered} gap"));
+    let mut harness = arranging(&scene, Charts::default())?;
+
+    // One chart to begin with, which cannot be closed. It is split: a new chart takes its lower half.
+    assert!(shows(&harness, "Chart 1") && !shows(&harness, "Close"));
+    split(&mut harness, "Chart 1", "Split down");
+    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
+    assert!(second.top() > first.top() + 300.0 && (second.left() - first.left()).abs() < 1.0, "under the first");
+    // The new chart is split the other way: panes within panes.
+    split(&mut harness, "Chart 2", "Split right");
+    let (second, third) = (name(&harness, "Chart 2"), name(&harness, "Chart 3"));
+    assert!(third.left() > second.left() + 300.0 && (third.top() - second.top()).abs() < 1.0, "beside the second");
+    assert_eq!(name(&harness, "Chart 1"), first, "the first is where it was");
+
+    // A number lands on the chart it is put down on, and no chart moves for it.
+    for (number, chart) in [("gap", first), ("rate", third), ("lost", second)] {
+        let from = grab(&mut harness, &filtered, number);
+        drag(&mut harness, from, on(chart));
+    }
+    assert_eq!(lines(&harness, &scene), [gap.clone(), lost.clone(), rate.clone()]);
+    assert_eq!(["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(&harness, chart)), [first, second, third]);
+
+    // The line between two charts is dragged, to give one more room and the other less.
+    let border = egui::pos2(second.center().x, second.top() - 1.0);
+    drag(&mut harness, border, border + egui::vec2(0.0, 100.0));
+    let lower = name(&harness, "Chart 2").top();
+    assert!((lower - border.y - 100.0).abs() < 6.0, "the lower charts begin where the line was let go");
+    // However far it is dragged, a chart keeps a little room, and is drawn in it.
+    let border = egui::pos2(second.center().x, lower - 1.0);
+    drag(&mut harness, border, border + egui::vec2(0.0, 2000.0));
+    let least = name(&harness, "Chart 2").top();
+    assert!(least > lower + 100.0 && least < 800.0 && shows(&harness, &lost));
+    drag(&mut harness, egui::pos2(border.x, least - 1.0), border);
+
+    // A chart is closed by the cross beside its name, and its neighbour has the room.
+    close(&mut harness, "Chart 2");
+    assert_eq!(lines(&harness, &scene), [gap.clone(), rate.clone()]);
+    assert!((name(&harness, "Chart 3").left() - first.left()).abs() < 1.0, "the third begins at the left now");
+    close(&mut harness, "Chart 1");
+    assert_eq!(lines(&harness, &scene), [rate]);
+    assert!(shows(&harness, "Chart 3") && !shows(&harness, "Close"), "the last chart stays");
+    Ok(())
+}
+
+#[test]
+fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let robot = scene.robot.name();
+    let (sensor, filtered) = (format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"));
+    let (rate, lost, gap) = (format!("{filtered} rate"), format!("{filtered} lost"), format!("{filtered} gap"));
+    // A number from inside a message is on the first chart from the start: the topic is read for it.
+    let (mut charts, inside) = (Charts::default(), format!("{sensor} translation[0]"));
+    charts.add(1, Trace::Inside { topic: sensor.clone(), number: "translation[0]".to_owned() });
+    let mut harness = arranging(&scene, charts)?;
+    let read = wait_for(|| {
+        harness.step();
+        scene.imu.pose.subscribers() == 2
+    });
+    assert!(read && shows(&harness, &inside));
+
+    // Three charts: the first above, the second and third side by side below it, each with a line.
+    split(&mut harness, "Chart 1", "Split down");
+    split(&mut harness, "Chart 2", "Split right");
+    for (number, chart) in [("lost", "Chart 2"), ("rate", "Chart 3")] {
+        let (from, chart) = (grab(&mut harness, &filtered, number), name(&harness, chart));
+        drag(&mut harness, from, on(chart));
+    }
+    assert_eq!(lines(&harness, &scene), [inside.clone(), lost.clone(), rate.clone()]);
+    let names = |harness: &Window<'_>| ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(harness, chart));
+    let [first, second, third] = names(&harness);
+
+    // A chart is taken by its name and put down elsewhere. On the left half of another, it becomes
+    // that chart's left neighbour. Its lines go with it, and what it passes over gains none.
+    let left_half = egui::pos2(first.left() + 200.0, (first.bottom() + second.top()) / 2.0);
+    drag(&mut harness, third.center(), left_half);
+    harness.run_steps(10);
+    let [first, second, third] = names(&harness);
+    assert!(third.left() < first.left() && (third.top() - first.top()).abs() < 1.0, "to the left of the first");
+    assert!(second.top() > first.bottom() + 100.0, "the second is still below, with the row to itself");
+    assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), lost.clone()]);
+    // A number is put down on it where it is now.
+    let from = grab(&mut harness, &filtered, "gap");
+    drag(&mut harness, from, on(third));
+    assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), gap.clone(), lost.clone()]);
+
+    // Put down on the middle of another chart, a chart shares its place, and is the one in front.
+    let middle = egui::pos2(first.left() + (first.left() - third.left()) / 2.0, (first.bottom() + second.top()) / 2.0);
+    drag(&mut harness, second.center(), middle);
+    harness.run_steps(10);
+    let [first, second, _] = names(&harness);
+    assert!(second.left() >= first.right() && (second.top() - first.top()).abs() < 1.0, "their names are side by side");
+    assert_eq!(lines(&harness, &scene), [rate.clone(), lost.clone(), gap.clone()]);
+    // The chart behind is still read for, so its lines go on from where they were.
+    harness.run_steps(5);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(scene.imu.pose.subscribers(), 2);
+    // Its name brings it forward.
+    harness.get_by_label("Chart 1").click();
+    harness.run_steps(3);
+    assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), gap.clone()]);
+    // So does a number that is held over its name, to be put down on it.
+    let (from, second) = (grab(&mut harness, &filtered, "latency"), name(&harness, "Chart 2"));
+    drag_by_way_of(&mut harness, &[from, second.center(), on(second)]);
+    let latency = format!("{filtered} latency");
+    assert_eq!(lines(&harness, &scene), [rate.clone(), lost.clone(), gap.clone(), latency.clone()]);
+
+    // A place is taken by the bar its names are on, with every chart in it. Put down on the
+    // middle of another chart, all of them share that chart's place.
+    let [first, second, third] = names(&harness);
+    let (bar, middle) =
+        (second.right_center() + egui::vec2(60.0, 0.0), egui::pos2((third.left() + first.left()) / 2.0, 430.0));
+    drag(&mut harness, bar, middle);
+    harness.run_steps(10);
+    let [first, second, third] = names(&harness);
+    assert!(third.right() <= first.left() && first.right() <= second.left(), "three names in a row");
+    assert!(first.top() == third.top() && second.top() == third.top() && !shows(&harness, "Tabs"), "on one bar");
+    assert_eq!(lines(&harness, &scene), [lost.clone(), latency.clone()], "the one that was in front still is");
+
+    // A chart that is closed is no longer read for.
+    close(&mut harness, "Chart 1");
+    assert!(!shows(&harness, "Chart 1") && lines(&harness, &scene) == [lost, latency]);
+    let unread = wait_for(|| {
+        harness.step();
+        scene.imu.pose.subscribers() == 1
+    });
+    assert!(unread);
     Ok(())
 }
 
 #[test]
 fn what_comes_with_every_message_is_drawn_up_to_the_present() -> triq::Result {
+    let _alone = alone();
     let scene = Scene::new()?;
     let robot = scene.robot.name().to_owned();
     let (sensor, filtered) = (format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"));
@@ -229,16 +420,8 @@ fn what_comes_with_every_message_is_drawn_up_to_the_present() -> triq::Result {
     let reported = history.newest().expect("points");
     let mut charts = Charts::default();
     let connection = Connection { to: filtered, from: sensor.clone() };
-    charts.add(0, Trace::Heard { connection, stat: Stat::Rate });
-    let shown = Shown { charts, history, signals: Signals::start()?, now: reported + 0.05 };
-    let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
-        |ui, shown: &mut Shown| {
-            let recorded = Recorded { history: &shown.history, signals: &shown.signals };
-            shown.charts.show(ui, recorded, shown.now);
-        },
-        shown,
-    );
-    harness.run_steps(3);
+    charts.add(1, Trace::Heard { connection, stat: Stat::Rate });
+    let mut harness = open(Shown { charts, history, signals: Signals::start()?, now: reported + 0.05 });
 
     // A report comes every tenth of a second and takes a moment to arrive. So its line is
     // drawn a little behind the present, where it always has a point to run on to: a
@@ -251,7 +434,7 @@ fn what_comes_with_every_message_is_drawn_up_to_the_present() -> triq::Result {
     // A number inside a message comes with the message, and is drawn as soon as it is there.
     let height = "translation[1]";
     harness.state_mut().charts = Charts::default();
-    harness.state_mut().charts.add(0, Trace::Inside { topic: sensor.clone(), number: height.to_owned() });
+    harness.state_mut().charts.add(1, Trace::Inside { topic: sensor.clone(), number: height.to_owned() });
     let pose = |y: f32| Pose { translation: [0.0, y, 0.0], ..Pose::default() };
     let read = wait_for(|| {
         scene.imu.pose.send(pose(1.0)).expect("send");

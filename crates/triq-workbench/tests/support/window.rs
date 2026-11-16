@@ -8,6 +8,7 @@
 use super::scene::wait_for;
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use triq_workbench::Workbench;
 use triq_workbench::egui::accesskit::Role;
 use triq_workbench::egui::emath::TSTransform;
@@ -15,6 +16,14 @@ use triq_workbench::egui::{self, PointerButton};
 use triq_workbench::feed::Feed;
 
 pub type Bench<'a> = Harness<'a, Workbench>;
+
+/// Held by a test that drags numbers out of the list on the Charts tab, from
+/// before it makes its scene. The list holds every topic on the machine, so
+/// the scene of another test, coming or going, would move its rows under the pointer.
+pub fn alone() -> MutexGuard<'static, ()> {
+    static LIST: Mutex<()> = Mutex::new(());
+    LIST.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 pub fn open() -> triq::Result<Bench<'static>> {
     Ok(Harness::builder()
@@ -70,12 +79,19 @@ pub fn click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2, button: Po
 
 /// Press on something, move to somewhere else in a few steps, and let go.
 pub fn drag<State>(harness: &mut Harness<'_, State>, from: egui::Pos2, to: egui::Pos2) {
-    harness.hover_at(from);
+    drag_by_way_of(harness, &[from, to]);
+}
+
+/// Press at the first of some places, move to each of the others in a few steps, and let go at the last.
+pub fn drag_by_way_of<State>(harness: &mut Harness<'_, State>, places: &[egui::Pos2]) {
+    harness.hover_at(places[0]);
     harness.run_steps(2);
-    press(harness, from, PointerButton::Primary, true);
-    for step in 1..=6 {
-        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
-        harness.run_steps(1);
+    press(harness, places[0], PointerButton::Primary, true);
+    for leg in places.windows(2) {
+        for step in 1..=6 {
+            harness.hover_at(leg[0] + (leg[1] - leg[0]) * (step as f32 / 6.0));
+            harness.run_steps(1);
+        }
     }
-    press(harness, to, PointerButton::Primary, false);
+    press(harness, places[places.len() - 1], PointerButton::Primary, false);
 }

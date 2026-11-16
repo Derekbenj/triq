@@ -28,7 +28,7 @@ fn the_graph_and_the_charts_are_placed_where_a_window_wants_them() -> triq::Resu
     });
     assert!(both, "the cards and the list of numbers are there at once");
     harness.run_steps(4);
-    for label in ["Tidy", "Fit", "Add chart", "Drag a number here."] {
+    for label in ["Tidy", "Fit", "Chart 1", "Drag a number here."] {
         assert!(harness.query_by_label(label).is_some(), "{label:?} is on screen");
     }
     // Each brings what belongs to it, and neither brings the tabs: the window decides what is where.

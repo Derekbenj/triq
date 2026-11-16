@@ -201,8 +201,16 @@ The `Charts` tab, beside `Graph`, shows what connections and outputs do over tim
 - A topic that no triq runtime answers for is listed as well: one that another iceoryx2 program
   publishes, or an output whose program has stopped while something still listens to it. Nobody
   says what is inside its messages, so only the length of a slice can be drawn.
-- Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart, and
-  `Add chart` and `Charts side by side` arrange as many charts as wanted in rows and columns.
+- Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart.
+- Charts are panes within panes. The two buttons at the right of the bar above a chart split its
+  place in two, with a new chart to the right or underneath, and each half can be split again. The
+  line between two charts is dragged to give one more room and the other less.
+- A chart is taken by its name on the bar and put down elsewhere: on the left, right, upper or
+  lower half of another chart to become its neighbour there, or on its middle to share its place.
+  Charts that share a place have their names side by side on one bar, and the name brings a chart
+  to the front; so does a number held over the name, to be put down on that chart. The bar itself
+  moves every chart in the place at once. The cross beside a name closes the chart; the last one
+  stays.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
 - The top and bottom of a chart are always the largest and the smallest value in view, written in
   its corners. Hover over a chart to read the lines at that moment.
@@ -231,9 +239,10 @@ from when it is put on a chart.
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
 (the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the window) are about 2,120 lines together,
-and `triq-tap` another 170. The tests drive the real window code without
-opening one, with a pointer where it matters, and write pictures to
+background threads) and `app.rs` (the window) are about 2,270 lines together,
+and `triq-tap` another 170. The graph is drawn with `egui-snarl` and the
+charts are arranged with `egui_tiles`. The tests drive the real window code
+without opening one, with a pointer where it matters, and write pictures to
 `target/tmp/workbench.png`, `target/tmp/graph.png` and `target/tmp/charts.png`.
 
 ## Programs with their own main loop
@@ -302,24 +311,17 @@ Who runs the node depends on how much work a message is:
 | Right for | small messages: a controller's state | large ones: a camera's frame, scaled down first |
 | Example | `triq-xbox/src/viewer.rs` | `triq-bevy/src/viewer.rs` |
 
-A window that should also hold the workbench draws it like any other widget,
-whole or in parts:
+A view lives in a window of the project's own, beside the workbench and
+apart from it. The workbench is run as it comes and is never built with a
+project's code; the project's window is laid out however the project likes,
+with whatever draws best. Each draws at its own pace, and neither stops when
+the other does. `triq-demo` is such a window.
 
-```rust
-egui::Panel::bottom("views").show(ui, |ui| {
-    self.controllers.show(ui);
-    self.frames.show(ui);
-});
-self.workbench.show(ui);            // the graph and the charts, under tabs
-
-// or each where the window wants it:
-egui::Panel::bottom("charts").show(ui, |ui| self.workbench.show_charts(ui));
-self.workbench.show_graph(ui);
-```
-
-Such a window is drawn with the egui the workbench was built with, which it
-re-exports as `triq_workbench::egui`. A view in a window of its own, or inside
-the program that produces the data, has no such tie.
+The workbench is also a widget, `Workbench::show`, or `show_graph` and
+`show_charts` for its two parts, for a project that does want everything in
+one window. That window is then drawn with the egui the workbench was built
+with, re-exported as `triq_workbench::egui`, and all of it is drawn again
+whenever any part of it has something new.
 
 ## Programs built on it
 
@@ -330,7 +332,7 @@ this one. They depend on triq the way any project does.
 | --- | --- |
 | `triq-xbox` | a device as a node; which device is a setting, not a wire; a view the window runs |
 | `triq-bevy` | nodes inside an engine's own loop; large frames with a header; a view the runtime runs |
-| `triq-demo` | a project's own window: the workbench with those two views under it |
+| `triq-demo` | a project's own window, apart from the workbench: those two views, laid out its own way |
 
 ## Delivery
 
