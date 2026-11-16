@@ -73,10 +73,11 @@ fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
     }
     assert_eq!(names(&harness), all);
 
-    // A window is taken by its name and put down elsewhere. On the right half of the graph,
-    // the charts become its neighbour there, and the row has the whole height.
+    // A window is taken by its name and put down elsewhere. High on the right half of the graph,
+    // where the highlight takes in the graph's bar, the charts become its neighbour there, and the
+    // row has the whole height.
     let right_half =
-        egui::pos2(graph.left() + (details.left() - graph.left()) * 0.75, (graph.bottom() + charts.top()) / 2.0);
+        egui::pos2(graph.left() + (details.left() - graph.left()) * 0.75, (graph.bottom() + charts.top()) / 2.0 - 30.0);
     let from_middle = was.x - (graph.left() + details.left()) / 2.0;
     drag(&mut harness, charts.center(), right_half);
     harness.run_steps(10);
@@ -111,6 +112,35 @@ fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
     let port = seen(&harness, &text(&harness, "raw: Pose"));
     click(&mut harness, port, PointerButton::Primary);
     assert!(shows(&harness, &format!("{robot}, process {}", std::process::id())));
+
+    // Low on a half of another, where the highlight is all under that window's bar, a window goes
+    // in with it: the two are a group, under a bar that names both.
+    let [_, graph, _, charts] = names(&harness).map(|name| name.expect("an open window"));
+    let lower_half =
+        egui::pos2((graph.left() + charts.left()) / 2.0, graph.bottom() + (892.0 - graph.bottom()) * 0.75 + 30.0);
+    drag(&mut harness, charts.center(), lower_half);
+    harness.run_steps(10);
+    let group = called(&harness, "Graph, Charts").first().expect("a bar for the two").rect();
+    let [_, inner, _, under] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(group.top() == graph.top() && inner.top() > group.bottom() - 1.0, "the graph's bar is under the group's");
+    assert!(under.top() > inner.top() + 200.0 && under.left() == inner.left(), "and the charts are under the graph");
+    // The cross beside the name of a group closes what is in it.
+    let cross = harness.query_all_by_label("Close").find(|cross| group.contains(cross.rect().center()));
+    cross.expect("a cross beside the name").click();
+    harness.run_steps(3);
+    assert_eq!(names(&harness).map(|name| name.is_some()), [true, false, true, false]);
+    // Opened alone, one of the two is under its own bar and no other: a bar for the group would say the same.
+    switch(&harness, "Charts").click();
+    harness.run_steps(3);
+    assert!(
+        called(&harness, "Charts").len() == 2 && shows(&harness, "Drag a number here."),
+        "its name above, and on its bar"
+    );
+    // With the other open as well, they are the group they were.
+    switch(&harness, "Graph").click();
+    harness.run_steps(3);
+    let again = called(&harness, "Graph, Charts").first().expect("the bar for the two").rect();
+    assert_eq!((again, names(&harness)[1], names(&harness)[3]), (group, Some(inner), Some(under)));
 
     // With every window closed, the row along the top is still there to open them with.
     for window in WINDOWS {

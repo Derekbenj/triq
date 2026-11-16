@@ -175,12 +175,30 @@ report and updates when they announce a change.
 It is four windows in one: `Runtimes`, `Graph`, `Details` and `Charts`. To
 begin with the first three are side by side and the charts are under them.
 
-- Each window is under a bar with its name on it. Take a window by that name and put it down on the
-  left, right, upper or lower half of another to become its neighbour there, or on its middle to
-  share its place: the two names are then side by side on one bar, and a name brings its window to
-  the front. Drag the line between two windows to give one more room.
+- Each window is under a bar with its name on it, and is taken by that name to be put down
+  elsewhere: see "Arranging panes" below. Drag the line between two windows to give one more room.
 - The cross beside a name closes the window. The row along the top has the name of every window,
   and opens or closes it. A window that is opened again is where it was.
+
+### Arranging panes
+
+The four windows are panes, and so are the charts within `Charts`. They are arranged the same way,
+and anything goes into anything. A pane is taken by its name and put down on a half of another, or
+on its middle. The highlight shows where it will land, and it matters how high it is put down:
+
+| Put down | High: the highlight takes in the other's bar | Low: the highlight is all under that bar |
+| --- | --- | --- |
+| on a half | the two are neighbours | the pane goes in with the other: the two are a **group** |
+| on the middle | the two share the place, both names on one bar | the same, unless the other shares its place already: then the pane goes in with it alone, and the two have a bar of their own under the first |
+
+- A group has a bar of its own that names what is in it, `Graph, Charts` or `Charts 2, 3`, also
+  with nothing beside it. What is in a group has its bars still, so groups go into groups, and a
+  bar can be under a bar.
+- A group is taken by its name like a pane, and is a group where it is put down. The bar beside
+  the names moves everything on it. The cross beside the name of a group closes what is in it.
+- Put down on a bar, among its names, a pane is one more name on that bar.
+- A name on a bar brings what is behind it to the front.
+- A group that is left with one pane is no group any more, and its bar goes.
 
 In `Runtimes`, `Graph` and `Details`:
 
@@ -218,18 +236,12 @@ In `Runtimes`, `Graph` and `Details`:
   Their names are written over the top of the chart, and the lines pass behind them: a chart is as
   tall with ten lines as with one.
 - Each line has a colour of its own. The button that shows it, beside the name, opens a picker.
-- `New chart` adds an empty chart beside the others. Charts are panes within panes, arranged by
-  hand like the windows: a chart is taken by its name on the bar and put down on the left, right,
-  upper or lower half of another to become its neighbour there, or on its middle to share its
-  place. The line between two charts is dragged to give one more room and the other less.
-- Charts that share a place have their names side by side on one bar, and the name brings a chart
-  to the front; so does a number held over the name, to be put down on that chart. The bar itself
-  moves every chart in the place at once. The cross beside a name closes the chart; the last one
-  stays.
-- A chart put down on a half of one that shares its place goes in with it. So every name on a bar
-  can have a whole arrangement behind it, of charts side by side and one under another, and the
-  bar says which: `Charts 2, 3`. The cross beside such a name closes all of them. Put down higher
-  on the half, where the highlight takes in the bar as well, a chart goes beside the whole place.
+- `New chart` adds an empty chart beside the others. Charts are panes, arranged by hand like the
+  windows, to any depth: neighbours, groups, and several in one place. The line between two charts
+  is dragged to give one more room and the other less.
+- A number held over the name of a chart that is behind another brings the chart to the front, to
+  be put down on it. The cross beside a name closes the chart, or the charts of a group; the last
+  chart stays.
 - `Numbers` hides the list and shows it again, to give the charts its room. While it is hidden,
   only the numbers that are on charts are read out of messages.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
@@ -259,8 +271,9 @@ from when it is put on a chart.
 
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
-(the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the windows) are about 2,420 lines together,
+(the numbers inside messages), `charts.rs` (the charts), `panes.rs` (how
+windows and charts are arranged), `feed.rs` (the background threads) and
+`app.rs` (the windows) are about 2,500 lines together,
 and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`. The tests drive the
 real window code without opening one, with a pointer where it matters, and

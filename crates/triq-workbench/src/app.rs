@@ -1,9 +1,9 @@
 //! The window, and the four windows within it: the runtimes on this machine,
 //! the graph of their nodes, the details of what is selected, and charts of
 //! numbers over time. Each is under a bar with its name on it. A window is
-//! taken by that name and put down beside another or in its place, closed by
-//! the cross beside the name, and opened again from the row along the top.
-//! `egui_tiles` does the arranging.
+//! taken by that name and put down beside another, in its place, or in with
+//! it as a group (see `panes.rs`), closed by the cross beside the name, and
+//! opened again from the row along the top. `egui_tiles` does the arranging.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -15,10 +15,11 @@ use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
+use crate::panes;
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
-use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
+use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tabs, TileId, Tiles, Tree, UiResponse};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -153,13 +154,18 @@ impl Workbench {
             if !Window::ALL.into_iter().any(|window| self.open(window)) {
                 ui.weak("Every window is closed. Their names above open them.");
             }
-            let mut shown = Shown { contents: &mut self.contents, closed: None };
+            let idle = panes::idle_bars(&self.windows.tiles);
+            let mut shown = Shown { contents: &mut self.contents, idle, closed: None };
+            let carried = self.windows.dragged_id(ui.ctx());
             self.windows.ui(&mut shown, ui);
             // A window that is closed is only out of sight. It keeps its place, for when it is opened again.
             if let Some(place) = shown.closed {
-                for (place, _) in windows_in(&self.windows.tiles, place) {
-                    self.windows.set_visible(place, false);
+                for window in panes::panes_in(&self.windows.tiles, place) {
+                    self.windows.set_visible(window, false);
                 }
+            }
+            if panes::tidy(&mut self.windows, carried) {
+                ui.ctx().request_repaint();
             }
         });
     }
@@ -187,18 +193,11 @@ fn arranged() -> Tree<Window> {
     Tree::new(egui::Id::unique("windows"), all, tiles)
 }
 
-/// The windows in a place, also those that are closed.
-fn windows_in(tiles: &Tiles<Window>, place: TileId) -> Vec<(TileId, Window)> {
-    match tiles.get(place) {
-        Some(Tile::Pane(window)) => vec![(place, *window)],
-        Some(Tile::Container(holder)) => holder.children().flat_map(|part| windows_in(tiles, *part)).collect(),
-        None => Vec::new(),
-    }
-}
-
 /// How the windows are drawn: each under a bar that has its name on it.
 struct Shown<'a> {
     contents: &'a mut Contents,
+    /// The bars of groups of which only one window is open: they are not shown.
+    idle: Vec<TileId>,
     /// The place whose cross was pressed, to be closed once everything is drawn.
     closed: Option<TileId>,
 }
@@ -222,10 +221,15 @@ impl Behavior<Window> for Shown<'_> {
         window.name().into()
     }
 
-    /// A name on a bar that has several windows behind it lists those that are open.
+    /// The name of a group on a bar lists the windows in it that are open.
     fn tab_title_for_tile(&mut self, tiles: &Tiles<Window>, place: TileId) -> egui::WidgetText {
-        let open = windows_in(tiles, place).into_iter().filter(|(place, _)| tiles.is_visible(*place));
-        open.map(|(_, window)| window.name()).collect::<Vec<_>>().join(", ").into()
+        let open = panes::panes_in(tiles, place).into_iter().filter(|window| tiles.is_visible(*window));
+        let names: Vec<&str> = open.filter_map(|window| tiles.get_pane(&window)).map(|window| window.name()).collect();
+        names.join(", ").into()
+    }
+
+    fn is_tab_bar_visible(&self, place: TileId, _: &Tabs) -> bool {
+        !self.idle.contains(&place)
     }
 
     fn on_tab_button(&mut self, _: &mut Tiles<Window>, _: TileId, name: egui::Response) -> egui::Response {
@@ -244,14 +248,8 @@ impl Behavior<Window> for Shown<'_> {
         false
     }
 
-    /// Every window is under a bar, also one that has its place to itself.
-    /// Windows that share a place are on one bar.
     fn simplification_options(&self) -> SimplificationOptions {
-        SimplificationOptions {
-            all_panes_must_have_tabs: true,
-            flatten_tabs_in_tabs: true,
-            ..SimplificationOptions::default()
-        }
+        panes::rules()
     }
 }
 

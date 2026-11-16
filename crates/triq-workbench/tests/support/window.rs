@@ -41,7 +41,7 @@ pub fn until(harness: &mut Bench<'_>, mut done: impl FnMut(&Bench<'_>) -> bool) 
 }
 
 /// Everything in the window that is called by the name of one of the workbench's windows, from the top down.
-fn called<'a>(harness: &'a Bench<'_>, window: &'a str) -> Vec<Node<'a>> {
+pub fn called<'a>(harness: &'a Bench<'_>, window: &'a str) -> Vec<Node<'a>> {
     let mut called: Vec<_> = harness.query_all_by_role_and_label(Role::Button, window).collect();
     called.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
     called

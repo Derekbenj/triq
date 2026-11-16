@@ -8,19 +8,18 @@
 //! The list can be hidden, to give the charts its room.
 //!
 //! There is one chart to begin with, and a button adds another beside what is
-//! there. A chart is taken by its name and put down on a side of another, or
-//! on its middle, where the two then share a place and one is in front. Put
-//! down on a side of one that shares its place, it goes in with it, so that
-//! each name on a bar can have a whole arrangement behind it. The line between
-//! two charts is dragged to give one more room. `egui_tiles` does the arranging.
+//! there. A chart is taken by its name and put down beside another, on its
+//! middle to share its place, or inside it to make a group of the two: see
+//! `panes.rs`. The line between two charts is dragged to give one more room.
+//! `egui_tiles` does the arranging.
 //!
 //! A chart ends at the present, which the window moves on with every frame it
 //! draws: the lines slide along evenly, however often points arrive. A number
 //! from inside a message is drawn right up to the present. What a runtime
 //! reports is drawn a moment behind it, where the report has arrived.
-use crate::colors;
 use crate::history::{Connection, History, Stat};
 use crate::signals::{Signals, Wanted};
+use crate::{colors, panes};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
@@ -199,7 +198,11 @@ impl Charts {
                 }
             });
             let mut drawn = Drawn { recorded, since: now - self.seconds, now, forward: None };
+            let carried = self.panes.dragged_id(ui.ctx());
             self.panes.ui(&mut drawn, ui);
+            if panes::tidy(&mut self.panes, carried) {
+                ui.ctx().request_repaint();
+            }
             if let Some(chart) = drawn.forward {
                 self.panes.make_active(|tile, _| tile == chart);
             }
@@ -276,13 +279,13 @@ impl Behavior<Chart> for Drawn<'_> {
         chart.name().into()
     }
 
-    /// A name on a bar that has several charts behind it lists them.
+    /// The name of a group on a bar lists the charts in it.
     fn tab_title_for_tile(&mut self, tiles: &Tiles<Chart>, place: TileId) -> egui::WidgetText {
         match tiles.get(place) {
             Some(Tile::Pane(chart)) => self.tab_title_for_pane(chart),
             _ => {
-                let numbers: Vec<String> =
-                    charts_in(tiles, place).iter().map(|chart| chart.number.to_string()).collect();
+                let charts = panes::panes_in(tiles, place).into_iter().filter_map(|chart| tiles.get_pane(&chart));
+                let numbers: Vec<String> = charts.map(|chart| chart.number.to_string()).collect();
                 format!("Charts {}", numbers.join(", ")).into()
             }
         }
@@ -301,26 +304,11 @@ impl Behavior<Chart> for Drawn<'_> {
     /// What is behind a name is closed with it, unless that is every chart
     /// there is: the last stays, so that there is always one to put a number on.
     fn is_tab_closable(&self, tiles: &Tiles<Chart>, place: TileId) -> bool {
-        charts_in(tiles, place).len() < tiles.tiles().filter(|tile| tile.is_pane()).count()
+        panes::panes_in(tiles, place).len() < tiles.tiles().filter(|tile| tile.is_pane()).count()
     }
 
-    /// Every chart is under a bar, also one that has its place to itself. Charts
-    /// that share a place are on one bar, also when several were put there at once.
     fn simplification_options(&self) -> SimplificationOptions {
-        SimplificationOptions {
-            all_panes_must_have_tabs: true,
-            flatten_tabs_in_tabs: true,
-            ..SimplificationOptions::default()
-        }
-    }
-}
-
-/// The charts in a place, in the order they are laid out in.
-fn charts_in(tiles: &Tiles<Chart>, place: TileId) -> Vec<&Chart> {
-    match tiles.get(place) {
-        Some(Tile::Pane(chart)) => vec![chart],
-        Some(Tile::Container(holder)) => holder.children().flat_map(|part| charts_in(tiles, *part)).collect(),
-        None => Vec::new(),
+        panes::rules()
     }
 }
 

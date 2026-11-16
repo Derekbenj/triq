@@ -114,11 +114,22 @@ fn put(harness: &mut Window<'_>, chart: &str, at: egui::Pos2) {
     harness.run_steps(10);
 }
 
-/// A place on one half of where a chart is drawn: `side` points from its middle to that half.
-/// Put down there, another chart becomes its neighbour on that side.
+/// The middle of one half of where a chart is drawn: `side` points from the chart's middle to that half.
 fn half(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
     let room = room(harness, chart);
     room.center() + side * room.size() / 4.0
+}
+
+/// Where to put a chart down to make it the neighbour of another on that side: high on the
+/// half, where the highlight takes in the bar above the chart as well.
+fn beside(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
+    half(harness, chart, side) - egui::vec2(0.0, 30.0)
+}
+
+/// Where to put a chart down to have it go in with another, as a group of the two: low on the
+/// half, where the highlight is all under the bar.
+fn within(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
+    half(harness, chart, side) + egui::vec2(0.0, 30.0)
 }
 
 /// Press the cross beside the name of a chart.
@@ -275,11 +286,11 @@ fn lines(harness: &Window<'_>, scene: &Scene) -> Vec<String> {
 /// and put down where it is.
 fn three(harness: &mut Window<'_>) {
     add(harness);
-    let under = half(harness, "Chart 1", egui::vec2(0.0, 1.0));
+    let under = beside(harness, "Chart 1", egui::vec2(0.0, 1.0));
     put(harness, "Chart 2", under);
     add(harness);
-    let beside = half(harness, "Chart 2", egui::vec2(1.0, 0.0));
-    put(harness, "Chart 3", beside);
+    let right = beside(harness, "Chart 2", egui::vec2(1.0, 0.0));
+    put(harness, "Chart 3", right);
 }
 
 #[test]
@@ -296,14 +307,15 @@ fn charts_are_added_put_where_they_should_be_resized_and_closed() -> triq::Resul
     let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
     assert!(second.left() > first.left() + 300.0 && second.top() == first.top(), "beside the first");
     // Taken by its name and put down on the lower half of the first, it is under it.
-    let under = half(&harness, "Chart 1", egui::vec2(0.0, 1.0));
+    let under = beside(&harness, "Chart 1", egui::vec2(0.0, 1.0));
     put(&mut harness, "Chart 2", under);
     let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
     assert!(second.top() > first.top() + 300.0 && (second.left() - first.left()).abs() < 1.0, "under the first");
     // The next is put down on the right half of the second: panes within panes.
     add(&mut harness);
-    let beside = half(&harness, "Chart 2", egui::vec2(1.0, 0.0));
-    put(&mut harness, "Chart 3", beside);
+    let right = beside(&harness, "Chart 2", egui::vec2(1.0, 0.0));
+    put(&mut harness, "Chart 3", right);
+    assert!(!shows(&harness, "Charts 2, 3") && !shows(&harness, "Charts 1, 2, 3"), "neighbours, and no group");
     let [first, second, third] = ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(&harness, chart));
     assert!(third.left() > second.left() + 300.0 && (third.top() - second.top()).abs() < 1.0, "beside the second");
     assert!(second.top() > first.top() + 300.0 && (second.left() - first.left()).abs() < 1.0, "the first above both");
@@ -364,11 +376,11 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     }
     assert_eq!(lines(&harness, &scene), [inside.clone(), lost.clone(), rate.clone()]);
     let names = |harness: &Window<'_>| ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(harness, chart));
-    let [first, second, third] = names(&harness);
+    let [_, _, third] = names(&harness);
 
     // A chart is taken by its name and put down elsewhere. On the left half of another, it becomes
     // that chart's left neighbour. Its lines go with it, and what it passes over gains none.
-    let left_half = egui::pos2(first.left() + 200.0, (first.bottom() + second.top()) / 2.0);
+    let left_half = beside(&harness, "Chart 1", egui::vec2(-1.0, 0.0));
     drag(&mut harness, third.center(), left_half);
     harness.run_steps(10);
     let [first, second, third] = names(&harness);
@@ -401,21 +413,25 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     let latency = format!("{filtered} latency");
     assert_eq!(lines(&harness, &scene), [rate.clone(), lost.clone(), gap.clone(), latency.clone()]);
 
-    // A place is taken by the bar its names are on, with every chart in it. Put down on the
-    // middle of another chart, all of them share that chart's place.
+    // A place is taken by the bar its names are on, with every chart in it. Put down on the middle
+    // of another chart, it is one name on that chart's bar, and has its own bar under that still.
     let [first, second, third] = names(&harness);
     let (bar, middle) =
         (second.right_center() + egui::vec2(60.0, 0.0), egui::pos2((third.left() + first.left()) / 2.0, 430.0));
     drag(&mut harness, bar, middle);
     harness.run_steps(10);
     let [first, second, third] = names(&harness);
-    assert!(third.right() <= first.left() && first.right() <= second.left(), "three names in a row");
-    assert!(first.top() == third.top() && second.top() == third.top() && !shows(&harness, "Tabs"), "on one bar");
+    let both = name(&harness, "Charts 1, 2");
+    assert!(third.right() <= both.left() && both.top() == third.top(), "the third and the two, on one bar");
+    assert!(first.top() > both.bottom() - 1.0 && second.top() == first.top() && first.right() <= second.left());
     assert_eq!(lines(&harness, &scene), [lost.clone(), latency.clone()], "the one that was in front still is");
 
-    // A chart that is closed is no longer read for.
+    // A chart that is closed is no longer read for. What is left of the two is a chart beside the third.
     close(&mut harness, "Chart 1");
-    assert!(!shows(&harness, "Chart 1") && lines(&harness, &scene) == [lost, latency]);
+    assert!(
+        !shows(&harness, "Chart 1") && !shows(&harness, "Charts 1, 2") && lines(&harness, &scene) == [lost, latency]
+    );
+    assert_eq!(name(&harness, "Chart 2").top(), name(&harness, "Chart 3").top(), "one bar again");
     let unread = wait_for(|| {
         harness.step();
         scene.imu.pose.subscribers() == 1
@@ -514,82 +530,96 @@ fn the_lines_have_the_whole_chart_and_each_a_colour_that_can_be_changed() -> tri
 }
 
 #[test]
-fn a_name_on_a_bar_can_have_several_charts_behind_it() -> triq::Result {
+fn anything_goes_into_anything() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;
     let filtered = format!("{}/smoother/raw", scene.robot.name());
     let (rate, lost) = (format!("{filtered} rate"), format!("{filtered} lost"));
     let mut harness = arranging(&scene, Charts::default())?;
-    // A place within the half of a chart that `side` points to, low in it. A chart that shares
-    // its place has two rooms there: its own, under the bar, and the place with the bar and all.
-    // Put down low on a half, a chart goes into the first; the highlight shows which it will be.
-    let within =
-        |harness: &Window<'_>, chart: &str, side: egui::Vec2| half(harness, chart, side) + egui::vec2(0.0, 40.0);
+    let (left, right, down) = (egui::vec2(-1.0, 0.0), egui::vec2(1.0, 0.0), egui::vec2(0.0, 1.0));
+    let low = egui::vec2(0.0, 40.0);
 
-    // Two charts in one place: the second was put down on the middle of the first.
+    // A second chart is put down inside the first, on its right half. The two are a group: a bar
+    // that names both, and under it the two side by side, each under its own bar still.
     add(&mut harness);
-    let middle = room(&harness, "Chart 1").center();
-    put(&mut harness, "Chart 2", middle);
-    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
-    assert!(second.left() >= first.right() && second.top() == first.top(), "their names are on one bar");
-
-    // A third is put down on the lower half of the second, within the place the second has. The
-    // bar names what is behind each of its names: the first chart, and the second with the third.
-    add(&mut harness);
-    let under = within(&harness, "Chart 2", egui::vec2(0.0, 1.0));
-    put(&mut harness, "Chart 3", under);
-    let (alone, pair) = (name(&harness, "Chart 1"), name(&harness, "Charts 2, 3"));
-    assert!(pair.left() >= alone.right() && pair.top() == alone.top(), "one bar still");
-    let (second, third) = (name(&harness, "Chart 2"), name(&harness, "Chart 3"));
-    assert!(second.top() > pair.bottom() - 1.0 && third.top() > second.top() + 300.0, "the third under the second");
-    assert!((second.left() - alone.left()).abs() < 1.0 && (third.left() - alone.left()).abs() < 1.0);
-    // A number lands on the chart it is put down on, also here.
-    let (from, third) = (grab(&mut harness, &filtered, "rate"), room(&harness, "Chart 3").center());
-    drag(&mut harness, from, third);
+    let inside = within(&harness, "Chart 1", right);
+    put(&mut harness, "Chart 2", inside);
+    let [group, first, second] = ["Charts 1, 2", "Chart 1", "Chart 2"].map(|chart| name(&harness, chart));
+    assert!(first.top() > group.bottom() - 1.0 && second.top() == first.top(), "the group's bar is above theirs");
+    assert!((group.left() - first.left()).abs() < 1.0 && second.left() > first.left() + 300.0, "side by side");
+    // A number lands on the chart it is put down on, also in a group.
+    let (from, onto) = (grab(&mut harness, &filtered, "rate"), room(&harness, "Chart 2").center());
+    drag(&mut harness, from, onto);
     assert_eq!(lines(&harness, &scene), [rate.as_str()]);
 
-    // The first chart is brought forward, and has the whole place. A fourth is put down beside it there.
-    name_of(&harness, "Chart 1").click();
-    harness.run_steps(3);
-    assert!(!shows(&harness, "Chart 2") && !shows(&harness, "Chart 3") && lines(&harness, &scene).is_empty());
+    // A group is taken by its name, with all that is in it, and is a group where it is put down.
     add(&mut harness);
-    let beside = within(&harness, "Chart 1", egui::vec2(1.0, 0.0));
-    put(&mut harness, "Chart 4", beside);
-    let (pair, other) = (name(&harness, "Charts 1, 4"), name(&harness, "Charts 2, 3"));
-    assert!(other.left() >= pair.right() && other.top() == pair.top(), "two names on the bar, each for two charts");
-    let (first, fourth) = (name(&harness, "Chart 1"), name(&harness, "Chart 4"));
-    assert!(fourth.left() > first.left() + 300.0 && fourth.top() == first.top(), "the fourth beside the first");
-    let (from, fourth) = (grab(&mut harness, &filtered, "lost"), room(&harness, "Chart 4").center());
-    drag(&mut harness, from, fourth);
-    assert_eq!(lines(&harness, &scene), [lost.as_str()]);
+    let beyond = beside(&harness, "Chart 3", right);
+    put(&mut harness, "Charts 1, 2", beyond);
+    let [third, group, first] = ["Chart 3", "Charts 1, 2", "Chart 1"].map(|chart| name(&harness, chart));
+    assert!(third.right() < group.left() && third.top() == group.top(), "to the right of the third, its bar level");
+    assert!(first.top() > group.bottom() - 1.0 && lines(&harness, &scene) == [rate.as_str()]);
 
-    // Each name on the bar brings its arrangement forward.
-    name_of(&harness, "Charts 2, 3").click();
+    // Groups go into groups: the third is put down inside the second, under it.
+    let inside = within(&harness, "Chart 2", down);
+    put(&mut harness, "Chart 3", inside);
+    let [outer, inner] = ["Charts 1, 2, 3", "Charts 2, 3"].map(|chart| name(&harness, chart));
+    let [first, second, third] = ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(&harness, chart));
+    assert!(first.top() > outer.bottom() - 1.0 && inner.top() == first.top(), "the inner group is beside the first");
+    assert!(second.top() > inner.bottom() - 1.0 && (second.left() - inner.left()).abs() < 1.0);
+    assert!(third.top() > second.top() + 100.0 && (third.left() - second.left()).abs() < 1.0, "the third under it");
+    assert_eq!(lines(&harness, &scene), [rate.as_str()], "and the second kept its line");
+
+    // Put down high on a half, a chart is a neighbour there and no group is made for it.
+    add(&mut harness);
+    let neighbour = beside(&harness, "Chart 1", left);
+    put(&mut harness, "Chart 4", neighbour);
+    let (fourth, first) = (name(&harness, "Chart 4"), name(&harness, "Chart 1"));
+    assert!(fourth.right() < first.left() && fourth.top() == first.top() && shows(&harness, "Charts 4, 1, 2, 3"));
+    assert!(!shows(&harness, "Charts 4, 1"), "the fourth is one more in the group the first was in");
+
+    // Put down on the middle of a chart that has its place to itself, a chart shares the place:
+    // two names on one bar, however low on the middle it was. A bar above that would say the same.
+    add(&mut harness);
+    let middle = room(&harness, "Chart 4").center() + low;
+    put(&mut harness, "Chart 5", middle);
+    let (fourth, fifth) = (name(&harness, "Chart 4"), name(&harness, "Chart 5"));
+    assert!(fifth.left() >= fourth.right() && fifth.top() == fourth.top() && !shows(&harness, "Charts 4, 5"));
+    assert!(shows(&harness, "Charts 4, 5, 1, 2, 3"));
+    let (from, onto) = (grab(&mut harness, &filtered, "lost"), room(&harness, "Chart 5").center());
+    drag(&mut harness, from, onto);
+    assert_eq!(lines(&harness, &scene), [lost.clone(), rate.clone()]);
+
+    // Put down low on the middle of a chart that shares its place, a chart goes in with that
+    // chart alone: the two are one name on the bar, with a bar of their own under it.
+    add(&mut harness);
+    let inside = room(&harness, "Chart 5").center() + low;
+    put(&mut harness, "Chart 6", inside);
+    let [fourth, both, fifth, sixth] =
+        ["Chart 4", "Charts 5, 6", "Chart 5", "Chart 6"].map(|chart| name(&harness, chart));
+    assert!(fourth.right() <= both.left() && both.top() == fourth.top(), "the fourth, and the two, on one bar");
+    assert!(fifth.top() > both.bottom() - 1.0 && sixth.top() == fifth.top() && fifth.right() <= sixth.left());
+    assert!(shows(&harness, "Charts 4, 5, 6, 1, 2, 3") && lines(&harness, &scene) == [rate.as_str()]);
+    // The chart behind keeps its line, and its name brings it forward.
+    name_of(&harness, "Chart 5").click();
     harness.run_steps(3);
-    assert!(shows(&harness, "Chart 3") && !shows(&harness, "Chart 4") && lines(&harness, &scene) == [rate.clone()]);
-    // A chart is put into an arrangement like anywhere else.
-    add(&mut harness);
-    let beside = half(&harness, "Chart 3", egui::vec2(1.0, 0.0));
-    put(&mut harness, "Chart 5", beside);
-    let (third, fifth) = (name(&harness, "Chart 3"), name(&harness, "Chart 5"));
-    assert!(fifth.left() > third.left() + 300.0 && fifth.top() == third.top() && shows(&harness, "Charts 2, 3, 5"));
-    // Put down on the left half of the whole place, bar and all, a chart is beside everything in it.
-    add(&mut harness);
-    let (bar, top, bottom) = (name(&harness, "Charts 2, 3, 5"), room(&harness, "Chart 2"), room(&harness, "Chart 3"));
-    let outside = egui::pos2(top.left() + top.width() / 4.0, (bar.top() + bottom.bottom()) / 2.0 - 40.0);
-    put(&mut harness, "Chart 6", outside);
-    let (sixth, group) = (name(&harness, "Chart 6"), name(&harness, "Charts 1, 4"));
-    assert!(sixth.right() < group.left() && sixth.top() == group.top() && shows(&harness, "Charts 2, 3, 5"));
+    assert_eq!(lines(&harness, &scene), [lost.clone(), rate.clone()]);
+
+    // A group that is left with one chart is no group any more, and its bar goes.
     close(&mut harness, "Chart 6");
-
-    // The cross beside a name on the bar closes all that is behind the name.
-    close(&mut harness, "Charts 1, 4");
-    assert!(!shows(&harness, "Chart 1") && !shows(&harness, "Chart 4"));
-    assert!(!shows(&harness, "Charts 2, 3, 5"), "what is left has the place to itself, and needs no name");
-    assert_eq!(lines(&harness, &scene), [rate]);
-    close(&mut harness, "Chart 2");
+    assert!(!shows(&harness, "Charts 5, 6") && name(&harness, "Chart 5").top() == name(&harness, "Chart 4").top());
     close(&mut harness, "Chart 3");
-    assert!(shows(&harness, "Chart 5") && !shows(&harness, "Close"), "the last chart stays");
+    assert!(!shows(&harness, "Charts 2, 3") && shows(&harness, "Charts 4, 5, 1, 2"));
+    assert_eq!(name(&harness, "Chart 2").top(), name(&harness, "Chart 1").top());
+
+    // The cross beside the name of a group closes all that is in it, unless that is every chart there is.
+    let crosses = |harness: &Window<'_>| harness.query_all_by_label("Close").count();
+    assert_eq!(crosses(&harness), 4, "one for each chart, and none for the group they are all in");
+    add(&mut harness);
+    assert_eq!(crosses(&harness), 6);
+    close(&mut harness, "Charts 4, 5, 1, 2");
+    assert!(["Chart 4", "Chart 5", "Chart 1", "Chart 2"].iter().all(|chart| !shows(&harness, chart)));
+    assert!(shows(&harness, "Chart 7") && crosses(&harness) == 0 && lines(&harness, &scene).is_empty());
     Ok(())
 }
 
