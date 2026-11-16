@@ -1,5 +1,6 @@
 //! The window. One tab is the graph: the machine on the left, the graph in the
-//! middle, details on the right. The other is charts of what connections do over time.
+//! middle, details on the right. The other is charts of numbers over time.
+//! A window of a project's own can draw either by itself, wherever it likes.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -92,8 +93,68 @@ impl Workbench {
         unwire(&self.feed, &self.snarl, from, to);
     }
 
-    /// Draw one frame.
+    /// Draw one frame: the tabs, and under them the graph or the charts.
     pub fn show(&mut self, ui: &mut Ui) {
+        egui::Panel::top("status").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.tab, Tab::Graph, "Graph");
+                ui.selectable_value(&mut self.tab, Tab::Charts, "Charts");
+                ui.separator();
+                match self.tab {
+                    Tab::Graph => self.graph_controls(ui),
+                    Tab::Charts => self.charts.controls(ui),
+                }
+                self.problem(ui);
+            });
+        });
+        match self.tab {
+            Tab::Graph => self.graph_body(ui),
+            Tab::Charts => self.charts_body(ui),
+        }
+    }
+
+    /// Draw the graph alone, with what goes with it: the machine on the left
+    /// and the details on the right. For a window that arranges things its
+    /// own way; the charts can be drawn elsewhere in it with [`Workbench::show_charts`].
+    pub fn show_graph(&mut self, ui: &mut Ui) {
+        egui::Panel::top("graph-controls").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                self.graph_controls(ui);
+                self.problem(ui);
+            });
+        });
+        self.graph_body(ui);
+    }
+
+    /// Draw the charts alone, with the list of numbers to drag onto them.
+    pub fn show_charts(&mut self, ui: &mut Ui) {
+        egui::Panel::top("chart-controls").show(ui, |ui| ui.horizontal(|ui| self.charts.controls(ui)));
+        self.charts_body(ui);
+    }
+
+    /// What goes with the graph in a row above it.
+    fn graph_controls(&mut self, ui: &mut Ui) {
+        let inventories = self.feed.inventories();
+        let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
+        ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
+        if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
+            graph::tidy(&mut self.snarl);
+            self.fit = true;
+        }
+        self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
+    }
+
+    /// The most recent thing that went wrong, until it is dismissed.
+    fn problem(&mut self, ui: &mut Ui) {
+        if let Some(problem) = self.feed.problem() {
+            ui.colored_label(ui.visuals().error_fg_color, problem);
+            if ui.small_button("Dismiss").clicked() {
+                self.feed.dismiss();
+            }
+        }
+    }
+
+    fn graph_body(&mut self, ui: &mut Ui) {
         let inventories = self.feed.inventories();
         graph::sync(&mut self.snarl, &inventories);
         self.colors.update(inventories.iter().map(|inventory| inventory.runtime.as_str()));
@@ -102,48 +163,21 @@ impl Workbench {
         {
             self.focus = Focus::Nothing;
         }
-
-        egui::Panel::top("status").show(ui, |ui| self.status(ui, &inventories));
-        if self.tab == Tab::Charts {
-            // A chart ends a moment before the present, and the present moves on. While
-            // there is a line to slide along, the window is drawn again as soon as it can be.
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
-            if !self.charts.is_empty() {
-                ui.ctx().request_repaint();
-            }
-            let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
-            return self.charts.show(ui, recorded, now - BEHIND);
-        }
         egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
         let rates = self.feed.rates();
         egui::Panel::right("details").default_size(330.0).show(ui, |ui| self.details(ui, &inventories, &rates));
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, &inventories, &rates));
     }
 
-    /// The top row: the tabs, and what goes with the one that is open.
-    fn status(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tab, Tab::Graph, "Graph");
-            ui.selectable_value(&mut self.tab, Tab::Charts, "Charts");
-            ui.separator();
-            if self.tab == Tab::Charts {
-                self.charts.controls(ui);
-            } else {
-                let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
-                ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
-                if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
-                    graph::tidy(&mut self.snarl);
-                    self.fit = true;
-                }
-                self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
-            }
-            if let Some(problem) = self.feed.problem() {
-                ui.colored_label(ui.visuals().error_fg_color, problem);
-                if ui.small_button("Dismiss").clicked() {
-                    self.feed.dismiss();
-                }
-            }
-        });
+    fn charts_body(&mut self, ui: &mut Ui) {
+        // A chart ends a moment before the present, and the present moves on. While
+        // there is a line to slide along, the window is drawn again as soon as it can be.
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+        if !self.charts.is_empty() {
+            ui.ctx().request_repaint();
+        }
+        let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
+        self.charts.show(ui, recorded, now - BEHIND);
     }
 
     /// Every runtime with its pools, the kinds of node it offers, and its nodes.
