@@ -246,6 +246,22 @@ Bevy hands each frame back as bytes of its own, so a picture is copied once
 more on its way into shared memory. The cameras do that copying all at once,
 on Bevy's pool of threads, not one after another.
 
+One program can only carry so many cameras: Bevy takes the frames from the GPU
+one after another on a single thread. More cameras go in a second program.
+Every `triq-bevy` builds the same scene, and a camera rides on whatever rig
+its `mounts` input is wired to, in any program:
+
+```sh
+cargo run --release -p triq-bevy -- bevy2 --headless --fps 120
+triq spawn bevy2 camera camera7 --params '{"width":1920,"height":1080,"hz":120,"mount":6}'
+triq connect bevy/rig1/mounts bevy2/camera7/mounts
+```
+
+With 1920 x 1080 cameras at 120 a second, six in one program sent 111
+pictures a second each, and three in each of two programs sent 120; eight in
+one sent 88, and four in each of two about 115. (Measured without windows, on
+a machine that was running five more such cameras at the time.)
+
 | Crate | Files | What to read it for |
 | --- | --- | --- |
 | `triq-xbox` | `lib.rs` 91, `host.rs` 173, `sdl.rs` 93, `viewer.rs` 130 | a device as a node; which device is a setting, not a wire |
