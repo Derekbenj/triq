@@ -21,6 +21,8 @@ use triq_tap::{Tap, Taps, Topic};
 /// messages, or 2 slices, so nothing is missed below a few thousand messages
 /// a second, or a few hundred slices.
 const EVERY: Duration = Duration::from_millis(2);
+/// How often the thread looks whether anything is to be read, while nothing is.
+const IDLE: Duration = Duration::from_millis(50);
 /// How many messages are taken from one topic before the next has its turn.
 const AT_ONCE: usize = 64;
 /// How often the topics of the machine are listed again.
@@ -230,6 +232,6 @@ fn read(taps: &Taps, shared: &Shared) {
             }
         }
         drop(state);
-        thread::sleep(EVERY);
+        thread::sleep(if open.is_empty() { IDLE } else { EVERY });
     }
 }

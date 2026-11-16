@@ -3,6 +3,8 @@
 //!
 //! `#[derive(Fields)]` makes a message type list the numbers it holds: each
 //! member's own numbers, by the member's name and where it begins.
+#![forbid(unsafe_code)]
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Member, parse_macro_input};

@@ -13,6 +13,8 @@
 //! Latency runs from just before a node hands a message to its output until
 //! the receiving node's `run` has it in hand. Only messages sent inside the
 //! measured window count; a warm-up precedes it.
+#![forbid(unsafe_code)]
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
