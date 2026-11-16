@@ -1,7 +1,7 @@
 //! A runtime: the part of a process that owns nodes and answers for them.
 mod local;
 
-pub use local::{Local, LocalFactory};
+pub use local::{Local, LocalFactory, LocalNode, LocalNodes};
 
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
@@ -199,12 +199,25 @@ impl Runtime {
 
     /// Create a node and run it on the thread `placement` names.
     pub fn spawn<N: Node>(&self, name: &str, placement: Placement, params: N::Params) -> Result {
-        self.inner.spawn::<N>(name, "", placement, params)
+        self.inner.spawn(name, "", placement, params, N::new)
     }
 
     /// Offer nodes of type `N` under the name `kind`. Registering creates
     /// nothing; any program may then ask this runtime to spawn one.
     pub fn register<N: Node>(&self, kind: &str) -> Result {
+        self.register_with(kind, |_, params| N::new(params))
+    }
+
+    /// Like [`Runtime::register`], for nodes that are handed something at
+    /// birth that settings cannot carry. `make` is given the name and the
+    /// settings of each node asked for, and whatever else it holds: for
+    /// example a place where the nodes leave what the application's window
+    /// is to draw.
+    pub fn register_with<N: Node>(
+        &self,
+        kind: &str,
+        make: impl Fn(&str, N::Params) -> Result<N> + Send + Sync + 'static,
+    ) -> Result {
         let factory = Factory {
             ports: N::Ports::spec(),
             params: shown(&N::Params::default())?,
@@ -215,7 +228,7 @@ impl Runtime {
                 move |inner, name, placement, params| {
                     // No settings given means the defaults.
                     let params = if params.is_null() { N::Params::default() } else { serde_json::from_value(params)? };
-                    inner.spawn::<N>(name, &kind, placement, params)
+                    inner.spawn(name, &kind, placement, params, |params| make(name, params))
                 }
             }),
         };
@@ -326,11 +339,19 @@ impl Inner {
         let _ = self.announce.notify();
     }
 
-    fn spawn<N: Node>(self: &Arc<Self>, name: &str, kind: &str, placement: Placement, params: N::Params) -> Result {
+    /// Create a node, which `make` builds from its settings, and run it.
+    fn spawn<N: Node>(
+        self: &Arc<Self>,
+        name: &str,
+        kind: &str,
+        placement: Placement,
+        params: N::Params,
+        make: impl FnOnce(N::Params) -> Result<N>,
+    ) -> Result {
         // Everything that can fail cheaply comes first, so nothing is left behind.
         let executor = self.executor(name, &placement)?;
         let shown = shown(&params)?;
-        let node = N::new(params)?;
+        let node = make(params)?;
         let (ports, inputs) = self.bind::<N::Ports>(name, kind, Some(placement), shown, None)?;
         let slot = Arc::new(Slot::new(node, ports, inputs));
         match self.state.lock().unwrap().nodes.get_mut(name) {

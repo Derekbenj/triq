@@ -4,8 +4,9 @@ mod helpers;
 use helpers::*;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use triq::prelude::*;
 use triq::{NodeState, PoolInfo};
@@ -492,5 +493,58 @@ fn a_node_can_run_both_on_input_and_on_a_period() -> triq::Result {
     assert!(beats >= periods - 2 && beats <= periods + 1, "{beats} heartbeats in {periods} periods");
     seen.retain(|value| *value != 0);
     assert_eq!(seen, [1, 2, 3, 4, 5], "each input was forwarded once, by `run`");
+    Ok(())
+}
+
+/// Passes numbers on, and leaves the newest where it was told to at birth.
+struct Recorder {
+    name: String,
+    seen: Seen,
+}
+
+/// The newest number each recorder passed on, by the recorder's name.
+type Seen = Arc<Mutex<BTreeMap<String, u64>>>;
+
+impl Node for Recorder {
+    type Ports = Through;
+    type Params = ();
+    fn new(_: ()) -> triq::Result<Self> {
+        Ok(Self { name: String::new(), seen: Seen::default() })
+    }
+    fn run(&mut self, ports: &mut Through) -> triq::Result {
+        while let Some(value) = ports.input.recv()? {
+            self.seen.lock().unwrap().insert(self.name.clone(), *value);
+            ports.output.send(*value)?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_factory_gives_its_nodes_what_settings_cannot_carry() -> triq::Result {
+    let rt = Runtime::builder(&unique("given")).pool("work", 2).start()?;
+    // Somewhere the application can look. Every node of the kind is handed it at birth, with its own name.
+    let seen = Seen::default();
+    rt.register_with("recorder", {
+        let seen = seen.clone();
+        move |name, ()| Ok(Recorder { name: name.to_owned(), seen: seen.clone() })
+    })?;
+    let factory = &rt.inventory().factories[0];
+    assert_eq!((factory.kind.as_str(), factory.local, &factory.ports), ("recorder", false, &Through::spec()));
+
+    // The runtime runs them like any other node, wherever they are placed.
+    rt.spawn_kind("recorder", "first", Placement::pool("work"), json!(null))?;
+    rt.spawn_kind("recorder", "second", Placement::Dedicated, json!(null))?;
+    let (first, second) = (around(&rt, "first")?, around(&rt, "second")?);
+    first.feed.send(3)?;
+    second.feed.send(4)?;
+    assert_eq!((collect(&first.probe, 1), collect(&second.probe, 1)), (vec![3], vec![4]));
+    assert_eq!(*seen.lock().unwrap(), BTreeMap::from([("first".to_owned(), 3), ("second".to_owned(), 4)]));
+
+    // A refusal to make one is what the program that asked for it is told.
+    rt.register_with::<Recorder>("never", |_, ()| Err(Error::Other("not today".into())))?;
+    let refused = rt.spawn_kind("never", "third", Placement::Dedicated, json!(null));
+    assert!(matches!(refused, Err(Error::Other(reason)) if reason == "not today"));
+    assert!(rt.inventory().nodes.iter().all(|node| node.name != "third"));
     Ok(())
 }

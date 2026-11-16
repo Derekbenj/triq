@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{Duration, Instant};
 use triq::prelude::*;
-use triq::{Local, NodeState, Remote};
+use triq::{Local, LocalNodes, NodeState, Remote};
 
 #[derive(Ports)]
 struct Bench {
@@ -252,6 +252,45 @@ fn a_local_factory_hands_ports_to_the_application() -> triq::Result {
     assert!(!rt.stopping());
     remote.shutdown()?;
     assert!(rt.stopping());
+    Ok(())
+}
+
+#[test]
+fn the_nodes_of_a_local_factory_can_be_kept_by_name() -> triq::Result {
+    let rt = Runtime::new(&unique("kept"))?;
+    // Beside the ports and settings of each node, the application keeps something of its own:
+    // here, how many frames it sent.
+    let mut cameras: LocalNodes<CameraPorts, CameraParams, u32> = rt.local_nodes("camera")?;
+    let remote = Remote::open(rt.name())?;
+    assert!(cameras.nodes.is_empty() && remote.inventory()?.factories[0].local);
+
+    remote.spawn("camera", "left", Placement::Dedicated, json!({ "fps": 30 }))?;
+    remote.spawn("camera", "right", Placement::Dedicated, json!(null))?;
+    assert!(cameras.nodes.is_empty(), "the application takes requests up when it gets to them");
+    cameras.serve();
+    assert_eq!(cameras.nodes.keys().collect::<Vec<_>>(), ["left", "right"]);
+    let left = cameras.nodes.get_mut("left").expect("the node");
+    assert_eq!((&left.params, left.paused, left.state), (&CameraParams { fps: 30 }, false, 0));
+    left.ports.frames.send(1)?;
+    left.state += 1;
+
+    // New settings and a pause are noted; what they mean is up to the application.
+    remote.set_params("left", json!({ "fps": 60 }))?;
+    remote.pause("left")?;
+    cameras.serve();
+    let left = &cameras.nodes["left"];
+    assert_eq!((&left.params, left.paused, left.state), (&CameraParams { fps: 60 }, true, 1));
+    remote.resume("left")?;
+    cameras.serve();
+    assert!(!cameras.nodes["left"].paused);
+
+    // A node that is removed is let go, and its ports with it.
+    remote.remove("left")?;
+    cameras.serve();
+    assert_eq!(cameras.nodes.keys().collect::<Vec<_>>(), ["right"]);
+    drop(cameras);
+    let inventory = remote.inventory()?;
+    assert!(inventory.nodes.is_empty() && inventory.factories.is_empty(), "the rest go with the application's end");
     Ok(())
 }
 
