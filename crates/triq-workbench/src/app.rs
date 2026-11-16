@@ -1,6 +1,9 @@
-//! The window. One tab is the graph: the machine on the left, the graph in the
-//! middle, details on the right. The other is charts of numbers over time.
-//! A window of a project's own can draw either by itself, wherever it likes.
+//! The window, and the four windows within it: the runtimes on this machine,
+//! the graph of their nodes, the details of what is selected, and charts of
+//! numbers over time. Each is under a bar with its name on it. A window is
+//! taken by that name and put down beside another or in its place, closed by
+//! the cross beside the name, and opened again from the row along the top.
+//! `egui_tiles` does the arranging.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -12,33 +15,61 @@ use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card};
-use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, WidgetInfo, emath::TSTransform};
+use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
+use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
 
 pub struct Workbench {
+    /// The four windows: which of them are open, and how they share the room.
+    windows: Tree<Window>,
+    contents: Contents,
+}
+
+/// One of the windows within the window.
+#[derive(Clone, Copy, PartialEq)]
+enum Window {
+    /// Every runtime on the machine: its pools, the kinds of node it offers, and its nodes.
+    Runtimes,
+    /// The nodes, and the wires between them.
+    Graph,
+    /// What is selected: a node, or one about to be created.
+    Details,
+    /// Numbers over time.
+    Charts,
+}
+
+impl Window {
+    const ALL: [Window; 4] = [Window::Runtimes, Window::Graph, Window::Details, Window::Charts];
+
+    fn name(self) -> &'static str {
+        match self {
+            Window::Runtimes => "Runtimes",
+            Window::Graph => "Graph",
+            Window::Details => "Details",
+            Window::Charts => "Charts",
+        }
+    }
+}
+
+/// What the windows show.
+struct Contents {
     feed: Feed,
     snarl: Snarl<Card>,
     colors: Colors,
     charts: Charts,
-    tab: Tab,
     focus: Focus,
     /// Bring every card into view on the next frame that has any.
     fit: bool,
+    /// Where in the window the graph was drawn last.
+    canvas: Option<Rect>,
 }
 
-/// What fills the window under the top row.
-#[derive(PartialEq)]
-enum Tab {
-    Graph,
-    Charts,
-}
-
-/// What the right-hand panel is about.
+/// What the details are about.
 enum Focus {
     Nothing,
     /// A node, by `runtime/node`, with its settings as the user is editing them.
@@ -61,81 +92,173 @@ struct Form {
 
 impl Workbench {
     pub fn new(feed: Feed) -> Self {
-        Self {
+        let contents = Contents {
             feed,
             snarl: Snarl::new(),
             colors: Colors::default(),
             charts: Charts::default(),
-            tab: Tab::Graph,
             focus: Focus::Nothing,
             fit: true,
-        }
+            canvas: None,
+        };
+        Self { windows: arranged(), contents }
     }
 
     /// The drawing: one card per node, one wire per live connection.
     pub fn graph(&self) -> &Snarl<Card> {
-        &self.snarl
+        &self.contents.snarl
     }
 
     /// Ask for a connection, as dragging a wire from an output pin to an input pin does.
     pub fn wire(&mut self, from: OutPinId, to: InPinId) {
-        wire(&self.feed, &self.snarl, from, to);
+        wire(&self.contents.feed, &self.contents.snarl, from, to);
     }
 
     /// Ask for a connection to be removed.
     pub fn unwire(&mut self, from: OutPinId, to: InPinId) {
-        unwire(&self.feed, &self.snarl, from, to);
+        unwire(&self.contents.feed, &self.contents.snarl, from, to);
     }
 
-    /// Draw one frame: the tabs, and under them the graph or the charts.
+    /// Draw one frame: a row with the name of every window, and under it the windows that are open.
     pub fn show(&mut self, ui: &mut Ui) {
+        self.contents.refresh();
         egui::Panel::top("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.tab, Tab::Graph, "Graph");
-                ui.selectable_value(&mut self.tab, Tab::Charts, "Charts");
-                ui.separator();
-                match self.tab {
-                    Tab::Graph => self.graph_controls(ui),
-                    Tab::Charts => self.charts.controls(ui),
+                for window in Window::ALL {
+                    let open = self.open(window);
+                    let about = if open { "Close this window" } else { "Open this window, where it was" };
+                    if ui.selectable_label(open, window.name()).on_hover_text(about).clicked()
+                        && let Some(place) = self.windows.tiles.find_pane(&window)
+                    {
+                        // A window that is closed keeps its place. Opened, it is in front there.
+                        self.windows.set_visible(place, !open);
+                        self.windows.make_active(|tile, _| tile == place);
+                    }
                 }
-                self.problem(ui);
+                ui.separator();
+                let inventories = self.contents.feed.inventories();
+                let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
+                ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
+                self.contents.problem(ui);
             });
         });
-        match self.tab {
-            Tab::Graph => self.graph_body(ui),
-            Tab::Charts => self.charts_body(ui),
+        egui::CentralPanel::default().show(ui, |ui| {
+            if !Window::ALL.into_iter().any(|window| self.open(window)) {
+                ui.weak("Every window is closed. Their names above open them.");
+            }
+            let mut shown = Shown { contents: &mut self.contents, closed: None };
+            self.windows.ui(&mut shown, ui);
+            // A window that is closed is only out of sight. It keeps its place, for when it is opened again.
+            if let Some(place) = shown.closed {
+                for (place, _) in windows_in(&self.windows.tiles, place) {
+                    self.windows.set_visible(place, false);
+                }
+            }
+        });
+    }
+
+    fn open(&self, window: Window) -> bool {
+        self.windows.tiles.find_pane(&window).is_some_and(|place| self.windows.is_visible(place))
+    }
+}
+
+/// The windows as they are to begin with: the runtimes, the graph and the
+/// details side by side, and the charts under the three of them.
+fn arranged() -> Tree<Window> {
+    let mut tiles = Tiles::default();
+    // Each is put under its bar here, so that the room it is given below is the room of the bar and all.
+    let [runtimes, graph, details, charts] = Window::ALL.map(|window| {
+        let window = tiles.insert_pane(window);
+        tiles.insert_tab_tile(vec![window])
+    });
+    let mut row = Linear::new(LinearDir::Horizontal, vec![runtimes, graph, details]);
+    for (window, share) in [(runtimes, 0.16), (graph, 0.58), (details, 0.26)] {
+        row.shares.set_share(window, share);
+    }
+    let row = tiles.insert_container(row);
+    let all = tiles.insert_container(Linear::new_binary(LinearDir::Vertical, [row, charts], 0.6));
+    Tree::new(egui::Id::unique("windows"), all, tiles)
+}
+
+/// The windows in a place, also those that are closed.
+fn windows_in(tiles: &Tiles<Window>, place: TileId) -> Vec<(TileId, Window)> {
+    match tiles.get(place) {
+        Some(Tile::Pane(window)) => vec![(place, *window)],
+        Some(Tile::Container(holder)) => holder.children().flat_map(|part| windows_in(tiles, *part)).collect(),
+        None => Vec::new(),
+    }
+}
+
+/// How the windows are drawn: each under a bar that has its name on it.
+struct Shown<'a> {
+    contents: &'a mut Contents,
+    /// The place whose cross was pressed, to be closed once everything is drawn.
+    closed: Option<TileId>,
+}
+
+impl Behavior<Window> for Shown<'_> {
+    fn pane_ui(&mut self, ui: &mut Ui, _: TileId, window: &mut Window) -> UiResponse {
+        let contents = &mut *self.contents;
+        // What a window remembers, such as how far it is scrolled and where the view of the graph
+        // is, goes by the window's name, so that it is not forgotten when the window is put elsewhere.
+        let known = UiBuilder::new().scope_id(egui::Id::unique(("window", window.name())));
+        ui.scope_builder(known, |ui| match window {
+            Window::Runtimes => _ = egui::CentralPanel::default().show(ui, |ui| contents.runtimes(ui)),
+            Window::Graph => contents.graph(ui),
+            Window::Details => _ = egui::CentralPanel::default().show(ui, |ui| contents.details(ui)),
+            Window::Charts => contents.charts(ui),
+        });
+        UiResponse::None
+    }
+
+    fn tab_title_for_pane(&mut self, window: &Window) -> egui::WidgetText {
+        window.name().into()
+    }
+
+    /// A name on a bar that has several windows behind it lists those that are open.
+    fn tab_title_for_tile(&mut self, tiles: &Tiles<Window>, place: TileId) -> egui::WidgetText {
+        let open = windows_in(tiles, place).into_iter().filter(|(place, _)| tiles.is_visible(*place));
+        open.map(|(_, window)| window.name()).collect::<Vec<_>>().join(", ").into()
+    }
+
+    fn on_tab_button(&mut self, _: &mut Tiles<Window>, _: TileId, name: egui::Response) -> egui::Response {
+        name.on_hover_text(
+            "Drag the name to put the window beside another, or onto the middle of one to share its place",
+        )
+    }
+
+    fn is_tab_closable(&self, _: &Tiles<Window>, _: TileId) -> bool {
+        true
+    }
+
+    /// Nothing is taken out of the arrangement: see where `closed` is read.
+    fn on_tab_close(&mut self, _: &mut Tiles<Window>, place: TileId) -> bool {
+        self.closed = Some(place);
+        false
+    }
+
+    /// Every window is under a bar, also one that has its place to itself.
+    /// Windows that share a place are on one bar.
+    fn simplification_options(&self) -> SimplificationOptions {
+        SimplificationOptions {
+            all_panes_must_have_tabs: true,
+            flatten_tabs_in_tabs: true,
+            ..SimplificationOptions::default()
         }
     }
+}
 
-    /// Draw the graph alone, with what goes with it: the machine on the left
-    /// and the details on the right. For a window that arranges things its
-    /// own way; the charts can be drawn elsewhere in it with [`Workbench::show_charts`].
-    pub fn show_graph(&mut self, ui: &mut Ui) {
-        egui::Panel::top("graph-controls").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                self.graph_controls(ui);
-                self.problem(ui);
-            });
-        });
-        self.graph_body(ui);
-    }
-
-    /// Draw the charts alone, with the list of numbers to drag onto them.
-    pub fn show_charts(&mut self, ui: &mut Ui) {
-        egui::Panel::top("chart-controls").show(ui, |ui| ui.horizontal(|ui| self.charts.controls(ui)));
-        self.charts_body(ui);
-    }
-
-    /// What goes with the graph in a row above it.
-    fn graph_controls(&mut self, ui: &mut Ui) {
+impl Contents {
+    /// Bring the drawing in line with what the runtimes last reported.
+    fn refresh(&mut self) {
         let inventories = self.feed.inventories();
-        let nodes: usize = inventories.iter().map(|inventory| inventory.nodes.len()).sum();
-        ui.weak(format!("{} runtimes, {nodes} nodes", inventories.len()));
-        if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
-            graph::tidy(&mut self.snarl);
-            self.fit = true;
+        graph::sync(&mut self.snarl, &inventories);
+        self.colors.update(inventories.iter().map(|inventory| inventory.runtime.as_str()));
+        if let Focus::Node { key, .. } = &self.focus
+            && !self.snarl.nodes().any(|card| card.key() == *key)
+        {
+            self.focus = Focus::Nothing;
         }
-        self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
     }
 
     /// The most recent thing that went wrong, until it is dismissed.
@@ -148,39 +271,14 @@ impl Workbench {
         }
     }
 
-    fn graph_body(&mut self, ui: &mut Ui) {
-        let inventories = self.feed.inventories();
-        graph::sync(&mut self.snarl, &inventories);
-        self.colors.update(inventories.iter().map(|inventory| inventory.runtime.as_str()));
-        if let Focus::Node { key, .. } = &self.focus
-            && !self.snarl.nodes().any(|card| card.key() == *key)
-        {
-            self.focus = Focus::Nothing;
-        }
-        egui::Panel::left("machine").default_size(230.0).show(ui, |ui| self.machine(ui, &inventories));
-        let rates = self.feed.rates();
-        egui::Panel::right("details").default_size(330.0).show(ui, |ui| self.details(ui, &inventories, &rates));
-        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui, &inventories, &rates));
-    }
-
-    fn charts_body(&mut self, ui: &mut Ui) {
-        // A chart ends at the present, and the present moves on. While there is a
-        // line to slide along, the window is drawn again as soon as it can be.
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
-        if !self.charts.is_empty() {
-            ui.ctx().request_repaint();
-        }
-        let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
-        self.charts.show(ui, recorded, now);
-    }
-
     /// Every runtime with its pools, the kinds of node it offers, and its nodes.
-    fn machine(&mut self, ui: &mut Ui, inventories: &[Inventory]) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+    fn runtimes(&mut self, ui: &mut Ui) {
+        let inventories = self.feed.inventories();
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             if inventories.is_empty() {
                 ui.weak("No runtime is running on this machine.");
             }
-            for inventory in inventories {
+            for inventory in inventories.iter() {
                 ui.horizontal(|ui| {
                     dot(ui, self.colors.of(&inventory.runtime, ui.visuals().dark_mode), &inventory.runtime);
                     ui.strong(&inventory.runtime);
@@ -207,10 +305,11 @@ impl Workbench {
         });
     }
 
-    fn details(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
-        egui::ScrollArea::vertical().show(ui, |ui| match &mut self.focus {
+    fn details(&mut self, ui: &mut Ui) {
+        let (inventories, rates) = (self.feed.inventories(), self.feed.rates());
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match &mut self.focus {
             Focus::Nothing => {
-                ui.weak("Click a node to see where it runs, or pick a kind of node on the left to create one.");
+                ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
                 ui.weak(
                     "Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.",
                 );
@@ -221,18 +320,33 @@ impl Workbench {
                 let home =
                     inventories.iter().find(|inventory| card.is_some_and(|card| card.runtime == inventory.runtime));
                 if let (Some(card), Some(home)) = (card, home) {
-                    node_details(ui, &self.feed, card, home, settings, rates);
+                    node_details(ui, &self.feed, card, home, settings, &rates);
                 }
             }
             Focus::Form(form) => {
-                if form.show(ui, &self.feed, inventories) {
+                if form.show(ui, &self.feed, &inventories) {
                     self.focus = Focus::Nothing;
                 }
             }
         });
     }
 
-    fn canvas(&mut self, ui: &mut Ui, inventories: &[Inventory], rates: &Rates) {
+    /// The graph, under the buttons that lay it out and bring it into view.
+    fn graph(&mut self, ui: &mut Ui) {
+        egui::Panel::top("graph-controls").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
+                    graph::tidy(&mut self.snarl);
+                    self.fit = true;
+                }
+                self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
+            });
+        });
+        egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
+    }
+
+    fn canvas(&mut self, ui: &mut Ui) {
+        let (inventories, rates) = (self.feed.inventories(), self.feed.rates());
         let style = SnarlStyle {
             collapsible: Some(false),
             header_drag_space: Some(egui::vec2(3.0, 3.0)),
@@ -247,13 +361,28 @@ impl Workbench {
             ..SnarlStyle::new()
         };
         // The first cards to appear are framed, and again whenever the user asks.
-        let frame = (self.fit && self.snarl.nodes().next().is_some()).then(|| framing(&self.snarl, ui.max_rect()));
+        let canvas = ui.max_rect();
+        let frame = (self.fit && self.snarl.nodes().next().is_some()).then(|| framing(&self.snarl, canvas));
         self.fit &= frame.is_none();
+        // The graph's window may have been moved or resized. What was in the middle of it still is.
+        let carried = self.canvas.replace(canvas).map_or(egui::Vec2::ZERO, |before| canvas.center() - before.center());
         let (feed, colors, dark) = (&self.feed, &self.colors, ui.visuals().dark_mode);
-        let mut viewer = Viewer { feed, colors, dark, focus: &mut self.focus, inventories, rates, frame };
+        let (inventories, rates) = (&inventories[..], &*rates);
+        let mut viewer = Viewer { feed, colors, dark, focus: &mut self.focus, inventories, rates, frame, carried };
         // Text that could be selected would swallow the press that moves, selects or opens the menu of a card.
         ui.style_mut().interaction.selectable_labels = false;
         SnarlWidget::new().id_salt("triq-graph").style(style).show(&mut self.snarl, &mut viewer, ui);
+    }
+
+    fn charts(&mut self, ui: &mut Ui) {
+        // A chart ends at the present, and the present moves on. While there is a
+        // line to slide along, the window is drawn again as soon as it can be.
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+        if !self.charts.is_empty() {
+            ui.ctx().request_repaint();
+        }
+        let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
+        self.charts.show(ui, recorded, now);
     }
 }
 
@@ -492,6 +621,8 @@ struct Viewer<'a> {
     rates: &'a Rates,
     /// A view to switch to this frame.
     frame: Option<TSTransform>,
+    /// How far the graph has moved in the window since the last frame. The view moves along.
+    carried: egui::Vec2,
 }
 
 impl Viewer<'_> {
@@ -552,6 +683,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
     }
 
     fn current_transform(&mut self, to_global: &mut TSTransform, _: &mut Snarl<Card>) {
+        to_global.translation += self.carried;
         if let Some(frame) = self.frame.take() {
             *to_global = frame;
         }

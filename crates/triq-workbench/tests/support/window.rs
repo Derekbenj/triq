@@ -40,6 +40,31 @@ pub fn until(harness: &mut Bench<'_>, mut done: impl FnMut(&Bench<'_>) -> bool) 
     })
 }
 
+/// Everything in the window that is called by the name of one of the workbench's windows, from the top down.
+fn called<'a>(harness: &'a Bench<'_>, window: &'a str) -> Vec<Node<'a>> {
+    let mut called: Vec<_> = harness.query_all_by_role_and_label(Role::Button, window).collect();
+    called.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    called
+}
+
+/// The name of a window in the row along the top: what opens and closes it.
+pub fn switch<'a>(harness: &'a Bench<'_>, window: &'a str) -> Node<'a> {
+    called(harness, window).into_iter().next().unwrap_or_else(|| panic!("no window is called {window:?}"))
+}
+
+/// The name of a window on the bar above it: what it is taken by. A window that is closed has none.
+pub fn bar<'a>(harness: &'a Bench<'_>, window: &'a str) -> Option<Node<'a>> {
+    called(harness, window).into_iter().nth(1)
+}
+
+/// Press the cross beside the name of a window, on the bar above it.
+pub fn close(harness: &mut Bench<'_>, window: &str) {
+    let name = bar(harness, window).expect("an open window").rect();
+    let cross = harness.query_all_by_label("Close").find(|cross| name.contains(cross.rect().center()));
+    cross.expect("a cross beside the name").click();
+    harness.run_steps(3);
+}
+
 /// How the graph's own coordinates map to the screen. The graph is drawn on a
 /// layer of its own, which is what the user moves and zooms.
 pub fn view(harness: &Bench<'_>) -> TSTransform {

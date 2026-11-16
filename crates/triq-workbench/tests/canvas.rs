@@ -39,8 +39,8 @@ fn the_graph_is_handled_like_a_user_would() -> triq::Result {
     std::thread::sleep(std::time::Duration::from_millis(600));
     harness.run_steps(4);
     assert_eq!(view(&harness), after, "the view is still there when the machine has reported again");
-    // The view went down just now, so the top of the graph is empty.
-    let empty = egui::pos2(600.0, 50.0);
+    // The cards were in the middle of the graph, and the view went down just now: its top corner is empty.
+    let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
 
     // A card keeps its shape when data starts to flow and the pins say how fast.
     // Every pin says how fast data passes through it, also when none does.
@@ -76,16 +76,16 @@ fn the_graph_is_handled_like_a_user_would() -> triq::Result {
     let moved = (place(&harness) - was) * view(&harness).scaling;
     assert!((moved - egui::vec2(40.0, 30.0)).length() < 3.0, "the card moved by {moved:?}");
 
-    // Click it: the panel on the right says where the node runs.
+    // Click it: the details say where the node runs.
     let port = seen(&harness, &text(&harness, "raw: Pose"));
     click(&mut harness, port, PointerButton::Primary);
     let facts = [format!("{robot}, process {}", std::process::id()), "pool dsp: one of its 2 threads".to_owned()];
     for fact in &facts {
-        assert!(harness.query_by_label(fact).is_some(), "the panel says {fact:?}");
+        assert!(harness.query_by_label(fact).is_some(), "the details say {fact:?}");
     }
     // Click beside the cards: nothing is selected any more.
     click(&mut harness, empty, PointerButton::Primary);
-    assert!(harness.query_by_label(&facts[0]).is_none(), "the panel is about nothing");
+    assert!(harness.query_by_label(&facts[0]).is_none(), "the details are about nothing");
 
     // Pause the node with the button on its card, and start it again.
     let button =

@@ -67,17 +67,16 @@ fn empty(harness: &Window<'_>) -> Vec<egui::Pos2> {
     harness.query_all_by_label("Drag a number here.").map(|hint| hint.rect().center()).collect()
 }
 
-/// Type into the box above the charts that says how much of the past they show.
+/// Type into the box that says how much of the past the charts show.
 fn show_the_last(harness: &mut Window<'_>, seconds: f64) {
     harness.get_by_role(Role::SpinButton).set_value_accesskit(seconds);
     harness.run_steps(3);
 }
 
-/// The charts in a window, under the box that says how much of the past they show.
+/// The charts in a window.
 fn open(shown: Shown) -> Window<'static> {
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
         |ui, shown: &mut Shown| {
-            egui::Panel::top("controls").show(ui, |ui| ui.horizontal(|ui| shown.charts.controls(ui)));
             let recorded = Recorded { history: &shown.history, signals: &shown.signals };
             shown.charts.show(ui, recorded, shown.now);
         },
@@ -396,6 +395,157 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
         scene.imu.pose.subscribers() == 1
     });
     assert!(unread);
+    Ok(())
+}
+
+/// The colour a line on a chart is drawn in, as the button beside its name says it: `#rrggbbaa`.
+fn colour(harness: &Window<'_>, line: &str) -> String {
+    let names = harness.get_by_label(line).parent().expect("the name's row");
+    names.get_by_role(Role::ColorWell).value().expect("a colour")
+}
+
+#[test]
+fn the_lines_have_the_whole_chart_and_each_a_colour_that_can_be_changed() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (sensor, filtered) =
+        (format!("{}/imu/pose", scene.robot.name()), format!("{}/smoother/raw", scene.robot.name()));
+    // All four numbers of the filter's connection are on the chart from the start.
+    let mut charts = Charts::default();
+    for stat in Stat::ALL {
+        charts.add(1, Trace::Heard { connection: Connection { to: filtered.clone(), from: sensor.clone() }, stat });
+    }
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let mut harness = open(Shown { charts, history, signals: Signals::start()?, now });
+    let [rate, lost, gap, latency] = Stat::ALL.map(|stat| format!("{filtered} {}", stat.name()));
+
+    // The names are written over the chart, not above it, so the lines have all of its height
+    // however many there are. The largest value in view is at the very top, level with the first name.
+    let place = |harness: &Window<'_>, label: &str| harness.get_by_label(label).rect();
+    let (first, last, top) = (place(&harness, &rate), place(&harness, &latency), place(&harness, "80.0"));
+    assert!(last.top() > first.bottom(), "the names are one under another");
+    assert!(top.top() < first.bottom() && top.left() > first.right(), "the top of the chart is beside the first name");
+
+    // Every line has a colour of its own, shown beside its name.
+    let given = [&rate, &lost, &gap, &latency].map(|line| colour(&harness, line));
+    assert!((0..4).all(|a| (0..a).all(|b| given[a] != given[b])), "four different colours: {given:?}");
+
+    // The button that shows a colour opens a picker. The rate is made magenta.
+    let boxes = |harness: &Window<'_>| -> Vec<egui::Rect> {
+        let mut boxes: Vec<_> = harness.query_all_by_role(Role::SpinButton).map(|number| number.rect()).collect();
+        boxes.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        boxes
+    };
+    let before = boxes(&harness);
+    // The picker has a button with a pictogram on it. A window borrows a font from the system
+    // to draw it with; the tests have none that can, and are told not to mind.
+    harness.ctx.set_missing_glyph_policy(egui::MissingGlyphPolicy::Tofu);
+    harness.get_by_label(rate.as_str()).parent().unwrap().get_by_role(Role::ColorWell).click();
+    harness.run_steps(3);
+    let parts: Vec<egui::Rect> = boxes(&harness).into_iter().filter(|part| !before.contains(part)).collect();
+    assert_eq!(parts.len(), 3, "red, green and blue");
+    for (part, value) in parts.iter().zip([255.0, 0.0, 255.0]) {
+        let part = harness.query_all_by_role(Role::SpinButton).find(|number| number.rect() == *part);
+        part.expect("the box").set_value_accesskit(value);
+        harness.run_steps(2);
+    }
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+    assert_eq!(colour(&harness, &rate), "#ff00ffff");
+    assert_eq!([&lost, &gap, &latency].map(|line| colour(&harness, line)), given[1..], "the others keep theirs");
+
+    // The line is drawn in it, right up to the top of the chart: behind the names. Looking takes a GPU.
+    harness.remove_cursor();
+    harness.run_steps(3);
+    match harness.render() {
+        Ok(picture) => {
+            let saved = picture.save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("chart-colours.png"));
+            saved.map_err(|error| triq::Error::Other(error.to_string()))?;
+            // How many pixels above some row are magenta, or nearly.
+            let inked = |above: u32| {
+                let magenta = |pixel: [u8; 4]| pixel[0] > 243 && pixel[1] < 12 && pixel[2] > 243;
+                picture.enumerate_pixels().filter(|(_, row, pixel)| *row < above && magenta(pixel.0)).count()
+            };
+            let names_end = (place(&harness, &latency).bottom() * harness.ctx.pixels_per_point()) as u32;
+            assert!(inked(picture.height()) > 300, "the rate is magenta");
+            assert!(inked(names_end) > 20, "also where the names are");
+        }
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
+
+    // A line that is taken off gives its colour back, and the next line to be put on takes it.
+    let named = harness.get_by_label(lost.as_str());
+    named.parent().unwrap().query_all_by_label("×").next().expect("a button").click();
+    harness.run_steps(3);
+    assert!(!shows(&harness, &lost));
+    let (from, chart) =
+        (grab(&mut harness, &filtered, "lost"), place(&harness, "80.0").center() - egui::vec2(300.0, -200.0));
+    drag(&mut harness, from, chart);
+    assert_eq!(colour(&harness, &lost), given[1]);
+    assert_eq!(colour(&harness, &rate), "#ff00ffff", "and a colour that was chosen stays");
+    Ok(())
+}
+
+#[test]
+fn charts_that_share_a_place_are_each_split_within_it() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let filtered = format!("{}/smoother/raw", scene.robot.name());
+    let (rate, lost) = (format!("{filtered} rate"), format!("{filtered} lost"));
+    let mut harness = arranging(&scene, Charts::default())?;
+
+    // Two charts in one place: the second was made beside the first and put down on its middle.
+    split(&mut harness, "Chart 1", "Split right");
+    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
+    drag(&mut harness, second.center(), egui::pos2((first.left() + second.left()) / 2.0, 430.0));
+    harness.run_steps(10);
+    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
+    assert!(second.left() >= first.right() && second.top() == first.top(), "their names are on one bar");
+
+    // The buttons on that bar split the chart that is in front, within the place it has. The
+    // bar names what is behind each of its names: the first chart, and the second with a third.
+    split(&mut harness, "Chart 1", "Split down");
+    let (alone, pair) = (name(&harness, "Chart 1"), name(&harness, "Charts 2, 3"));
+    assert!(pair.left() >= alone.right() && pair.top() == alone.top(), "one bar still");
+    let (second, third) = (name(&harness, "Chart 2"), name(&harness, "Chart 3"));
+    assert!(second.top() > pair.bottom() - 1.0 && third.top() > second.top() + 300.0, "the third under the second");
+    assert!((second.left() - alone.left()).abs() < 1.0 && (third.left() - alone.left()).abs() < 1.0);
+    // A number lands on the chart it is put down on, also here.
+    let from = grab(&mut harness, &filtered, "rate");
+    drag(&mut harness, from, on(third));
+    assert_eq!(lines(&harness, &scene), [rate.as_str()]);
+
+    // The first chart is brought forward, and has the whole place. It is split the other way.
+    harness.get_by_label("Chart 1").click();
+    harness.run_steps(3);
+    assert!(!shows(&harness, "Chart 2") && !shows(&harness, "Chart 3") && lines(&harness, &scene).is_empty());
+    split(&mut harness, "Chart 1", "Split right");
+    let (pair, other) = (name(&harness, "Charts 1, 4"), name(&harness, "Charts 2, 3"));
+    assert!(other.left() >= pair.right() && other.top() == pair.top(), "two names on the bar, each for two charts");
+    let (first, fourth) = (name(&harness, "Chart 1"), name(&harness, "Chart 4"));
+    assert!(fourth.left() > first.left() + 300.0 && fourth.top() == first.top(), "the fourth beside the first");
+    let from = grab(&mut harness, &filtered, "lost");
+    drag(&mut harness, from, on(fourth));
+    assert_eq!(lines(&harness, &scene), [lost.as_str()]);
+
+    // Each name on the bar brings its arrangement forward.
+    harness.get_by_label("Charts 2, 3").click();
+    harness.run_steps(3);
+    assert!(shows(&harness, "Chart 3") && !shows(&harness, "Chart 4") && lines(&harness, &scene) == [rate.clone()]);
+    // A chart within an arrangement is split again like any other.
+    split(&mut harness, "Chart 3", "Split right");
+    let (third, fifth) = (name(&harness, "Chart 3"), name(&harness, "Chart 5"));
+    assert!(fifth.left() > third.left() + 300.0 && fifth.top() == third.top() && shows(&harness, "Charts 2, 3, 5"));
+
+    // The cross beside a name on the bar closes all that is behind the name.
+    close(&mut harness, "Charts 1, 4");
+    assert!(!shows(&harness, "Chart 1") && !shows(&harness, "Chart 4"));
+    assert!(!shows(&harness, "Charts 2, 3, 5"), "what is left has the place to itself, and needs no name");
+    assert_eq!(lines(&harness, &scene), [rate]);
+    close(&mut harness, "Chart 2");
+    close(&mut harness, "Chart 3");
+    assert!(shows(&harness, "Chart 5") && !shows(&harness, "Close"), "the last chart stays");
     Ok(())
 }
 

@@ -172,9 +172,21 @@ node they offer, their nodes as cards, and their connections as wires. It owns
 no nodes and keeps no state of its own; the drawing follows what the runtimes
 report and updates when they announce a change.
 
-- Every runtime has a colour, shown beside its name on the left. A node wears the colour of the
+It is four windows in one: `Runtimes`, `Graph`, `Details` and `Charts`. To
+begin with the first three are side by side and the charts are under them.
+
+- Each window is under a bar with its name on it. Take a window by that name and put it down on the
+  left, right, upper or lower half of another to become its neighbour there, or on its middle to
+  share its place: the two names are then side by side on one bar, and a name brings its window to
+  the front. Drag the line between two windows to give one more room.
+- The cross beside a name closes the window. The row along the top has the name of every window,
+  and opens or closes it. A window that is opened again is where it was.
+
+In `Runtimes`, `Graph` and `Details`:
+
+- Every runtime has a colour, shown beside its name in `Runtimes`. A node wears the colour of the
   runtime it runs in: its card, its pins, and the wires that leave it.
-- Click a kind on the left (or right-click the canvas) to create a node: name, thread or pool, settings.
+- Click a kind in `Runtimes` (or right-click the graph) to create a node: name, thread or pool, settings.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
@@ -182,14 +194,15 @@ report and updates when they announce a change.
 - Pause a node or start it again with the button on its card. Right-clicking the card offers the
   same, and removing it.
 - Drag a card anywhere on it to move it, scroll to move the view, pinch to zoom; `Fit` brings every
-  card back into view and `Tidy` lays them out again.
+  card back into view and `Tidy` lays them out again. When the graph's window is moved or resized,
+  what was in the middle of it still is.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
 - Beside every pin is the rate of what passes through it, such as `120/s`, or `0/s` when nothing
-  does: what a node takes in on its left, what it sends on its right. The details panel adds what
+  does: what a node takes in on its left, what it sends on its right. `Details` adds what
   was received and lost, the latency of the newest sample, the longest gap between two samples of
   late, and a node's last error.
 
-The `Charts` tab, beside `Graph`, shows what connections and outputs do over time:
+`Charts` shows what connections and outputs do over time:
 
 - On the left is every connection with four numbers as they stand: its rate, how many samples a
   second it lost, the longest gap between two samples of late, and the latency of the newest sample.
@@ -202,6 +215,9 @@ The `Charts` tab, beside `Graph`, shows what connections and outputs do over tim
   publishes, or an output whose program has stopped while something still listens to it. Nobody
   says what is inside its messages, so only the length of a slice can be drawn.
 - Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart.
+  Their names are written over the top of the chart, and the lines pass behind them: a chart is as
+  tall with ten lines as with one.
+- Each line has a colour of its own. The button that shows it, beside the name, opens a picker.
 - Charts are panes within panes. The two buttons at the right of the bar above a chart split its
   place in two, with a new chart to the right or underneath, and each half can be split again. The
   line between two charts is dragged to give one more room and the other less.
@@ -211,9 +227,12 @@ The `Charts` tab, beside `Graph`, shows what connections and outputs do over tim
   to the front; so does a number held over the name, to be put down on that chart. The bar itself
   moves every chart in the place at once. The cross beside a name closes the chart; the last one
   stays.
+- A chart that shares a place is split within it. So every name on a bar can have a whole
+  arrangement behind it, of charts side by side and one under another, and the bar says which:
+  `Charts 2, 3`. The cross beside such a name closes all of them.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
-- The top and bottom of a chart are always the largest and the smallest value in view, written in
-  its corners. Hover over a chart to read the lines at that moment.
+- The top and bottom of a chart are always the largest and the smallest value in view, written at
+  its right edge. Hover over a chart to read the lines at that moment.
 - A chart ends at the present and moves on with every frame the window draws. A number from inside
   a message is drawn right up to the edge, as its message arrives. What the runtimes report comes a
   tenth of a second apart, so those lines end 0.15 s short of the edge, and slide along evenly
@@ -239,11 +258,12 @@ from when it is put on a chart.
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
 (the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the window) are about 2,270 lines together,
-and `triq-tap` another 170. The graph is drawn with `egui-snarl` and the
-charts are arranged with `egui_tiles`. The tests drive the real window code
-without opening one, with a pointer where it matters, and write pictures to
-`target/tmp/workbench.png`, `target/tmp/graph.png` and `target/tmp/charts.png`.
+background threads) and `app.rs` (the windows) are about 2,420 lines together,
+and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+windows and the charts are arranged with `egui_tiles`. The tests drive the
+real window code without opening one, with a pointer where it matters, and
+write pictures to `target/tmp`: `windows.png`, `workbench.png`, `graph.png`,
+`charts.png` and `chart-colours.png`.
 
 ## Programs with their own main loop
 
@@ -317,11 +337,10 @@ project's code; the project's window is laid out however the project likes,
 with whatever draws best. Each draws at its own pace, and neither stops when
 the other does. `triq-demo` is such a window.
 
-The workbench is also a widget, `Workbench::show`, or `show_graph` and
-`show_charts` for its two parts, for a project that does want everything in
-one window. That window is then drawn with the egui the workbench was built
-with, re-exported as `triq_workbench::egui`, and all of it is drawn again
-whenever any part of it has something new.
+The workbench is also a widget, `Workbench::show`, for a project that does
+want everything in one window. That window is then drawn with the egui the
+workbench was built with, re-exported as `triq_workbench::egui`, and all of it
+is drawn again whenever any part of it has something new.
 
 ## Programs built on it
 

@@ -1,16 +1,18 @@
-//! The second tab: numbers over time, drawn as charts.
+//! Numbers over time, drawn as charts.
 //!
 //! On the left is everything that has numbers, with each as it stands: what a
 //! connection did, how fast an output sends, and what is inside the messages
 //! of a topic. A number dragged onto a chart is drawn there as a line over
-//! time, and several can share a chart. The top and bottom of a chart are
-//! always the largest and the smallest value in view.
+//! time, and several can share a chart, each in a colour of its own. The top
+//! and bottom of a chart are always the largest and the smallest value in view.
 //!
 //! There is one chart to begin with. A chart is split in two, to the right or
 //! downward, and so is each half, to any depth. The line between two charts is
 //! dragged to give one more room. A chart is taken by its name and put down
 //! on a side of another, or on its middle, where the two then share a place
-//! and one is in front. `egui_tiles` does the arranging.
+//! and one is in front. One that shares a place is split within it, so that
+//! each name on a bar can have a whole arrangement behind it. `egui_tiles`
+//! does the arranging.
 //!
 //! A chart ends at the present, which the window moves on with every frame it
 //! draws: the lines slide along evenly, however often points arrive. A number
@@ -19,6 +21,7 @@
 use crate::colors;
 use crate::history::{Connection, History, Stat};
 use crate::signals::{Signals, Wanted};
+use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{
     self, Align, Color32, Layout, Pos2, Rect, Role, Sense, Stroke, StrokeKind, Ui, UiBuilder, WidgetInfo,
 };
@@ -40,7 +43,7 @@ pub struct Recorded<'a> {
 /// and slides along instead of jumping forward with every reading.
 const BEHIND: f64 = 0.15;
 
-/// One line on a chart: a number, over time.
+/// What a line on a chart follows: a number, over time.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Trace {
     /// One number of a connection.
@@ -99,22 +102,40 @@ impl Trace {
     }
 }
 
+/// One line on a chart: the number it follows, and the colour it is drawn in.
+struct Line {
+    trace: Trace,
+    /// Which of the colours that lines take in turn it was given.
+    shade: usize,
+    /// The colour that was chosen for it instead.
+    chosen: Option<Color32>,
+}
+
+impl Line {
+    fn color(&self, dark: bool) -> Color32 {
+        self.chosen.unwrap_or_else(|| color(self.shade, dark))
+    }
+}
+
 /// One chart: the number it is called by, and the lines drawn on it.
 struct Chart {
     number: usize,
-    traces: Vec<Trace>,
+    lines: Vec<Line>,
 }
 
 impl Chart {
     fn new(number: usize) -> Self {
-        Self { number, traces: Vec::new() }
+        Self { number, lines: Vec::new() }
     }
 
-    /// Draw a line on the chart, unless it is there already.
+    /// Draw a line on the chart, unless it is there already. It takes the
+    /// first colour that no line on the chart was given.
     fn add(&mut self, trace: Trace) {
-        if !self.traces.contains(&trace) {
-            self.traces.push(trace);
+        if self.lines.iter().any(|line| line.trace == trace) {
+            return;
         }
+        let free = (0..).find(|shade| self.lines.iter().all(|line| line.shade != *shade));
+        self.lines.push(Line { trace, shade: free.unwrap_or_default(), chosen: None });
     }
 }
 
@@ -147,13 +168,6 @@ impl Charts {
         }
     }
 
-    /// How much of the past to show, to be drawn in a row.
-    pub fn controls(&mut self, ui: &mut Ui) {
-        let label = ui.label("Show the last");
-        let seconds = egui::DragValue::new(&mut self.seconds).range(5.0..=History::LONGEST).suffix(" s");
-        ui.add(seconds).labelled_by(label.id);
-    }
-
     /// True when no chart has a line on it: nothing moves, so nothing needs drawing again.
     pub fn is_empty(&self) -> bool {
         self.traces().next().is_none()
@@ -164,6 +178,12 @@ impl Charts {
     pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, now: f64) {
         let opened = egui::Panel::left("numbers").default_size(300.0).show(ui, |ui| numbers(ui, recorded)).inner;
         egui::CentralPanel::default().show(ui, |ui| {
+            // How much of the past every chart shows.
+            ui.horizontal(|ui| {
+                let label = ui.label("Show the last");
+                let seconds = egui::DragValue::new(&mut self.seconds).range(5.0..=History::LONGEST).suffix(" s");
+                ui.add(seconds).labelled_by(label.id);
+            });
             let mut drawn = Drawn { recorded, since: now - self.seconds, now, split: None, forward: None };
             self.panes.ui(&mut drawn, ui);
             if let Some((place, direction)) = drawn.split {
@@ -182,7 +202,7 @@ impl Charts {
             Tile::Pane(chart) => Some(chart),
             Tile::Container(_) => None,
         });
-        charts.flat_map(|chart| &chart.traces)
+        charts.flat_map(|chart| &chart.lines).map(|line| &line.trace)
     }
 
     /// What is to be read out of messages: the topics that are open in the
@@ -197,7 +217,8 @@ impl Charts {
         wanted
     }
 
-    /// Put a new, empty chart to the right of a place or under it. The two share the room the place had.
+    /// Put a new, empty chart to the right of what is in a place, or under it.
+    /// The two share the room the place had.
     fn split(&mut self, place: TileId, direction: LinearDir) {
         self.made += 1;
         let tiles = &mut self.panes.tiles;
@@ -221,7 +242,7 @@ struct Drawn<'a> {
     /// The times at the left and the right edge of every chart.
     since: f64,
     now: f64,
-    /// The place whose bar was asked for a new chart, and where to put it.
+    /// What a bar was asked to put a new chart beside, and on which side.
     split: Option<(TileId, LinearDir)>,
     /// A chart to bring in front of those it shares its place with.
     forward: Option<TileId>,
@@ -231,8 +252,10 @@ impl Behavior<Chart> for Drawn<'_> {
     fn pane_ui(&mut self, ui: &mut Ui, _: TileId, chart: &mut Chart) -> UiResponse {
         let (_, landed) = ui.dnd_drop_zone::<Trace, ()>(egui::Frame::canvas(ui.style()), |ui| {
             ui.set_min_size(ui.available_size());
-            names(ui, &mut chart.traces, self.recorded);
-            lines(ui, &chart.traces, self.recorded, self.since, self.now);
+            // The lines have the whole chart. Their names are written over them.
+            let whole = ui.available_rect_before_wrap();
+            lines(ui, &chart.lines, self.recorded, self.since, self.now);
+            ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| names(ui, &mut chart.lines, self.recorded));
         });
         if let Some(trace) = landed {
             chart.add(Trace::clone(&trace));
@@ -242,6 +265,18 @@ impl Behavior<Chart> for Drawn<'_> {
 
     fn tab_title_for_pane(&mut self, chart: &Chart) -> egui::WidgetText {
         format!("Chart {}", chart.number).into()
+    }
+
+    /// A name on a bar that has several charts behind it lists them.
+    fn tab_title_for_tile(&mut self, tiles: &Tiles<Chart>, place: TileId) -> egui::WidgetText {
+        match tiles.get(place) {
+            Some(Tile::Pane(chart)) => self.tab_title_for_pane(chart),
+            _ => {
+                let numbers: Vec<String> =
+                    charts_in(tiles, place).iter().map(|chart| chart.number.to_string()).collect();
+                format!("Charts {}", numbers.join(", ")).into()
+            }
+        }
     }
 
     /// A number that is held over the name of a chart brings the chart forward, to be put down on it.
@@ -254,20 +289,22 @@ impl Behavior<Chart> for Drawn<'_> {
         )
     }
 
-    /// The last chart stays, so that there is always one to split.
-    fn is_tab_closable(&self, tiles: &Tiles<Chart>, _: TileId) -> bool {
-        tiles.tiles().filter(|tile| tile.is_pane()).count() > 1
+    /// What is behind a name is closed with it, unless that is every chart
+    /// there is: the last stays, so that there is always one to split.
+    fn is_tab_closable(&self, tiles: &Tiles<Chart>, place: TileId) -> bool {
+        charts_in(tiles, place).len() < tiles.tiles().filter(|tile| tile.is_pane()).count()
     }
 
-    /// At the right end of a bar: the buttons that split the place under it. They are laid out from the right.
-    fn top_bar_right_ui(&mut self, _: &Tiles<Chart>, ui: &mut Ui, place: TileId, _: &Tabs, _: &mut f32) {
+    /// At the right end of a bar: the buttons that split what is in front
+    /// under it, within the place it has. They are laid out from the right.
+    fn top_bar_right_ui(&mut self, _: &Tiles<Chart>, ui: &mut Ui, _: TileId, bar: &Tabs, _: &mut f32) {
         let ways = [
             (LinearDir::Vertical, "Split down", "A new chart under this one"),
             (LinearDir::Horizontal, "Split right", "A new chart to the right of this one"),
         ];
         for (direction, word, about) in ways {
             if split_button(ui, direction, word).on_hover_text(about).clicked() {
-                self.split = Some((place, direction));
+                self.split = bar.active.map(|front| (front, direction));
             }
         }
     }
@@ -280,6 +317,15 @@ impl Behavior<Chart> for Drawn<'_> {
             flatten_tabs_in_tabs: true,
             ..SimplificationOptions::default()
         }
+    }
+}
+
+/// The charts in a place, in the order they are laid out in.
+fn charts_in(tiles: &Tiles<Chart>, place: TileId) -> Vec<&Chart> {
+    match tiles.get(place) {
+        Some(Tile::Pane(chart)) => vec![chart],
+        Some(Tile::Container(holder)) => holder.children().flat_map(|part| charts_in(tiles, *part)).collect(),
+        None => Vec::new(),
     }
 }
 
@@ -382,44 +428,59 @@ fn number(ui: &mut Ui, trace: Trace, value: String) {
     });
 }
 
-/// At the top of a chart: the colour, name and newest value of each line,
-/// with a button that takes the line off.
-fn names(ui: &mut Ui, traces: &mut Vec<Trace>, recorded: Recorded<'_>) {
+/// Written over the top of a chart: the colour, name and newest value of each
+/// line. The colour is a button that opens a picker, and the last button takes
+/// the line off.
+fn names(ui: &mut Ui, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
+    if lines.is_empty() {
+        ui.weak("Drag a number here.");
+        return;
+    }
     let mut taken_off = None;
-    for (number, trace) in traces.iter().enumerate() {
-        ui.horizontal(|ui| {
-            let (dash, _) = ui.allocate_exact_size(egui::vec2(12.0, ui.spacing().interact_size.y), Sense::hover());
-            let ink = color(number, ui.visuals().dark_mode);
-            ui.painter().rect_filled(Rect::from_center_size(dash.center(), egui::vec2(12.0, 3.0)), 0.0, ink);
-            let name = ui.label(trace.name());
-            if let Trace::Heard { connection, .. } = trace {
-                name.on_hover_text(format!("from {}", connection.from));
-            }
-            if let Some(value) = trace.latest(recorded) {
-                ui.weak(written(value) + trace.unit());
-            }
-            if ui.small_button("×").on_hover_text("Take this line off the chart").clicked() {
+    // The lines pass behind the names, and show through what the names are written on.
+    let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
+    backing.show(ui, |ui| {
+        for (number, line) in lines.iter_mut().enumerate() {
+            // A row is known by what its line follows, and keeps its picker when the rows above it go.
+            let row = ui.push_id(egui::Id::unique(&line.trace), |ui| {
+                ui.horizontal(|ui| {
+                    let mut color = line.color(ui.visuals().dark_mode);
+                    let well = ui.scope(|ui| {
+                        ui.spacing_mut().interact_size = egui::vec2(16.0, 14.0);
+                        color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
+                    });
+                    if well.inner.on_hover_text("Choose the colour of this line").changed() {
+                        line.chosen = Some(color);
+                    }
+                    let name = ui.label(line.trace.name());
+                    if let Trace::Heard { connection, .. } = &line.trace {
+                        name.on_hover_text(format!("from {}", connection.from));
+                    }
+                    if let Some(value) = line.trace.latest(recorded) {
+                        ui.weak(written(value) + line.trace.unit());
+                    }
+                    ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
+                })
+            });
+            if row.inner.inner {
                 taken_off = Some(number);
             }
-        });
-    }
-    if traces.is_empty() {
-        ui.weak("Drag a number here.");
-    }
+        }
+    });
     if let Some(number) = taken_off {
-        traces.remove(number);
+        lines.remove(number);
     }
 }
 
 /// The lines of a chart, from the time `since` at its left edge to `until` at
 /// its right. The chart reaches from the smallest value in view at the bottom
-/// to the largest at the top.
-fn lines(ui: &mut Ui, traces: &[Trace], recorded: Recorded<'_>, since: f64, until: f64) {
+/// to the largest at the top, and says at its right edge what those are.
+fn lines(ui: &mut Ui, drawn: &[Line], recorded: Recorded<'_>, since: f64, until: f64) {
     let (whole, chart) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
     // Under the lines, a row that says what time the left and right edges are.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     let seconds = until - since;
-    let lines: Vec<Vec<(f64, f64)>> = traces.iter().map(|trace| trace.line(recorded, since, until)).collect();
+    let lines: Vec<Vec<(f64, f64)>> = drawn.iter().map(|line| line.trace.line(recorded, since, until)).collect();
     let Some((low, high)) = extent(lines.iter().flatten().map(|(_, value)| *value)) else { return };
 
     // A line along the very top or bottom is drawn whole, not cut in half by the edge.
@@ -429,15 +490,15 @@ fn lines(ui: &mut Ui, traces: &[Trace], recorded: Recorded<'_>, since: f64, unti
         egui::pos2(egui::lerp(inside.x_range(), across as f32), egui::lerp(inside.bottom()..=inside.top(), up as f32))
     };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
-    for (number, line) in lines.iter().enumerate() {
-        let placed: Vec<Pos2> = line.iter().map(place).collect();
-        painter.line(thinned(&placed), Stroke::new(2.0, color(number, dark)));
+    for (line, points) in drawn.iter().zip(&lines) {
+        let placed: Vec<Pos2> = points.iter().map(place).collect();
+        painter.line(thinned(&placed), Stroke::new(2.0, line.color(dark)));
     }
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));
     };
-    corner(ui, area, Layout::top_down(Align::Min), written(high));
-    corner(ui, area, Layout::bottom_up(Align::Min), written(low));
+    corner(ui, area, Layout::top_down(Align::Max), written(high));
+    corner(ui, area, Layout::bottom_up(Align::Max), written(low));
     corner(ui, foot, Layout::left_to_right(Align::Center), format!("{seconds} s ago"));
     corner(ui, foot, Layout::right_to_left(Align::Center), "now".to_owned());
 
@@ -446,10 +507,10 @@ fn lines(ui: &mut Ui, traces: &[Trace], recorded: Recorded<'_>, since: f64, unti
         let at = since + f64::from((pointer.x - area.left()) / area.width()) * seconds;
         painter.vline(pointer.x, area.y_range(), Stroke::new(1.0, ui.visuals().weak_text_color()));
         chart.on_hover_ui_at_pointer(|ui| {
-            for (trace, line) in traces.iter().zip(&lines) {
-                let nearest = line.iter().min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
+            for (line, points) in drawn.iter().zip(&lines) {
+                let nearest = points.iter().min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
                 if let Some((_, value)) = nearest.filter(|(time, _)| (time - at).abs() <= 1.0) {
-                    ui.label(format!("{} {}{}", trace.name(), written(*value), trace.unit()));
+                    ui.label(format!("{} {}{}", line.trace.name(), written(*value), line.trace.unit()));
                 }
             }
             ui.weak(format!("{:.1} s ago", until - at));
@@ -496,7 +557,7 @@ pub fn written(value: f64) -> String {
     }
 }
 
-/// The colour of the first, second, third line on a chart.
+/// The colour the first, second, third line on a chart is given.
 pub fn color(line: usize, dark: bool) -> Color32 {
     colors::shade(line, dark)
 }

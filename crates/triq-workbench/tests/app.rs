@@ -9,15 +9,21 @@ use scene::*;
 use triq::{NodeInfo, NodeState};
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
-use window::{Bench, around, drag, open, until};
+use window::{Bench, around, bar, drag, open, switch, until};
 
 fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
 }
 
-/// Click something in the lists and panels beside the graph.
+/// Click something among the runtimes or above the graph.
 fn click(harness: &mut Bench<'_>, label: &str) {
     harness.get_all_by_label(label).next().unwrap_or_else(|| panic!("nothing labelled {label:?}")).click();
+    harness.step();
+}
+
+/// Click a button in the details. A card on the graph may have one of the same name; the details come after it.
+fn press(harness: &mut Bench<'_>, label: &str) {
+    harness.get_all_by_label(label).last().unwrap_or_else(|| panic!("nothing labelled {label:?}")).click();
     harness.step();
 }
 
@@ -73,8 +79,8 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     });
     assert!(flowing, "the filter's input and output show a rate");
 
-    // The other tab is about what connections do over time. It lists them, with their numbers as they stand.
-    click(&mut harness, "Charts");
+    // The charts are in a window of their own, open beside the graph. It is about what connections
+    // do over time, and lists them with their numbers as they stand.
     let filtered = format!("{robot}/smoother/raw");
     let listed = until(&mut harness, |harness| {
         scene.imu.pose.send(Pose::default()).expect("send");
@@ -82,7 +88,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
         connection.is_some_and(|connection| connection.query_all_by_label_contains("/s").next().is_some())
     });
     assert!(listed, "the filter's connection is listed, with a rate");
-    assert!(shows(&harness, "Drag a number here.") && !shows(&harness, "Tidy"), "charts take the place of the graph");
+    assert!(shows(&harness, "Drag a number here.") && shows(&harness, "Tidy"), "beside the graph, not instead of it");
 
     // With nothing on a chart, nothing moves, and the window waits for something new before it draws again.
     harness.run_steps(5);
@@ -101,13 +107,16 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     assert!(until(&mut harness, |harness| shows(harness, &format!("{filtered} rate"))), "the chart names its line");
     harness.run_steps(5);
     assert!(harness.ctx.has_requested_repaint());
-    click(&mut harness, "Graph");
-    assert!(until(&mut harness, |harness| shows(harness, "Tidy") && !shows(harness, "Drag a number here.")));
+    // A window that is closed draws nothing, so the charts no longer keep the others drawing.
+    switch(&harness, "Charts").click();
+    harness.run_steps(5);
+    assert!(bar(&harness, "Charts").is_none() && !shows(&harness, &format!("{filtered} rate")));
+    assert!(!harness.ctx.has_requested_repaint());
 
     // Create a node from the factory, through the form.
     click(&mut harness, "New filter");
     assert!(until(&mut harness, |harness| shows(harness, "Create")));
-    click(&mut harness, "Create");
+    press(&mut harness, "Create");
     assert!(wait_for(|| node(&scene.robot, "filter1").is_some()), "the runtime that owns the factory created it");
     assert_eq!(
         node(&scene.robot, "filter1").unwrap().params,
@@ -139,7 +148,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     // Select the node: pause it, then remove the wire and the node.
     click(&mut harness, "filter1");
     assert!(until(&mut harness, |harness| shows(harness, "Pause")));
-    click(&mut harness, "Pause");
+    press(&mut harness, "Pause");
     assert!(wait_for(|| node(&scene.robot, "filter1").unwrap().state == NodeState::Paused));
     assert!(until(&mut harness, |harness| shows(harness, "Resume")));
 
@@ -155,7 +164,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
         Err(reason) => eprintln!("no picture: {reason}"),
     }
 
-    click(&mut harness, "Remove");
+    press(&mut harness, "Remove");
     assert!(wait_for(|| node(&scene.robot, "filter1").is_none()));
     assert!(until(&mut harness, |harness| !shows(harness, "filter1")), "and it leaves the graph");
     Ok(())

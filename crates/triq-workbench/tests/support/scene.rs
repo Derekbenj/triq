@@ -102,6 +102,13 @@ impl Scene {
         desk.connect(&format!("{}/smoother/smooth", robot.name()), "viewer/pose")?;
         // An output nobody offers yet.
         desk.connect(&format!("{}/camera/image", robot.name()), "viewer/image")?;
+        // A connection is live a moment after it was asked for. A test begins when both are.
+        let live = |runtime: &Runtime, node: &str| {
+            let nodes = runtime.inventory().nodes;
+            let node = nodes.iter().find(|info| info.name == node).expect("the node");
+            node.inputs[0].sources.iter().any(|source| source.connected)
+        };
+        assert!(wait_for(|| live(&robot, "smoother") && live(&desk, "viewer")), "the scene's connections are live");
         Ok(Self { robot, desk, imu, viewer })
     }
 
