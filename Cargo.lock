@@ -6990,6 +6990,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "triq-tap"
+version = "0.1.0"
+dependencies = [
+ "iceoryx2",
+ "triq",
+]
+
+[[package]]
 name = "triq-workbench"
 version = "0.1.0"
 dependencies = [

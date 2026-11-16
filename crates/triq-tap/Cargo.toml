@@ -1,0 +1,12 @@
+[package]
+name = "triq-tap"
+description = "Read any iceoryx2 topic as bytes, without having its type"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+iceoryx2.workspace = true
+
+[dev-dependencies]
+triq = { path = "../triq" }
