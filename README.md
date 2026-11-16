@@ -218,18 +218,20 @@ In `Runtimes`, `Graph` and `Details`:
   Their names are written over the top of the chart, and the lines pass behind them: a chart is as
   tall with ten lines as with one.
 - Each line has a colour of its own. The button that shows it, beside the name, opens a picker.
-- Charts are panes within panes. The two buttons at the right of the bar above a chart split its
-  place in two, with a new chart to the right or underneath, and each half can be split again. The
-  line between two charts is dragged to give one more room and the other less.
-- A chart is taken by its name on the bar and put down elsewhere: on the left, right, upper or
-  lower half of another chart to become its neighbour there, or on its middle to share its place.
-  Charts that share a place have their names side by side on one bar, and the name brings a chart
+- `New chart` adds an empty chart beside the others. Charts are panes within panes, arranged by
+  hand like the windows: a chart is taken by its name on the bar and put down on the left, right,
+  upper or lower half of another to become its neighbour there, or on its middle to share its
+  place. The line between two charts is dragged to give one more room and the other less.
+- Charts that share a place have their names side by side on one bar, and the name brings a chart
   to the front; so does a number held over the name, to be put down on that chart. The bar itself
   moves every chart in the place at once. The cross beside a name closes the chart; the last one
   stays.
-- A chart that shares a place is split within it. So every name on a bar can have a whole
-  arrangement behind it, of charts side by side and one under another, and the bar says which:
-  `Charts 2, 3`. The cross beside such a name closes all of them.
+- A chart put down on a half of one that shares its place goes in with it. So every name on a bar
+  can have a whole arrangement behind it, of charts side by side and one under another, and the
+  bar says which: `Charts 2, 3`. The cross beside such a name closes all of them. Put down higher
+  on the half, where the highlight takes in the bar as well, a chart goes beside the whole place.
+- `Numbers` hides the list and shows it again, to give the charts its room. While it is hidden,
+  only the numbers that are on charts are read out of messages.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.
 - The top and bottom of a chart are always the largest and the smallest value in view, written at
   its right edge. Hover over a chart to read the lines at that moment.

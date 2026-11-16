@@ -88,24 +88,37 @@ fn open(shown: Shown) -> Window<'static> {
 
 /// Where the name of a chart is, on the bar above it: the thing to take a chart by.
 fn name(harness: &Window<'_>, chart: &str) -> egui::Rect {
-    harness.get_by_label(chart).rect()
+    harness.get_by_role_and_label(Role::Button, chart).rect()
 }
 
-/// A button on the bar above a chart: the first one to the right of the chart's name.
-fn on_bar<'a>(harness: &'a Window<'_>, chart: &str, button: &'a str) -> Node<'a> {
-    let name = name(harness, chart);
-    let after = |button: &Node<'_>| {
-        let place = button.rect();
-        (place.center().y - name.center().y).abs() < name.height() && place.left() >= name.right()
-    };
-    let buttons = harness.query_all_by_label(button).filter(after);
-    buttons.min_by(|a, b| a.rect().left().total_cmp(&b.rect().left())).unwrap_or_else(|| panic!("no {button:?}"))
+/// The name of a chart on the bar above it: a click brings the chart forward.
+fn name_of<'a>(harness: &'a Window<'_>, chart: &'a str) -> Node<'a> {
+    harness.get_by_role_and_label(Role::Button, chart)
 }
 
-/// Press a button on the bar above a chart.
-fn split(harness: &mut Window<'_>, chart: &str, button: &str) {
-    on_bar(harness, chart, button).click();
+/// Where a chart is drawn, under its bar.
+fn room(harness: &Window<'_>, chart: &str) -> egui::Rect {
+    harness.get_by_role_and_label(Role::Canvas, chart).rect()
+}
+
+/// Press the button that adds a chart.
+fn add(harness: &mut Window<'_>) {
+    harness.get_by_label("New chart").click();
     harness.run_steps(3);
+}
+
+/// Take a chart by its name and put it down at a place.
+fn put(harness: &mut Window<'_>, chart: &str, at: egui::Pos2) {
+    let name = name(harness, chart);
+    drag(harness, name.center(), at);
+    harness.run_steps(10);
+}
+
+/// A place on one half of where a chart is drawn: `side` points from its middle to that half.
+/// Put down there, another chart becomes its neighbour on that side.
+fn half(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
+    let room = room(harness, chart);
+    room.center() + side * room.size() / 4.0
 }
 
 /// Press the cross beside the name of a chart.
@@ -206,8 +219,8 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(drawn, "the chart says where the line is now");
     let line = format!("{filtered} rate");
 
-    // More charts, each with its own numbers: a chart is split, and the new one takes half its room.
-    split(&mut harness, "Chart 1", "Split right");
+    // More charts, each with its own numbers: a new chart appears beside the first.
+    add(&mut harness);
     let beside = empty(&harness)[0];
     assert!(beside.x > chart.x && (beside.y - chart.y).abs() < 1.0, "the new chart is beside the first");
     let latency = grab(&mut harness, &viewed, "latency");
@@ -258,34 +271,48 @@ fn lines(harness: &Window<'_>, scene: &Scene) -> Vec<String> {
     drawn.iter().filter_map(|line| line.value()).collect()
 }
 
-/// A place on a chart, by where its name is: well inside it, under the bar.
-fn on(name: egui::Rect) -> egui::Pos2 {
-    name.left_bottom() + egui::vec2(150.0, 150.0)
+/// Three charts: the first above, the second and third side by side below it. Each was added,
+/// and put down where it is.
+fn three(harness: &mut Window<'_>) {
+    add(harness);
+    let under = half(harness, "Chart 1", egui::vec2(0.0, 1.0));
+    put(harness, "Chart 2", under);
+    add(harness);
+    let beside = half(harness, "Chart 2", egui::vec2(1.0, 0.0));
+    put(harness, "Chart 3", beside);
 }
 
 #[test]
-fn a_chart_is_split_and_its_parts_are_resized_and_closed() -> triq::Result {
+fn charts_are_added_put_where_they_should_be_resized_and_closed() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;
     let filtered = format!("{}/smoother/raw", scene.robot.name());
     let (rate, lost, gap) = (format!("{filtered} rate"), format!("{filtered} lost"), format!("{filtered} gap"));
     let mut harness = arranging(&scene, Charts::default())?;
 
-    // One chart to begin with, which cannot be closed. It is split: a new chart takes its lower half.
+    // One chart to begin with, which cannot be closed. A new chart appears beside it.
     assert!(shows(&harness, "Chart 1") && !shows(&harness, "Close"));
-    split(&mut harness, "Chart 1", "Split down");
+    add(&mut harness);
+    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
+    assert!(second.left() > first.left() + 300.0 && second.top() == first.top(), "beside the first");
+    // Taken by its name and put down on the lower half of the first, it is under it.
+    let under = half(&harness, "Chart 1", egui::vec2(0.0, 1.0));
+    put(&mut harness, "Chart 2", under);
     let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
     assert!(second.top() > first.top() + 300.0 && (second.left() - first.left()).abs() < 1.0, "under the first");
-    // The new chart is split the other way: panes within panes.
-    split(&mut harness, "Chart 2", "Split right");
-    let (second, third) = (name(&harness, "Chart 2"), name(&harness, "Chart 3"));
+    // The next is put down on the right half of the second: panes within panes.
+    add(&mut harness);
+    let beside = half(&harness, "Chart 2", egui::vec2(1.0, 0.0));
+    put(&mut harness, "Chart 3", beside);
+    let [first, second, third] = ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(&harness, chart));
     assert!(third.left() > second.left() + 300.0 && (third.top() - second.top()).abs() < 1.0, "beside the second");
-    assert_eq!(name(&harness, "Chart 1"), first, "the first is where it was");
+    assert!(second.top() > first.top() + 300.0 && (second.left() - first.left()).abs() < 1.0, "the first above both");
+    assert!(room(&harness, "Chart 1").width() > room(&harness, "Chart 2").width() * 1.9, "with the row to itself");
 
     // A number lands on the chart it is put down on, and no chart moves for it.
-    for (number, chart) in [("gap", first), ("rate", third), ("lost", second)] {
-        let from = grab(&mut harness, &filtered, number);
-        drag(&mut harness, from, on(chart));
+    for (number, chart) in [("gap", "Chart 1"), ("rate", "Chart 3"), ("lost", "Chart 2")] {
+        let (from, chart) = (grab(&mut harness, &filtered, number), room(&harness, chart).center());
+        drag(&mut harness, from, chart);
     }
     assert_eq!(lines(&harness, &scene), [gap.clone(), lost.clone(), rate.clone()]);
     assert_eq!(["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(&harness, chart)), [first, second, third]);
@@ -330,11 +357,10 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     assert!(read && shows(&harness, &inside));
 
     // Three charts: the first above, the second and third side by side below it, each with a line.
-    split(&mut harness, "Chart 1", "Split down");
-    split(&mut harness, "Chart 2", "Split right");
+    three(&mut harness);
     for (number, chart) in [("lost", "Chart 2"), ("rate", "Chart 3")] {
-        let (from, chart) = (grab(&mut harness, &filtered, number), name(&harness, chart));
-        drag(&mut harness, from, on(chart));
+        let (from, chart) = (grab(&mut harness, &filtered, number), room(&harness, chart).center());
+        drag(&mut harness, from, chart);
     }
     assert_eq!(lines(&harness, &scene), [inside.clone(), lost.clone(), rate.clone()]);
     let names = |harness: &Window<'_>| ["Chart 1", "Chart 2", "Chart 3"].map(|chart| name(harness, chart));
@@ -350,8 +376,8 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     assert!(second.top() > first.bottom() + 100.0, "the second is still below, with the row to itself");
     assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), lost.clone()]);
     // A number is put down on it where it is now.
-    let from = grab(&mut harness, &filtered, "gap");
-    drag(&mut harness, from, on(third));
+    let (from, onto) = (grab(&mut harness, &filtered, "gap"), room(&harness, "Chart 3").center());
+    drag(&mut harness, from, onto);
     assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), gap.clone(), lost.clone()]);
 
     // Put down on the middle of another chart, a chart shares its place, and is the one in front.
@@ -366,12 +392,12 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     std::thread::sleep(Duration::from_millis(50));
     assert_eq!(scene.imu.pose.subscribers(), 2);
     // Its name brings it forward.
-    harness.get_by_label("Chart 1").click();
+    name_of(&harness, "Chart 1").click();
     harness.run_steps(3);
     assert_eq!(lines(&harness, &scene), [rate.clone(), inside.clone(), gap.clone()]);
     // So does a number that is held over its name, to be put down on it.
     let (from, second) = (grab(&mut harness, &filtered, "latency"), name(&harness, "Chart 2"));
-    drag_by_way_of(&mut harness, &[from, second.center(), on(second)]);
+    drag_by_way_of(&mut harness, &[from, second.center(), second.left_bottom() + egui::vec2(150.0, 150.0)]);
     let latency = format!("{filtered} latency");
     assert_eq!(lines(&harness, &scene), [rate.clone(), lost.clone(), gap.clone(), latency.clone()]);
 
@@ -488,55 +514,73 @@ fn the_lines_have_the_whole_chart_and_each_a_colour_that_can_be_changed() -> tri
 }
 
 #[test]
-fn charts_that_share_a_place_are_each_split_within_it() -> triq::Result {
+fn a_name_on_a_bar_can_have_several_charts_behind_it() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;
     let filtered = format!("{}/smoother/raw", scene.robot.name());
     let (rate, lost) = (format!("{filtered} rate"), format!("{filtered} lost"));
     let mut harness = arranging(&scene, Charts::default())?;
+    // A place within the half of a chart that `side` points to, low in it. A chart that shares
+    // its place has two rooms there: its own, under the bar, and the place with the bar and all.
+    // Put down low on a half, a chart goes into the first; the highlight shows which it will be.
+    let within =
+        |harness: &Window<'_>, chart: &str, side: egui::Vec2| half(harness, chart, side) + egui::vec2(0.0, 40.0);
 
-    // Two charts in one place: the second was made beside the first and put down on its middle.
-    split(&mut harness, "Chart 1", "Split right");
-    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
-    drag(&mut harness, second.center(), egui::pos2((first.left() + second.left()) / 2.0, 430.0));
-    harness.run_steps(10);
+    // Two charts in one place: the second was put down on the middle of the first.
+    add(&mut harness);
+    let middle = room(&harness, "Chart 1").center();
+    put(&mut harness, "Chart 2", middle);
     let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
     assert!(second.left() >= first.right() && second.top() == first.top(), "their names are on one bar");
 
-    // The buttons on that bar split the chart that is in front, within the place it has. The
-    // bar names what is behind each of its names: the first chart, and the second with a third.
-    split(&mut harness, "Chart 1", "Split down");
+    // A third is put down on the lower half of the second, within the place the second has. The
+    // bar names what is behind each of its names: the first chart, and the second with the third.
+    add(&mut harness);
+    let under = within(&harness, "Chart 2", egui::vec2(0.0, 1.0));
+    put(&mut harness, "Chart 3", under);
     let (alone, pair) = (name(&harness, "Chart 1"), name(&harness, "Charts 2, 3"));
     assert!(pair.left() >= alone.right() && pair.top() == alone.top(), "one bar still");
     let (second, third) = (name(&harness, "Chart 2"), name(&harness, "Chart 3"));
     assert!(second.top() > pair.bottom() - 1.0 && third.top() > second.top() + 300.0, "the third under the second");
     assert!((second.left() - alone.left()).abs() < 1.0 && (third.left() - alone.left()).abs() < 1.0);
     // A number lands on the chart it is put down on, also here.
-    let from = grab(&mut harness, &filtered, "rate");
-    drag(&mut harness, from, on(third));
+    let (from, third) = (grab(&mut harness, &filtered, "rate"), room(&harness, "Chart 3").center());
+    drag(&mut harness, from, third);
     assert_eq!(lines(&harness, &scene), [rate.as_str()]);
 
-    // The first chart is brought forward, and has the whole place. It is split the other way.
-    harness.get_by_label("Chart 1").click();
+    // The first chart is brought forward, and has the whole place. A fourth is put down beside it there.
+    name_of(&harness, "Chart 1").click();
     harness.run_steps(3);
     assert!(!shows(&harness, "Chart 2") && !shows(&harness, "Chart 3") && lines(&harness, &scene).is_empty());
-    split(&mut harness, "Chart 1", "Split right");
+    add(&mut harness);
+    let beside = within(&harness, "Chart 1", egui::vec2(1.0, 0.0));
+    put(&mut harness, "Chart 4", beside);
     let (pair, other) = (name(&harness, "Charts 1, 4"), name(&harness, "Charts 2, 3"));
     assert!(other.left() >= pair.right() && other.top() == pair.top(), "two names on the bar, each for two charts");
     let (first, fourth) = (name(&harness, "Chart 1"), name(&harness, "Chart 4"));
     assert!(fourth.left() > first.left() + 300.0 && fourth.top() == first.top(), "the fourth beside the first");
-    let from = grab(&mut harness, &filtered, "lost");
-    drag(&mut harness, from, on(fourth));
+    let (from, fourth) = (grab(&mut harness, &filtered, "lost"), room(&harness, "Chart 4").center());
+    drag(&mut harness, from, fourth);
     assert_eq!(lines(&harness, &scene), [lost.as_str()]);
 
     // Each name on the bar brings its arrangement forward.
-    harness.get_by_label("Charts 2, 3").click();
+    name_of(&harness, "Charts 2, 3").click();
     harness.run_steps(3);
     assert!(shows(&harness, "Chart 3") && !shows(&harness, "Chart 4") && lines(&harness, &scene) == [rate.clone()]);
-    // A chart within an arrangement is split again like any other.
-    split(&mut harness, "Chart 3", "Split right");
+    // A chart is put into an arrangement like anywhere else.
+    add(&mut harness);
+    let beside = half(&harness, "Chart 3", egui::vec2(1.0, 0.0));
+    put(&mut harness, "Chart 5", beside);
     let (third, fifth) = (name(&harness, "Chart 3"), name(&harness, "Chart 5"));
     assert!(fifth.left() > third.left() + 300.0 && fifth.top() == third.top() && shows(&harness, "Charts 2, 3, 5"));
+    // Put down on the left half of the whole place, bar and all, a chart is beside everything in it.
+    add(&mut harness);
+    let (bar, top, bottom) = (name(&harness, "Charts 2, 3, 5"), room(&harness, "Chart 2"), room(&harness, "Chart 3"));
+    let outside = egui::pos2(top.left() + top.width() / 4.0, (bar.top() + bottom.bottom()) / 2.0 - 40.0);
+    put(&mut harness, "Chart 6", outside);
+    let (sixth, group) = (name(&harness, "Chart 6"), name(&harness, "Charts 1, 4"));
+    assert!(sixth.right() < group.left() && sixth.top() == group.top() && shows(&harness, "Charts 2, 3, 5"));
+    close(&mut harness, "Chart 6");
 
     // The cross beside a name on the bar closes all that is behind the name.
     close(&mut harness, "Charts 1, 4");
@@ -546,6 +590,60 @@ fn charts_that_share_a_place_are_each_split_within_it() -> triq::Result {
     close(&mut harness, "Chart 2");
     close(&mut harness, "Chart 3");
     assert!(shows(&harness, "Chart 5") && !shows(&harness, "Close"), "the last chart stays");
+    Ok(())
+}
+
+#[test]
+fn the_list_of_numbers_is_hidden_to_give_the_charts_its_room() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let sensor = format!("{}/imu/pose", scene.robot.name());
+    let mut harness = arranging(&scene, Charts::default())?;
+    let readers = |harness: &mut Window<'_>, readers: usize| {
+        wait_for(|| {
+            harness.step();
+            scene.imu.pose.subscribers() == readers
+        })
+    };
+
+    // An output is opened in the list, and one of the numbers inside it is put on the chart.
+    harness.get_by_label(sensor.as_str()).parent().unwrap().get_by_label("numbers inside").click();
+    assert!(readers(&mut harness, 2), "an output that is open in the list is read");
+    let listed = wait_for(|| {
+        scene.imu.pose.send(Pose::default()).expect("send");
+        harness.step();
+        shows(&harness, "translation[0]")
+    });
+    assert!(listed);
+    let (from, chart) = (grab(&mut harness, &sensor, "translation[0]"), room(&harness, "Chart 1"));
+    drag(&mut harness, from, chart.center());
+    let line = format!("{sensor} translation[0]");
+    assert!(shows(&harness, &line));
+
+    // The list is hidden. The chart has its room, and goes on drawing what is on it.
+    harness.get_by_label("Numbers").click();
+    harness.run_steps(3);
+    assert!(!shows(&harness, &sensor) && !shows(&harness, "numbers inside") && shows(&harness, &line));
+    let wider = room(&harness, "Chart 1");
+    assert!(wider.left() < 30.0 && wider.width() > chart.width() + 250.0, "{wider:?}");
+    harness.run_steps(5);
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(scene.imu.pose.subscribers(), 2, "a number on a chart is still read");
+    // With the line taken off, nothing wants that output: a list nobody sees keeps nothing open.
+    harness.get_by_label(line.as_str()).parent().unwrap().get_by_label("×").click();
+    assert!(readers(&mut harness, 1));
+
+    // Shown again, the list is as it was: the output is still open in it, and read again.
+    harness.get_by_label("Numbers").click();
+    harness.run_steps(3);
+    assert!(shows(&harness, &sensor) && shows(&harness, "numbers inside") && room(&harness, "Chart 1") == chart);
+    assert!(readers(&mut harness, 2));
+    let listed = wait_for(|| {
+        scene.imu.pose.send(Pose::default()).expect("send");
+        harness.step();
+        shows(&harness, "translation[0]")
+    });
+    assert!(listed, "with the numbers inside it");
     Ok(())
 }
 
