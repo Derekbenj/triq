@@ -145,14 +145,17 @@ report and updates when they announce a change.
 - Drag a card anywhere on it to move it, scroll to move the view, pinch to zoom; `Fit` brings every
   card back into view and `Tidy` lays them out again.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
-- Beside each pin that data is passing through is its rate, such as `120/s`. The details panel adds
-  what was received and lost, the latency of the newest sample, the longest gap between two samples
-  of late, and a node's last error.
+- Beside every pin is the rate of what passes through it, such as `120/s`, or `0/s` when nothing
+  does: what a node takes in on its left, what it sends on its right. The details panel adds what
+  was received and lost, the latency of the newest sample, the longest gap between two samples of
+  late, and a node's last error.
 
-The `Charts` tab, beside `Graph`, shows what connections do over time:
+The `Charts` tab, beside `Graph`, shows what connections and outputs do over time:
 
 - On the left is every connection with four numbers as they stand: its rate, how many samples a
   second it lost, the longest gap between two samples of late, and the latency of the newest sample.
+  Every output is there too, with the rate it sends at. They are in order of name, so what a node
+  takes in and what it sends stand together.
 - Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart, and
   `Add chart` and `Charts side by side` arrange as many charts as wanted in rows and columns.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.

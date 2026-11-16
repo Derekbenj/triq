@@ -43,12 +43,17 @@ fn the_graph_is_handled_like_a_user_would() -> triq::Result {
     let empty = egui::pos2(600.0, 50.0);
 
     // A card keeps its shape when data starts to flow and the pins say how fast.
-    let rated = |harness: &Bench<'_>, port| around(harness, port).query_by_label_contains("/s").is_some();
+    // Every pin says how fast data passes through it, also when none does.
+    let rate = |harness: &Bench<'_>, port| {
+        let written = around(harness, port).query_by_label_contains("/s");
+        written.and_then(|rate| rate.value())
+    };
+    let still = |harness: &Bench<'_>| ["raw: Pose", "smooth: Pose"].map(|port| rate(harness, port));
+    assert!(until(&mut harness, |harness| still(harness) == [Some("0/s".to_owned()), Some("0/s".to_owned())]));
     let quiet = text(&harness, "smooth: Pose").rect();
-    assert!(!rated(&harness, "raw: Pose") && !rated(&harness, "smooth: Pose"), "nothing is flowing yet");
     let flowing = until(&mut harness, |harness| {
         scene.imu.pose.send(Pose::default()).expect("send");
-        rated(harness, "raw: Pose") && rated(harness, "smooth: Pose")
+        still(harness).iter().all(|rate| rate.as_ref().is_some_and(|rate| rate != "0/s"))
     });
     assert!(flowing, "the pins show rates");
     // A card that grows does so a frame after what is on it changed.

@@ -62,7 +62,10 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     assert_eq!(wires(&harness, [&robot, &desk]), 2);
 
     // Where data flows, the pins say how fast.
-    let rated = |harness: &Bench<'_>, port| around(harness, port).query_by_label_contains("/s").is_some();
+    let rated = |harness: &Bench<'_>, port| {
+        let rate = around(harness, port).query_by_label_contains("/s").and_then(|rate| rate.value());
+        rate.is_some_and(|rate| rate != "0/s")
+    };
     assert!(!rated(&harness, "raw: Pose") && !rated(&harness, "smooth: Pose"), "nothing is flowing yet");
     let flowing = until(&mut harness, |harness| {
         scene.imu.pose.send(Pose::default()).expect("send");

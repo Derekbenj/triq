@@ -581,7 +581,8 @@ impl SnarlViewer<Card> for Viewer<'_> {
         card.node.outputs.len()
     }
 
-    // A pin gets one short row; the counters are a hover away and in the details panel.
+    // A pin gets one short row: its name, and how fast data passes through it.
+    // The counters are a hover away and in the details panel.
     fn show_input(&mut self, pin: &InPin, ui: &mut Ui, snarl: &mut Snarl<Card>) -> impl SnarlPin + 'static {
         let card = &snarl[pin.id.node];
         let input = &card.node.inputs[pin.id.input];
@@ -679,12 +680,13 @@ fn port(spec: &PortSpec) -> String {
     format!("{}: {}", spec.name, spec.message)
 }
 
-/// How fast data is passing through a port, such as `120/s`; nothing if none is.
+/// How fast data is passing through a port, such as `120/s`, or `0/s` when
+/// none is; nothing for a port so new that it is not known yet.
 fn rate(rates: &Rates, name: &str) -> String {
     match rates.get(name) {
-        Some(rate) if *rate >= 10.0 => format!("{rate:.0}/s"),
-        Some(rate) if *rate > 0.0 => format!("{rate:.1}/s"),
-        _ => String::new(),
+        Some(rate) if *rate >= 10.0 || *rate == 0.0 => format!("{rate:.0}/s"),
+        Some(rate) => format!("{rate:.1}/s"),
+        None => String::new(),
     }
 }
 

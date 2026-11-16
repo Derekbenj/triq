@@ -189,6 +189,8 @@ fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
         format!("{robot}/smoother/smooth"),
         format!("{desk}/viewer/pose"),
     );
+    // A node with nothing connected to it, and nothing to send.
+    let _idle: FilterPorts = scene.robot.attach("idle")?;
     let before = scene.inventories();
     assert!(graph::rates(&before, &before).is_empty(), "one reading gives no rate");
 
@@ -210,6 +212,8 @@ fn rates_come_from_two_readings_of_the_counters() -> triq::Result {
     let rates = graph::rates(&before, &after);
     assert_eq!((rates[&sent], rates[&received], rates[&passed_on]), (60.0, 60.0, 60.0));
     assert_eq!(rates[&shown], 120.0);
+    // Every port has a rate, whether or not anything passes through it.
+    assert_eq!((rates[&format!("{robot}/idle/raw")], rates[&format!("{robot}/idle/smooth")]), (0.0, 0.0));
 
     // A port that was not there the first time has no rate yet.
     let late: ImuPorts = scene.robot.attach("late")?;

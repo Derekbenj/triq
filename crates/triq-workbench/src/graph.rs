@@ -190,6 +190,8 @@ fn readings(inventory: &Inventory) -> BTreeMap<(String, &str), Reading> {
     for node in &inventory.nodes {
         for input in &node.inputs {
             let port = format!("{}/{}/{}", inventory.runtime, node.name, input.port.name);
+            // The input itself counts nothing, but it is there: with no output to hear, its rate is zero.
+            readings.insert((port.clone(), ""), Reading { count: 0, sent_ns: 0, taken_ns });
             for source in &input.sources {
                 let reading = Reading { count: source.received, sent_ns: source.sent_ns, taken_ns };
                 readings.insert((port.clone(), source.output.as_str()), reading);
@@ -203,10 +205,10 @@ fn readings(inventory: &Inventory) -> BTreeMap<(String, &str), Reading> {
     readings
 }
 
-/// Samples per second through every port, from two readings of the machine.
-/// An input's rate is the sum over the outputs it hears. A port that is new
-/// has no rate yet, and neither has anything in a program that started
-/// again in between.
+/// Samples per second through every port, from two readings of the machine:
+/// zero for a port nothing passes through. An input's rate is the sum over
+/// the outputs it hears. A port that is new has no rate yet, and neither has
+/// anything in a program that started again in between.
 pub fn rates(before: &[Inventory], after: &[Inventory]) -> BTreeMap<String, f64> {
     let mut rates = BTreeMap::new();
     for now in after {

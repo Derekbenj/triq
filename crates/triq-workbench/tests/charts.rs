@@ -85,6 +85,14 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         assert!(shows(&harness, &label), "{label:?} is listed");
     }
     assert!(number(&harness, &filtered, "rate").parent().unwrap().query_by_label("40.0/s").is_some());
+    // Every output is listed too, with how fast it sends: a node's inputs and outputs stand together.
+    let sensor = format!("{robot}/imu/pose");
+    assert!(number(&harness, &sensor, "rate").parent().unwrap().query_by_label("40.0/s").is_some());
+    let names = |harness: &Window<'_>| -> Vec<f32> {
+        let listed = [&sensor, &filtered, &format!("{robot}/smoother/smooth"), &viewed];
+        listed.map(|name| harness.get_by_label(name.as_str()).rect().top()).to_vec()
+    };
+    assert!(names(&harness).is_sorted(), "in order of their names");
     assert_eq!(empty(&harness).len(), 1, "one chart to begin with, with nothing on it");
 
     // Drag the rate onto the chart: it is drawn there, and named.
@@ -119,6 +127,10 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(shows(&harness, "80.0") && shows(&harness, "0.00"), "nothing was lost, so the bottom is zero");
     drag(&mut harness, lost, chart);
     assert_eq!(harness.query_all_by_label(format!("{filtered} lost").as_str()).count(), 1, "once is enough");
+    // How fast an output sends is drawn like any other number.
+    let sent = number(&harness, &sensor, "rate").rect().center();
+    drag(&mut harness, sent, chart);
+    assert!(shows(&harness, &format!("{sensor} rate")));
 
     // More charts, one under the other or side by side, each with its own numbers.
     harness.get_by_label("Add chart").click();

@@ -201,3 +201,34 @@ fn a_line_is_cut_where_it_crosses_the_edges_of_what_is_in_view() -> triq::Result
     assert_eq!(history.latest(&Connection { to: "nobody/x/y".into(), from: "nobody/a/b".into() }), None);
     Ok(())
 }
+
+#[test]
+fn an_output_gets_a_point_for_how_fast_it_sent() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name();
+    let (sensor, passed_on, spare) =
+        (format!("{robot}/imu/pose"), format!("{robot}/smoother/smooth"), format!("{robot}/spare/pose"));
+    // An output nobody hears is measured like any other.
+    let unheard: ImuPorts = scene.robot.attach("spare")?;
+    let mut history = History::default();
+    let first = scene.inventories();
+    history.record(&first);
+    assert_eq!(history.outputs().collect::<Vec<_>>(), [&sensor, &passed_on, &spare], "sorted by name");
+    assert_eq!(history.sending(&sensor), None, "one reading says nothing about the time between two");
+
+    // Thirty samples in half a second, by the robot's clock.
+    send(&scene, 30)?;
+    let second = later(&first, scene.inventories(), [HALF; 2]);
+    history.record(&second);
+    let at = second[1].taken_ns as f64 / 1e9;
+    assert_eq!((history.sending(&sensor), history.sending(&passed_on)), (Some(60.0), Some(60.0)));
+    assert_eq!(history.sending(&spare), Some(0.0));
+    assert_eq!(history.sent(&sensor, at - 1.0, at + 1.0), [(at, 60.0)], "a line for a chart, as a connection has");
+
+    // An output that is gone is no longer listed, and what it did is still there to look at.
+    drop(unheard);
+    history.record(&later(&second, scene.inventories(), [HALF; 2]));
+    assert_eq!(history.outputs().collect::<Vec<_>>(), [&sensor, &passed_on]);
+    assert_eq!(history.sent(&spare, at - 1.0, at + 1.0), [(at, 0.0)]);
+    Ok(())
+}

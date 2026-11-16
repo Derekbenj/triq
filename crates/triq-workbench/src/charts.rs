@@ -1,9 +1,9 @@
-//! The second tab: what connections did over time, drawn as charts.
+//! The second tab: what connections and outputs did over time, drawn as charts.
 //!
-//! On the left is every connection with its numbers as they stand. A number
-//! dragged onto a chart is drawn there as a line over time; several can share
-//! a chart, and there can be several charts. The top and bottom of a chart
-//! are always the largest and the smallest value in view.
+//! On the left is every connection and every output with its numbers as they
+//! stand. A number dragged onto a chart is drawn there as a line over time;
+//! several can share a chart, and there can be several charts. The top and
+//! bottom of a chart are always the largest and the smallest value in view.
 //!
 //! A chart ends at a time it is told, which the window moves on with every
 //! frame it draws: the lines slide along evenly, however often points arrive.
@@ -11,11 +11,55 @@ use crate::colors;
 use crate::history::{Connection, History, Stat};
 use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder};
 
-/// One line on a chart: one number of one connection, over time.
+/// One line on a chart: a number, over time.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Trace {
-    pub connection: Connection,
-    pub stat: Stat,
+pub enum Trace {
+    /// One number of a connection.
+    Heard { connection: Connection, stat: Stat },
+    /// How many samples a second an output sends.
+    Sent { output: String },
+}
+
+impl Trace {
+    /// What the number is called among the others of its connection or output.
+    fn word(&self) -> &'static str {
+        match self {
+            Trace::Heard { stat, .. } => stat.name(),
+            Trace::Sent { .. } => Stat::Rate.name(),
+        }
+    }
+
+    /// What the line is called on a chart.
+    fn name(&self) -> String {
+        match self {
+            Trace::Heard { connection, .. } => format!("{} {}", connection.to, self.word()),
+            Trace::Sent { output } => format!("{output} {}", self.word()),
+        }
+    }
+
+    /// What the number counts in, written after it.
+    fn unit(&self) -> &'static str {
+        match self {
+            Trace::Heard { stat, .. } => stat.unit(),
+            Trace::Sent { .. } => Stat::Rate.unit(),
+        }
+    }
+
+    /// The number as it stands.
+    fn latest(&self, history: &History) -> Option<f64> {
+        match self {
+            Trace::Heard { connection, stat } => history.latest(connection).map(|point| stat.of(point)),
+            Trace::Sent { output } => history.sending(output),
+        }
+    }
+
+    /// The number between two times: pairs of time and value, oldest first.
+    fn line(&self, history: &History, since: f64, until: f64) -> Vec<(f64, f64)> {
+        match self {
+            Trace::Heard { connection, stat } => history.line(connection, *stat, since, until),
+            Trace::Sent { output } => history.sent(output, since, until),
+        }
+    }
 }
 
 pub struct Charts {
@@ -58,10 +102,10 @@ impl Charts {
         self.charts.iter().all(Vec::is_empty)
     }
 
-    /// Draw the list of connections and the charts. `now` is the time at the
+    /// Draw the list of numbers and the charts. `now` is the time at the
     /// right edge of every chart, in seconds since 1970.
     pub fn show(&mut self, ui: &mut Ui, history: &History, now: f64) {
-        egui::Panel::left("connections").default_size(300.0).show(ui, |ui| connections(ui, history));
+        egui::Panel::left("numbers").default_size(300.0).show(ui, |ui| numbers(ui, history));
         egui::CentralPanel::default().show(ui, |ui| self.grid(ui, history, now));
     }
 
@@ -100,33 +144,43 @@ impl Charts {
     }
 }
 
-/// Every connection with its numbers as they stand. Each number can be dragged onto a chart.
-fn connections(ui: &mut Ui, history: &History) {
+/// Every connection and every output with its numbers as they stand, in
+/// order of name: what a node hears and what it sends stand together. Each
+/// number can be dragged onto a chart.
+fn numbers(ui: &mut Ui, history: &History) {
+    // What each is called, what is said under that, and its numbers.
+    let heard = history.connections().map(|connection| {
+        let numbers = Stat::ALL.map(|stat| Trace::Heard { connection: connection.clone(), stat });
+        (&connection.to, format!("from {}", connection.from), numbers.to_vec())
+    });
+    let sent =
+        history.outputs().map(|output| (output, "output".to_owned(), vec![Trace::Sent { output: output.clone() }]));
+    let mut listed: Vec<_> = heard.chain(sent).collect();
+    listed.sort_by(|a, b| a.0.cmp(b.0));
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.weak("Drag a number onto a chart to see it over time.");
         ui.separator();
-        for connection in history.connections() {
+        if listed.is_empty() {
+            ui.weak("Nothing is running.");
+        }
+        for (name, about, numbers) in listed {
             ui.vertical(|ui| {
-                ui.strong(&connection.to);
-                ui.weak(format!("from {}", connection.from));
-                let newest = history.latest(connection);
-                for stat in Stat::ALL {
-                    let trace = Trace { connection: connection.clone(), stat };
-                    let id = egui::Id::unique(("number", &connection.to, &connection.from, stat.name()));
-                    ui.dnd_drag_source(id, trace, |ui| {
+                ui.strong(name);
+                ui.weak(&about);
+                for trace in numbers {
+                    let id = egui::Id::unique(("number", name, &about, trace.word()));
+                    let value = trace.latest(history).map_or(String::new(), |value| written(value) + trace.unit());
+                    ui.dnd_drag_source(id, trace.clone(), |ui| {
                         ui.horizontal(|ui| {
                             // The values line up in a column of their own.
-                            let name = ui.label(stat.name());
-                            ui.add_space(64.0 - name.rect.width());
-                            ui.weak(newest.map_or(String::new(), |point| written(stat.of(point)) + stat.unit()));
+                            let word = ui.label(trace.word());
+                            ui.add_space(64.0 - word.rect.width());
+                            ui.weak(value);
                         });
                     });
                 }
             });
             ui.separator();
-        }
-        if history.connections().next().is_none() {
-            ui.weak("Nothing is connected.");
         }
     });
 }
@@ -147,10 +201,12 @@ fn names(ui: &mut Ui, traces: &mut Vec<Trace>, history: &History, alone: bool) -
             let (dash, _) = ui.allocate_exact_size(egui::vec2(12.0, ui.spacing().interact_size.y), Sense::hover());
             let ink = color(number, ui.visuals().dark_mode);
             ui.painter().rect_filled(Rect::from_center_size(dash.center(), egui::vec2(12.0, 3.0)), 0.0, ink);
-            let name = ui.label(format!("{} {}", trace.connection.to, trace.stat.name()));
-            name.on_hover_text(format!("from {}", trace.connection.from));
-            if let Some(point) = history.latest(&trace.connection) {
-                ui.weak(written(trace.stat.of(point)) + trace.stat.unit());
+            let name = ui.label(trace.name());
+            if let Trace::Heard { connection, .. } = trace {
+                name.on_hover_text(format!("from {}", connection.from));
+            }
+            if let Some(value) = trace.latest(history) {
+                ui.weak(written(value) + trace.unit());
             }
             if ui.small_button("×").on_hover_text("Take this line off the chart").clicked() {
                 taken_off = Some(number);
@@ -178,8 +234,7 @@ fn lines(ui: &mut Ui, traces: &[Trace], history: &History, since: f64, until: f6
     // Under the lines, a row that says what time the left and right edges are.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     let seconds = until - since;
-    let in_view = |trace: &Trace| history.line(&trace.connection, trace.stat, since, until);
-    let lines: Vec<Vec<(f64, f64)>> = traces.iter().map(in_view).collect();
+    let lines: Vec<Vec<(f64, f64)>> = traces.iter().map(|trace| trace.line(history, since, until)).collect();
     let Some((low, high)) = extent(lines.iter().flatten().map(|(_, value)| *value)) else { return };
 
     // A line along the very top or bottom is drawn whole, not cut in half by the edge.
@@ -209,8 +264,7 @@ fn lines(ui: &mut Ui, traces: &[Trace], history: &History, since: f64, until: f6
             for (trace, line) in traces.iter().zip(&lines) {
                 let nearest = line.iter().min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
                 if let Some((_, value)) = nearest.filter(|(time, _)| (time - at).abs() <= 1.0) {
-                    let (name, stat) = (&trace.connection.to, trace.stat);
-                    ui.label(format!("{name} {} {}{}", stat.name(), written(*value), stat.unit()));
+                    ui.label(format!("{} {}{}", trace.name(), written(*value), trace.unit()));
                 }
             }
             ui.weak(format!("{:.1} s ago", until - at));
