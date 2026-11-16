@@ -2,7 +2,7 @@
 //! or another runtime uses. Nothing here needs to own a node.
 use crate::control::{Caller, Reply, Request, announcements};
 use crate::raw::{IpcNode, Listener, Svc, quiet_logs};
-use crate::{Error, Inventory, Placement, Result};
+use crate::{Error, Inventory, Layout, Placement, Result};
 use iceoryx2::prelude::{CallbackProgression, Config, NodeBuilder, Service, SignalHandlingMode};
 use iceoryx2::service::static_config::messaging_pattern::MessagingPattern;
 use serde_json::Value;
@@ -109,7 +109,16 @@ impl Remote {
     pub fn inventory(&self) -> Result<Inventory> {
         match self.caller.ask(&Request::Inventory)? {
             Reply::Inventory(inventory) => Ok(*inventory),
-            Reply::Done => Err(Error::Other("the runtime answered without an inventory".into())),
+            _ => Err(Error::Other("the runtime answered without an inventory".into())),
+        }
+    }
+
+    /// Which numbers the messages of an output hold, and where: enough to
+    /// read them from the bytes of a message without having its type.
+    pub fn layout(&self, node: &str, port: &str) -> Result<Layout> {
+        match self.caller.ask(&Request::Layout { node: node.into(), port: port.into() })? {
+            Reply::Layout(layout) => Ok(layout),
+            _ => Err(Error::Other("the runtime answered without a layout".into())),
         }
     }
 

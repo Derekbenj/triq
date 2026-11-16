@@ -75,6 +75,10 @@ fn a_third_program_wires_two_others_and_the_wiring_survives_a_crash() {
         assert!(listing.contains(expected), "`triq list` shows {expected:?}:\n{listing}");
     }
 
+    // What an output carries is there for the asking, for a program that does not have its type.
+    let fields = triq(&["fields", &format!("{left}/ticks/output")]).unwrap();
+    assert!(fields.contains("value") && fields.contains("U64"), "`triq fields` lists the numbers:\n{fields}");
+
     // The producing program crashes. The consumer keeps its side of the connection.
     producer.0.kill().unwrap();
     producer.0.wait().unwrap();

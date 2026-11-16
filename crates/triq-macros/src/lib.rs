@@ -1,8 +1,11 @@
 //! `#[derive(Ports)]` turns a struct of `Input<T>` and `Output<T>` fields into a
 //! port declaration. The field name is the port name; `#[port(...)]` sets options.
+//!
+//! `#[derive(Fields)]` makes a message type list the numbers it holds: each
+//! member's own numbers, by the member's name and where it begins.
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Data, DeriveInput, Fields, parse_macro_input};
+use syn::{Data, DeriveInput, Fields, Member, parse_macro_input};
 
 const OPTIONS: [&str; 5] = ["queue", "subscribers", "hold", "reliable_ms", "depth"];
 
@@ -63,4 +66,41 @@ fn options(field: &syn::Field) -> syn::Result<proc_macro2::TokenStream> {
         })?;
     }
     Ok(quote!(::triq::PortOptions { #(#settings,)* ..::std::default::Default::default() }))
+}
+
+#[proc_macro_derive(Fields)]
+pub fn derive_fields(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_fields(&input).unwrap_or_else(|error| error.to_compile_error()).into()
+}
+
+fn expand_fields(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    let ident = &input.ident;
+    let Data::Struct(data) = &input.data else {
+        let instead = format!("Fields can only be derived for a struct; write `impl triq::Fields for {ident} {{}}`");
+        return Err(syn::Error::new_spanned(ident, instead));
+    };
+    let members = data.fields.iter().zip(data.fields.members()).map(|(field, member)| {
+        let ty = &field.ty;
+        // A member of a tuple struct is called by its place: `0`, `1`.
+        let word = match &member {
+            Member::Named(ident) => ident.to_string().trim_start_matches("r#").to_owned(),
+            Member::Unnamed(index) => index.index.to_string(),
+        };
+        quote! {
+            <#ty as ::triq::Fields>::fields(
+                &::triq::member(name, #word),
+                at + ::core::mem::offset_of!(Self, #member),
+                found,
+            );
+        }
+    });
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics ::triq::Fields for #ident #ty_generics #where_clause {
+            fn fields(name: &str, at: usize, found: &mut ::std::vec::Vec<::triq::Field>) {
+                #(#members)*
+            }
+        }
+    })
 }

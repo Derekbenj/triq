@@ -10,7 +10,7 @@ use crate::message::now_ns;
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
 use crate::raw::{IpcNode, Notifier, Svc, quiet_logs};
-use crate::{Error, Node, Placement, PortSpec, Ports, Result};
+use crate::{Error, Layout, Node, Placement, PortSpec, Ports, Result};
 use iceoryx2::prelude::{NodeBuilder, NodeName, SignalHandlingMode};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -545,6 +545,15 @@ impl Inner {
     }
 
     /// How the runtime runs a node; `None` if the application does.
+    /// The numbers inside what an output of this runtime sends.
+    pub(crate) fn layout(&self, node: &str, port: &str) -> Result<Layout> {
+        let state = self.state.lock().unwrap();
+        let outputs = state.nodes.get(node).into_iter().flat_map(|record| &record.outputs);
+        let output = outputs.into_iter().find(|(spec, _)| spec.name == port);
+        let unknown = || Error::Unknown(format!("output {node}/{port} in runtime {:?}", self.name));
+        output.map(|(_, output)| output.layout()).ok_or_else(unknown)
+    }
+
     fn hosted(&self, node: &str) -> Result<Option<Hosted>> {
         let state = self.state.lock().unwrap();
         let record =

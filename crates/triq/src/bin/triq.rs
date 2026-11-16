@@ -17,6 +17,7 @@ usage:
   triq spawn <runtime> <kind> <name> [--pool <pool>] [--params <json>]
   triq connect <runtime/node/output> <runtime/node/input>
   triq disconnect <runtime/node/output> <runtime/node/input>
+  triq fields <runtime/node/output>           the numbers inside what an output sends
   triq set <runtime/node> <json>              change a node's parameters
   triq pause <runtime/node>
   triq resume <runtime/node>
@@ -46,6 +47,7 @@ fn run(args: &[&str]) -> triq::Result {
         }
         ["connect", from, to] => triq::connect(from, to)?,
         ["disconnect", from, to] => triq::disconnect(from, to)?,
+        ["fields", output] => fields(output)?,
         ["set", node, params] => on(node, |remote, node| remote.set_params(node, serde_json::from_str(params)?))?,
         ["pause", node] => on(node, Remote::pause)?,
         ["resume", node] => on(node, Remote::resume)?,
@@ -66,6 +68,21 @@ fn watch() -> triq::Result {
         std::io::stdout().flush()?;
         watch.wait(Duration::from_secs(1))?;
     }
+}
+
+/// The numbers inside the messages of an output and inside its header: how
+/// each is stored, where it begins, and what it is called.
+fn fields(output: &str) -> triq::Result {
+    let [runtime, node, port] = output.split('/').collect::<Vec<_>>()[..] else {
+        return Err(Error::Name(format!("{output:?} is not `runtime/node/output`")));
+    };
+    let layout = Remote::open(runtime)?.layout(node, port)?;
+    for (part, fields) in [("message", layout.payload), ("header", layout.header)] {
+        for field in fields {
+            println!("{part:8} {:5} at byte {:<4} {}", format!("{:?}", field.kind), field.at, field.name);
+        }
+    }
+    Ok(())
 }
 
 /// Apply a request to `runtime/node`.

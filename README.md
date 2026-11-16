@@ -21,7 +21,7 @@ triq adds no transport of its own:
 ```rust
 use triq::prelude::*;
 
-#[derive(Debug, Clone, Copy, Default, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Pose")]
 struct Pose {
@@ -58,7 +58,9 @@ impl Node for Filter {
 ```
 
 The port struct is the whole declaration. The field names are the port names,
-and a factory advertises them without creating a node. Optional parts of `Node`:
+and a factory advertises them without creating a node. `Fields` makes the
+message say which numbers it holds, so that tools can show them ([below](#what-a-message-holds)).
+Optional parts of `Node`:
 
 | Method | Purpose |
 | --- | --- |
@@ -119,6 +121,7 @@ triq list                 # or `triq watch` to keep it on screen
 triq spawn robot filter filter_2 --pool dsp --params '{"alpha":0.5}'
 triq connect robot/imu/pose robot/filter_2/raw
 triq set robot/filter_2 '{"alpha":0.1}'
+triq fields robot/imu/pose          # the numbers inside what an output sends
 triq pause | resume | remove robot/filter_2
 ```
 
@@ -338,7 +341,7 @@ goes in a header: a second, small `#[repr(C)]` type that travels in the same
 sample, beside the data.
 
 ```rust
-#[derive(Debug, Clone, Copy, Default, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Frame")]
 struct Frame { width: u32, height: u32, number: u64 }
@@ -361,6 +364,29 @@ The header is part of the message type, shown as `u8[] + Frame`, so an input
 that expects another header, or none, is refused when it is connected. Without
 it the size would have to be packed into the first bytes of the pixels, by a
 convention each side has to know and nothing checks.
+
+## What a message holds
+
+iceoryx2 knows a message type by its name, size and alignment, and nothing of
+what is inside. A tool that was not built with the type could show only bytes.
+So every message type derives `Fields`, and lists its numbers: what each is
+called, where it begins, how it is stored.
+
+```rust
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend, Fields)]
+#[repr(C)]
+struct Reading { valid: bool, pose: Pose, at: f64 }
+// valid, pose.translation[0] ... pose.rotation[3], at
+```
+
+Members that are structs list theirs under their own name, and arrays by
+place, the first 64 of a long one. A type whose numbers cannot be listed, an
+enum for one, says so in a line: `impl Fields for Mode {}`.
+
+None of this travels with the messages. The runtime that owns an output
+answers for it: `Remote::layout("imu", "pose")` returns the list, for the
+message and for its header, and `Field::read` takes a number out of the bytes
+of a message.
 
 ## Where the code is
 

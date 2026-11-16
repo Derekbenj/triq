@@ -23,7 +23,7 @@ use triq::prelude::*;
 use triq_xbox::XboxState;
 
 /// Where something is: a position, and a rotation as an x, y, z, w quaternion.
-#[derive(Debug, Clone, Copy, PartialEq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Pose")]
 pub struct Pose {
@@ -60,7 +60,7 @@ impl Default for Pose {
 
 /// A rig's pose, and the row of points on it that cameras can be mounted on.
 /// The points are evenly spaced along the rig's own x axis, centred on the rig.
-#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Mounts")]
 pub struct Mounts {
@@ -79,7 +79,7 @@ impl Mounts {
 
 /// What a camera frame is, beside its pixels. The pixels are RGBA, 4 bytes
 /// each, row after row; this travels with them as the message's header.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Frame")]
 pub struct Frame {

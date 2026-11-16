@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use triq::prelude::*;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Pose")]
 pub struct Pose {

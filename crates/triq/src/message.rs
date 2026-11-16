@@ -4,7 +4,7 @@
 //! receiver reads it in place, so nothing is serialized and nothing is copied
 //! on the way.
 use crate::raw::{PubSub, Publisher, PublisherBuilder, RawLoan, RawSample, ServiceBuilder, Subscriber};
-use crate::{PortOptions, Result};
+use crate::{Fields, Layout, PortOptions, Result};
 use iceoryx2::port::{BackpressureAction, BackpressureInfo};
 use iceoryx2::prelude::{AllocationStrategy, BackpressureStrategy, IceoryxSend, PortName, ZeroCopySend};
 use iceoryx2::service::builder::publish_subscribe::PublishSubscribeOpenError;
@@ -24,15 +24,25 @@ pub struct Stamp {
     pub sent_ns: u64,
 }
 
+impl Stamp {
+    /// The stamp at the start of `beside`: the bytes iceoryx2 carries beside
+    /// a message, which it calls the user header. For tools that read a
+    /// message without its type. `None` if the bytes are too few.
+    pub fn read(beside: &[u8]) -> Option<Self> {
+        let number = |at: usize| Some(u64::from_ne_bytes(*beside.get(at..)?.first_chunk()?));
+        Some(Self { seq: number(0)?, sent_ns: number(8)? })
+    }
+}
+
 pub(crate) fn now_ns() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_nanos() as u64)
 }
 
 /// Data that travels with every message of a port, beside the payload: for a
 /// camera frame, its width and height. A port without one uses `()`.
-pub trait Header: Debug + Default + ZeroCopySend + 'static {}
+pub trait Header: Debug + Default + ZeroCopySend + Fields + 'static {}
 
-impl<H: Debug + Default + ZeroCopySend + 'static> Header for H {}
+impl<H: Debug + Default + ZeroCopySend + Fields + 'static> Header for H {}
 
 /// What iceoryx2 carries beside every payload: triq's stamp and the port's header.
 #[doc(hidden)]
@@ -65,7 +75,7 @@ impl Display for MessageType {
     }
 }
 
-/// A message type: any `T: ZeroCopySend`, or a slice `[T]` of it.
+/// A message type: any `T: ZeroCopySend + Fields`, or a slice `[T]` of it.
 ///
 /// iceoryx2 implements the two shapes in separate blocks. The hidden methods
 /// below are the places where that shows, so the rest of triq is written once.
@@ -77,6 +87,8 @@ pub trait Payload: Debug + ZeroCopySend + IceoryxSend + 'static {
 
     /// How a port of this message, with header `H`, is advertised.
     fn message_type<H: Header>() -> MessageType;
+    /// The numbers inside this message and inside the header `H`.
+    fn layout<H: Header>() -> Layout;
     #[doc(hidden)]
     fn publisher<H: Header>(
         service: &PubSub<Self, H>,
@@ -125,11 +137,14 @@ macro_rules! shared_hooks {
     };
 }
 
-impl<T: Debug + ZeroCopySend + 'static> Payload for T {
+impl<T: Debug + ZeroCopySend + Fields + 'static> Payload for T {
     const DEFAULT_QUEUE: usize = 32;
 
     fn message_type<H: Header>() -> MessageType {
         describe::<H>(TypeDetail::new::<T>(TypeVariant::FixedSize), false)
+    }
+    fn layout<H: Header>() -> Layout {
+        layout::<T, H>()
     }
     fn publisher<H: Header>(
         service: &PubSub<Self, H>,
@@ -141,11 +156,14 @@ impl<T: Debug + ZeroCopySend + 'static> Payload for T {
     shared_hooks!();
 }
 
-impl<T: Debug + ZeroCopySend + 'static> Payload for [T] {
+impl<T: Debug + ZeroCopySend + Fields + 'static> Payload for [T] {
     const DEFAULT_QUEUE: usize = 2;
 
     fn message_type<H: Header>() -> MessageType {
         describe::<H>(TypeDetail::new::<T>(TypeVariant::Dynamic), true)
+    }
+    fn layout<H: Header>() -> Layout {
+        layout::<T, H>()
     }
     fn publisher<H: Header>(
         service: &PubSub<Self, H>,
@@ -159,6 +177,14 @@ impl<T: Debug + ZeroCopySend + 'static> Payload for [T] {
             .create()?)
     }
     shared_hooks!();
+}
+
+/// The numbers of a `T` and of the header `H`, which iceoryx2 carries after the stamp.
+fn layout<T: Fields, H: Header>() -> Layout {
+    let (mut payload, mut header) = (Vec::new(), Vec::new());
+    T::fields("", 0, &mut payload);
+    H::fields("", std::mem::offset_of!(Headed<H>, header), &mut header);
+    Layout { payload, header }
 }
 
 fn describe<H: Header>(detail: TypeDetail, slice: bool) -> MessageType {

@@ -64,7 +64,7 @@ pub mod buttons {
 /// Sticks are raw values, -32768 to 32767, with positive Y pointing down.
 /// Triggers run from 0 to 32767. A state with `connected` false is all zeros:
 /// it tells listeners that the controller is gone.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("XboxState")]
 pub struct XboxState {

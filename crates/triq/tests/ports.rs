@@ -431,7 +431,7 @@ fn asking_about_an_input_does_not_hold_up_its_reader() -> triq::Result {
 }
 
 /// What a frame is, beside its pixels.
-#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("FrameInfo")]
 struct FrameInfo {

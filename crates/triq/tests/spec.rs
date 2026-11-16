@@ -2,7 +2,7 @@
 use triq::prelude::*;
 use triq::{Direction, MessageType, PortOptions};
 
-#[derive(Debug, Clone, Copy, PartialEq, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Pose")]
 struct Pose {

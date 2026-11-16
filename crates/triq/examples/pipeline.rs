@@ -12,7 +12,7 @@ use triq::prelude::*;
 
 /// A message: plain `#[repr(C)]` data. It is written into shared memory once
 /// and read there by every receiver.
-#[derive(Debug, Clone, Copy, Default, ZeroCopySend)]
+#[derive(Debug, Clone, Copy, Default, ZeroCopySend, Fields)]
 #[repr(C)]
 #[type_name("Pose")]
 struct Pose {

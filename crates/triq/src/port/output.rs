@@ -3,7 +3,7 @@ use super::{NodeGuard, PortOptions, PortSpec};
 use crate::inventory::OutputInfo;
 use crate::message::{Headed, now_ns};
 use crate::raw::{IpcNode, Notifier, PubSub, Publisher, RawLoan};
-use crate::{Error, Header, Payload, Result, Stamp};
+use crate::{Error, Fields, Header, Layout, Payload, Result, Stamp};
 use iceoryx2::port::SendError;
 use iceoryx2::prelude::{PortFactory, PortName, ServiceName, ZeroCopySend};
 use std::fmt::Debug;
@@ -30,6 +30,8 @@ pub struct Output<T: Payload + ?Sized, H: Header = ()> {
 /// What the runtime keeps of an output after handing it to its node.
 pub(crate) trait OutputPort: Send + Sync {
     fn info(&self, spec: &PortSpec) -> OutputInfo;
+    /// The numbers inside what it sends.
+    fn layout(&self) -> Layout;
 }
 
 pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
@@ -86,7 +88,7 @@ impl<T: Payload, H: Header> Output<T, H> {
     }
 }
 
-impl<T: Debug + ZeroCopySend + 'static, H: Header> Output<[T], H> {
+impl<T: Debug + ZeroCopySend + Fields + 'static, H: Header> Output<[T], H> {
     /// Copy `values` into shared memory once and deliver them.
     pub fn send_slice(&self, values: &[T]) -> Result<usize>
     where
@@ -220,5 +222,9 @@ impl<T: Payload + ?Sized, H: Header> OutputPort for Shared<T, H> {
             sent_ns: self.sent_ns.load(Ordering::Relaxed),
             undelivered: self.undelivered.load(Ordering::Relaxed),
         }
+    }
+
+    fn layout(&self) -> Layout {
+        T::layout::<H>()
     }
 }

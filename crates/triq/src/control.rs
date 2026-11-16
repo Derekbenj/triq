@@ -8,7 +8,7 @@
 //! unique on the machine.
 use crate::raw::{IpcNode, Listener, Notifier, Svc, any_alive};
 use crate::runtime::Inner;
-use crate::{Error, Inventory, Placement, Result};
+use crate::{Error, Inventory, Layout, Placement, Result};
 use iceoryx2::prelude::{
     AllocationStrategy, CallbackProgression, PortFactory, ServiceName, SignalHandlingMode, WaitSetBuilder,
 };
@@ -40,6 +40,7 @@ pub(crate) enum Request {
     SetParams { node: String, params: Value },
     Pause { node: String },
     Resume { node: String },
+    Layout { node: String, port: String },
     Shutdown,
 }
 
@@ -47,6 +48,7 @@ pub(crate) enum Request {
 pub(crate) enum Reply {
     Done,
     Inventory(Box<Inventory>),
+    Layout(Layout),
 }
 
 /// The one machine-wide service on which every runtime announces that it changed.
@@ -212,6 +214,7 @@ fn handle(owner: &Arc<Inner>, request: Request) -> Result<Reply> {
         Request::SetParams { node, params } => owner.set_params(&node, params)?,
         Request::Pause { node } => owner.set_paused(&node, true)?,
         Request::Resume { node } => owner.set_paused(&node, false)?,
+        Request::Layout { node, port } => return Ok(Reply::Layout(owner.layout(&node, &port)?)),
         Request::Shutdown => owner.shut_down(),
     }
     Ok(Reply::Done)

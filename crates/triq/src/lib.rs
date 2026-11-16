@@ -51,6 +51,7 @@ extern crate self as triq;
 mod control;
 mod error;
 mod executor;
+mod fields;
 mod inventory;
 mod message;
 mod node;
@@ -60,17 +61,18 @@ mod remote;
 mod runtime;
 
 pub use error::{Error, Result};
+pub use fields::{Field, Fields, Layout, Scalar, member};
 pub use inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo};
 pub use message::{Headed, Header, MessageType, Payload, Stamp};
 pub use node::{Node, Placement, Trigger};
 pub use port::{Binder, Direction, Input, Loan, Output, PortField, PortOptions, PortSpec, Ports, Sample};
 pub use remote::{Remote, Watch, connect, disconnect, discover};
 pub use runtime::{Builder, Local, LocalFactory, Runtime};
-pub use triq_macros::Ports;
+pub use triq_macros::{Fields, Ports};
 
 /// `use triq::prelude::*;` brings in everything a node needs.
 pub mod prelude {
-    // `Ports` and `ZeroCopySend` each name a trait and its derive macro.
-    pub use crate::{Error, Input, Node, Output, Placement, Ports, Result, Runtime, Sample, Trigger};
+    // `Fields`, `Ports` and `ZeroCopySend` each name a trait and its derive macro.
+    pub use crate::{Error, Fields, Input, Node, Output, Placement, Ports, Result, Runtime, Sample, Trigger};
     pub use iceoryx2::prelude::ZeroCopySend;
 }
