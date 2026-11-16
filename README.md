@@ -198,8 +198,9 @@ The `Charts` tab, beside `Graph`, shows what connections and outputs do over tim
 - An output opens to show the `numbers inside` its messages, each as it stands in the newest one:
   `translation[0]`, `header.width`, the `length` of a slice. They are dragged onto charts like the
   rest, and drawn for every message, by when it was sent.
-- A topic that another iceoryx2 program publishes is listed as well. Nobody says what is inside its
-  messages, so only the length of a slice can be drawn.
+- A topic that no triq runtime answers for is listed as well: one that another iceoryx2 program
+  publishes, or an output whose program has stopped while something still listens to it. Nobody
+  says what is inside its messages, so only the length of a slice can be drawn.
 - Drag a number onto a chart and it is drawn there as a line. Several numbers can share a chart, and
   `Add chart` and `Charts side by side` arrange as many charts as wanted in rows and columns.
 - `Show the last` sets how many seconds of the past every chart shows, up to the hour that is kept.

@@ -189,11 +189,12 @@ fn numbers(ui: &mut Ui, recorded: Recorded<'_>) -> BTreeSet<String> {
     let sent = outputs
         .iter()
         .map(|output| ((*output).clone(), "output".to_owned(), vec![Trace::Sent { output: (*output).clone() }], true));
-    // A topic that is no output of a triq runtime has nobody to count for it.
+    // A topic that no runtime reports has nobody to count for it: another program's,
+    // or an output whose program stopped while something still listens to it.
     let topics = signals.topics();
     let others = topics.iter().filter(|topic| !outputs.contains(&topic.name)).map(|topic| {
         let carried = format!("{}{}", topic.message, if topic.slice { "[]" } else { "" });
-        (topic.name.clone(), format!("a topic of another program: {carried}"), Vec::new(), true)
+        (topic.name.clone(), format!("a topic no runtime answers for: {carried}"), Vec::new(), true)
     });
     let mut listed: Vec<_> = heard.chain(sent).chain(others).collect();
     listed.sort_by(|a, b| a.0.cmp(&b.0));
@@ -235,7 +236,7 @@ fn inside(ui: &mut Ui, signals: &Signals, topic: &str) {
     if let Some(problem) = &watched.problem {
         ui.weak(problem);
     } else if watched.numbers.is_empty() {
-        ui.weak("Its sender does not say what is inside.");
+        ui.weak("Nobody says what is inside.");
     }
     for (name, value) in watched.numbers {
         number(ui, Trace::Inside { topic: topic.to_owned(), number: name }, value.map_or(String::new(), written));
