@@ -4,6 +4,9 @@ description = "#[derive(Ports)] for triq"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["triq", "derive"]
 
 [lib]
 proc-macro = true

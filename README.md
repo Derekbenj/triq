@@ -20,19 +20,14 @@ triq adds no transport of its own:
 
 ```toml
 [dependencies]
-triq = { git = "ssh://git@github.com/Derekbenj/triq.git" }
+triq = "0.1"
 # Only for a program that draws the project's own views of its messages:
-triq-views = { git = "ssh://git@github.com/Derekbenj/triq.git" }
-# Only for a program that draws the workbench in its own window:
-triq-workbench = { git = "ssh://git@github.com/Derekbenj/triq.git" }
-```
+triq-views = "0.1"
 
-That is all. triq needs a fork of iceoryx2 that carries fixes for macOS, and
-its own manifest names the commit, so Cargo fetches the fork for whoever
-depends on triq; a project needs no `[patch]` section and no checkout. The
-repository is private: Cargo has to fetch it with your own git and SSH keys,
-which it does with `net.git-fetch-with-cli = true` in `.cargo/config.toml`.
-Keep the project's `Cargo.lock`; it records the commit of triq that was built.
+# On macOS, this as well: see "Platforms" below.
+[patch.crates-io]
+iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
+```
 
 A project that only writes nodes depends on `triq` alone, and builds no
 window code. `#[derive(ZeroCopySend)]` comes with `triq::prelude`, so a
@@ -42,10 +37,43 @@ project does not name iceoryx2 itself.
 | --- | --- |
 | `triq` | the library, and the `triq` command-line tool |
 | `triq-macros` | `#[derive(Ports)]` and `#[derive(Fields)]`; comes with `triq` |
-| `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own |
 | `triq-views` | a window for a project's own views of its messages; see [Views of your own](#views-of-your-own) |
 | `triq-tap` | reads any iceoryx2 topic as bytes; the workbench uses it, and it holds the only `unsafe` |
-| `triq-bench` | the benchmarks under [Measurements](#measurements) |
+| `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own. Not on crates.io; see [The workbench](#the-workbench) |
+| `triq-bench` | the benchmarks under [Measurements](#measurements). Not on crates.io |
+
+### Platforms
+
+| System | Where triq stands |
+| --- | --- |
+| macOS | Written and tested here. Needs the `[patch.crates-io]` section above. |
+| Linux | Not run yet. triq has no code of its own for any one system and iceoryx2 is at home on Linux, so it is expected to work; nobody has seen it do so. |
+| Windows | Not run yet. |
+
+**Why macOS needs the section.** A crate on crates.io may only build on
+crates that are there, so the published triq builds on the released iceoryx2
+0.10.0. On macOS that release keeps several files open for every port, and
+waits on them with `select`, which cannot take a file numbered 1024 or more.
+A chain of nodes, each with one input and one output, went this far:
+
+| | iceoryx2 0.10.0 as released | with the section |
+| --- | --- | --- |
+| the usual limit of 256 open files | 10 ports; then `PublishSubscribeOpenError::InternalFailure` | 200 ports; the limit itself is met before 300 |
+| the limit raised (`ulimit -n`) | 60 ports; then the program is stopped: `fd … out of range: valid fds are 0..FD_SETSIZE` | 600 ports, and no end was looked for |
+
+The section puts [a fork](https://github.com/Derekbenj/iceoryx2) of that
+release in its place, which is the release and four fixes. Two stop it holding
+files open; iceoryx2 has merged those since, for its next release. Two are the
+fork's own: the range of `select` is checked, and macOS waits with kqueue. The
+section goes in the `Cargo.toml` of the program that is built, or of its
+workspace. Cargo reads it nowhere else, which is why triq cannot bring it along.
+
+A project that depends on triq by its git address needs no section, because
+there triq names the fork itself:
+
+```toml
+triq = { git = "https://github.com/Derekbenj/triq" }
+```
 
 ## A node
 
@@ -153,7 +181,9 @@ that owns the node, and a refusal comes back as the same error it would raise
 locally. Opening a runtime costs many times what asking it something does, so
 a thread keeps the runtimes it has opened: `Remote::open` and `discover` are
 cheap from the second time on, and a runtime that stopped or started again is
-noticed. The `triq` command-line tool does the same from a terminal:
+noticed. The `triq` command-line tool does the same from a terminal. It is
+installed with `cargo install triq`; on macOS, add `--locked --git https://github.com/Derekbenj/triq`,
+which builds it on the fork:
 
 ```text
 triq list                 # or `triq watch` to keep it on screen
@@ -167,8 +197,15 @@ triq pause | resume | remove robot/filter_2
 ## The workbench
 
 ```sh
-cargo run -p triq-workbench
+cargo install --locked --git https://github.com/Derekbenj/triq triq-workbench
+triq-workbench
 ```
+
+In a checkout of this repository, `cargo run -p triq-workbench` is the same.
+The workbench is not on crates.io: its graph is drawn with egui-snarl, which
+has no release for egui 0.37 yet, so it builds on a fork that has. `--locked`
+builds it with the versions it was tested with. To draw it in a window of
+your own, depend on `triq-workbench` by the same git address.
 
 Run it and it shows every runtime on the machine: their pools, the kinds of
 node they offer, their nodes as cards, and their connections as wires. It owns
@@ -540,19 +577,20 @@ Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements
 
-`triq-bench` reproduces the shape of zegra's saved benchmarks: the same node
-counts, rates, sizes, pairing and 200 µs deadline. It is a new program, not
-zegra's harness, and each line is a single run on a desktop that was not idle
-(Apple M5, macOS 27, release build, AC power). Latency is from just before a
-node hands a message to its output until the receiving node has it.
+`triq-bench` has two loads. `hop` is one node sending to one node in another
+process. `mesh` is pairs of nodes sending to each other, in pools of threads
+that are all in one process or each in a process of their own; a message that
+takes longer than 200 µs is late. Each line is a single run on a desktop that
+was not idle (Apple M5, macOS 27, release build, AC power). Latency is from
+just before a node hands a message to its output until the receiving node has it.
 
-| Workload | zegra (saved reports) | triq |
-| --- | --- | --- |
-| Two processes, 128 bytes at 10 kHz, 30 s | p50 17, p99 34, max 2,736 µs; 3 lost | p50 5, p99 8, max 105 µs; 0 lost |
-| 30 nodes at 5 kHz, one process, 3 pools of 10, 60 s | through IPC: p50 2.19 s, 55% lost. With its direct path: p50 10, p99 88, max 6,551 µs; 15,211 late | p50 7, p99 26, max 439 µs; 0 lost; 9 late |
-| Same, 5 pools of 6 | direct path: p50 11, p99 53, max 1,143 µs; 1,128 late | p50 7, p99 24, max 126 µs; 0 lost; 0 late |
-| Same, 3 processes of 10 threads | p50 996, p99 70,300 µs; 321,774 lost | 0 lost in two runs. One: p50 7, p99 22, max 1,958 µs, 317 late. The other, which generated only 98.7% of its nominal rate: p50 7, p99 47, max 33,798 µs, 21,041 late |
-| Same, 5 processes of 6 threads | p50 94, p99 692, max 10,182 µs; 53 lost | p50 7, p99 19, max 212 µs; 0 lost; 2 late |
+| Workload | Result |
+| --- | --- |
+| Two processes, 128 bytes at 10 kHz, 30 s | p50 5, p99 8, max 105 µs; 0 lost |
+| 30 nodes at 5 kHz, one process, 3 pools of 10, 60 s | p50 7, p99 26, max 439 µs; 0 lost; 9 late |
+| Same, 5 pools of 6 | p50 7, p99 24, max 126 µs; 0 lost; 0 late |
+| Same, 3 processes of 10 threads | 0 lost in two runs. One: p50 7, p99 22, max 1,958 µs, 317 late. The other, which generated only 98.7% of its nominal rate: p50 7, p99 47, max 33,798 µs, 21,041 late |
+| Same, 5 processes of 6 threads | p50 7, p99 19, max 212 µs; 0 lost; 2 late |
 
 Other findings:
 
@@ -572,7 +610,8 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 - Anything across the network.
 - The workbench does not remember where cards were placed in the graph between runs.
 - Serde-encoded messages as a convenience next to `#[repr(C)]` data.
-- Tested on macOS only. Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
+- Linux and Windows: see [Platforms](#platforms).
+- Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 
 ## Build and test
 
@@ -584,5 +623,9 @@ cargo run --example pipeline      # one process
 cargo run --example station -- left   # then see the top of examples/station.rs
 ```
 
-triq depends on a pinned commit of the iceoryx2 fork that carries the macOS
-file-descriptor and kqueue fixes; see the workspace `Cargo.toml`.
+In this repository triq builds on the iceoryx2 fork, at the commit that the
+workspace `Cargo.toml` names; see [Platforms](#platforms).
+
+## License
+
+[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.

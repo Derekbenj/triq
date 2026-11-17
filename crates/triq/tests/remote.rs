@@ -300,7 +300,7 @@ fn a_large_inventory_is_not_cut_off() -> triq::Result {
     let _nodes: Vec<Bench> = (0..150).map(|i| rt.attach(&format!("node{i}"))).collect::<triq::Result<_>>()?;
     let inventory = Remote::open(rt.name())?.inventory()?;
     assert_eq!(inventory.nodes.len(), 150);
-    assert!(serde_json::to_vec(&inventory).unwrap().len() > 64 * 1024, "larger than zegra's control limit");
+    assert!(serde_json::to_vec(&inventory).unwrap().len() > 64 * 1024, "the report is larger than 64 KiB");
     Ok(())
 }
 

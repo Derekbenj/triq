@@ -4,6 +4,10 @@ description = "Nodes, factories and runtimes on top of iceoryx2"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["ipc", "zero-copy", "shared-memory", "robotics", "iceoryx2"]
+categories = ["concurrency", "science::robotics"]
 
 [dependencies]
 iceoryx2.workspace = true

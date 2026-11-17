@@ -4,6 +4,10 @@ description = "A window for a project's own views of its messages, each in a pan
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["triq", "egui", "gui", "ipc", "visualization"]
+categories = ["gui", "visualization"]
 
 [features]
 default = ["window"]
@@ -12,7 +16,7 @@ default = ["window"]
 window = ["dep:eframe"]
 
 [dependencies]
-triq = { path = "../triq" }
+triq.workspace = true
 egui = "=0.37.0"
 # Gives every view a pane, which is put down beside others, in with them, or in their place.
 egui_tiles = { version = "=0.18.0", default-features = false, features = ["serde"] }

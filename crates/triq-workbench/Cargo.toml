@@ -4,11 +4,15 @@ description = "See the runtimes on this machine as a graph, and rewire them"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+# Installed from this repository, not from crates.io: the graph is drawn with egui-snarl,
+# which has no release for egui 0.37 yet.
+publish = false
 
 [dependencies]
-triq = { path = "../triq" }
+triq.workspace = true
 # Reads topics as bytes, for the numbers inside messages whose type the workbench was not built with.
-triq-tap = { path = "../triq-tap" }
+triq-tap.workspace = true
 # With what it takes to keep the window and its arrangement from one run to the next.
 eframe = { version = "=0.37.0", features = ["persistence"] }
 # The fork carries the egui 0.37 port and the wire and menu behaviour the graph relies on.
@@ -16,7 +20,7 @@ egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5
 # Lays the windows and the charts out as panes, which are resized and dragged about.
 egui_tiles = { version = "=0.18.0", default-features = false, features = ["serde"] }
 # The rules that panes are arranged by, shared with the windows that projects make for their views.
-triq-views = { path = "../triq-views", default-features = false }
+triq-views.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

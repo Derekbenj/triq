@@ -4,9 +4,13 @@ description = "Read any iceoryx2 topic as bytes, without having its type"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["iceoryx2", "ipc", "shared-memory", "introspection"]
+categories = ["development-tools::debugging"]
 
 [dependencies]
 iceoryx2.workspace = true
 
 [dev-dependencies]
-triq = { path = "../triq" }
+triq.workspace = true

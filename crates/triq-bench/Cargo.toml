@@ -1,12 +1,13 @@
 [package]
 name = "triq-bench"
-description = "Benchmarks shaped like zegra's, for comparison on one machine"
+description = "Latency and loss: one hop between two processes, and a mesh of nodes in pools or processes"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-triq = { path = "../triq" }
+triq.workspace = true

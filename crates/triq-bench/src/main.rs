@@ -1,4 +1,4 @@
-//! Benchmarks shaped like zegra's saved ones, so the two can be compared on one machine.
+//! Latency and loss under two loads: one hop between two processes, and a mesh of nodes.
 //!
 //! ```text
 //! triq-bench hop  [--rate 10000] [--bytes 128] [--seconds 10] [--loan]

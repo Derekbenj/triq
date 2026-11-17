@@ -6,12 +6,20 @@ members = ["crates/*"]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/Derekbenj/triq"
+readme = "README.md"
 
 [workspace.dependencies]
-# The patched fork carries the macOS file-descriptor and kqueue fixes.
-iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
+# Built here, and by whoever depends on triq by its git address, on a fork of iceoryx2 0.10.0
+# that carries fixes for macOS. A crate on crates.io may only name crates that are there, so
+# the published triq names the release; see "Platforms" in the README.
+iceoryx2 = { version = "0.10.0", git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-triq-macros = { path = "crates/triq-macros" }
+# The crates of this repository: built from the path here, asked for by version on crates.io.
+triq = { path = "crates/triq", version = "0.1.0" }
+triq-macros = { path = "crates/triq-macros", version = "0.1.0" }
+triq-tap = { path = "crates/triq-tap", version = "0.1.0" }
+triq-views = { path = "crates/triq-views", version = "0.1.0", default-features = false }
 # Drives the workbench's window code in its tests, without opening a window.
 egui_kittest = { version = "=0.37.0", features = ["wgpu", "snapshot"] }
