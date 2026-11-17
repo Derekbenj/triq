@@ -4012,7 +4012,7 @@ dependencies = [
 
 [[package]]
 name = "triq"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iceoryx2",
  "serde",
@@ -4022,7 +4022,7 @@ dependencies = [
 
 [[package]]
 name = "triq-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4031,7 +4031,7 @@ dependencies = [
 
 [[package]]
 name = "triq-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4040,7 +4040,7 @@ dependencies = [
 
 [[package]]
 name = "triq-tap"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "iceoryx2",
  "triq",
@@ -4048,7 +4048,7 @@ dependencies = [
 
 [[package]]
 name = "triq-views"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
@@ -4061,7 +4061,7 @@ dependencies = [
 
 [[package]]
 name = "triq-workbench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui-snarl",
