@@ -34,6 +34,9 @@
 //! workbench, or any other tool, lists the kinds, creates views and wires them
 //! like any other node. Nothing here is known to triq or to the workbench.
 //!
+//! `examples/template.rs` is such a program, complete, with something to
+//! look at as soon as it runs: `cargo run -p triq-views --example template`.
+//!
 //! - [`run`] is the whole program: it starts the runtime it is given, and the window, which also
 //!   remembers how the views were arranged.
 //! - [`Views`] is what `run` hands over to be told the kinds: the list of views and their panes.

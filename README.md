@@ -361,6 +361,15 @@ fn degrees(ui: &mut egui::Ui, reading: &Reading) {
 }
 ```
 
+A program like it, complete and with something to look at as soon as it
+runs, is `crates/triq-views/examples/template.rs`: a thermometer, a kind of
+view that shows what it reads, and one such view already wired. Copy it to
+start a views program of your own.
+
+```sh
+cargo run -p triq-views --example template
+```
+
 `run` starts the runtime it is given, opens the window, and hands over `views`
 to be told the kinds. Each kind offers its nodes on `views.runtime()`. The
 runtime is the project's to shape, as for any program: one whose views do
@@ -433,7 +442,7 @@ this one. They depend on triq the way any project does.
 | --- | --- |
 | `triq-xbox` | a device as a node; which device is a setting, not a wire; a view of a small message, in one call |
 | `triq-bevy` | nodes inside an engine's own loop; large frames with a header; a view whose nodes the runtime runs |
-| `triq-demo` | a views program, and the template for one: those two kinds of view and one of its own, in 46 lines |
+| `triq-demo` | a views program with real things to show: those two kinds of view and one of its own, in 46 lines |
 
 ## Delivery
 
