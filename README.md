@@ -24,14 +24,14 @@ triq = "0.1"
 # Only for a program that draws the project's own views of its messages:
 triq-views = "0.1"
 
-# On macOS, this as well: see "Platforms" below.
+# On macOS, add this section as well; "Platforms" below says why.
 [patch.crates-io]
 iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 ```
 
-A project that only writes nodes depends on `triq` alone, and builds no
-window code. `#[derive(ZeroCopySend)]` comes with `triq::prelude`, so a
-project does not name iceoryx2 itself.
+If a project has only nodes, it depends on `triq` alone and builds no window
+code. `#[derive(ZeroCopySend)]` comes with `triq::prelude`, so a project never
+needs iceoryx2 as a dependency of its own.
 
 | Crate | What it is |
 | --- | --- |
