@@ -40,7 +40,6 @@ needs iceoryx2 as a dependency of its own.
 | `triq-views` | a window for a project's own views of its messages; see [Views of your own](#views-of-your-own) |
 | `triq-tap` | reads any iceoryx2 topic as bytes; the workbench uses it, and it holds the only `unsafe` code |
 | `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own. Not on crates.io; see [The workbench](#the-workbench) |
-| `triq-bench` | the benchmarks under [Measurements](#measurements). Not on crates.io |
 
 ### Platforms
 
@@ -587,13 +586,14 @@ Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements
 
-`triq-bench` has two workloads. `hop` is one node sending to one node in
-another process. `mesh` is pairs of nodes sending to each other, in pools of
-threads that are either all in one process or each in a process of its own; a
-message that takes longer than 200 µs counts as late. Each row is a single run
-on a desktop that was not idle (Apple M5, macOS 27, release build, AC power).
-Latency is measured from just before a node hands a message to its output
-until the receiving node has it.
+These numbers come from the benchmark program in this repository,
+`crates/triq-bench`, which is not a crate to depend on. It has two workloads.
+`hop` is one node sending to one node in another process. `mesh` is pairs of
+nodes sending to each other, in pools of threads that are either all in one
+process or each in a process of its own; a message that takes longer than
+200 µs counts as late. Each row is a single run on a desktop that was not idle
+(Apple M5, macOS 27, release build, AC power). Latency is measured from just
+before a node hands a message to its output until the receiving node has it.
 
 | Workload | Result |
 | --- | --- |
