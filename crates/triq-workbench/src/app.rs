@@ -17,7 +17,7 @@
 use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
-use crate::graph::{self, Card};
+use crate::graph::{self, Card, Place, Places};
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
@@ -44,6 +44,9 @@ const LAYOUT: &str = "layout";
 struct Kept {
     windows: Tree<Window>,
     charts: Charts,
+    /// Where cards were. A layout from before cards were remembered has none.
+    #[serde(default)]
+    cards: Places,
 }
 
 /// One of the windows within the window.
@@ -80,6 +83,8 @@ struct Contents {
     inventories: Arc<Vec<Inventory>>,
     rates: Arc<Rates>,
     snarl: Snarl<Card>,
+    /// Where every card is, and where the cards of programs that are not running were.
+    places: Places,
     colors: Colors,
     charts: Charts,
     focus: Focus,
@@ -117,6 +122,7 @@ impl Workbench {
             inventories: Arc::default(),
             rates: Arc::default(),
             snarl: Snarl::new(),
+            places: Places::new(),
             colors: Colors::default(),
             charts: Charts::default(),
             focus: Focus::Nothing,
@@ -144,18 +150,27 @@ impl Workbench {
     /// How the windows and the charts are arranged, and what is on the
     /// charts, to be handed to [`Workbench::arrange`] by the next run.
     pub fn layout(&self) -> String {
-        serde_json::json!({ "windows": self.windows, "charts": self.contents.charts }).to_string()
+        let cards = graph::remembered(&self.contents.places);
+        serde_json::json!({ "windows": self.windows, "charts": self.contents.charts, "cards": cards }).to_string()
     }
 
     /// Be as [`Workbench::layout`] said the workbench was. A number on a chart
-    /// is known by what it is called: it is drawn when something of those
-    /// names is running, and waits until then. What cannot be read as a
-    /// layout changes nothing.
+    /// and a card in the graph are known by what they are called: the number
+    /// is drawn, and the card is where it was, when something of those names
+    /// is running, and they wait until then. What cannot be read as a layout
+    /// changes nothing.
     pub fn arrange(&mut self, layout: &str) {
-        let Ok(Kept { windows, charts }) = serde_json::from_str(layout) else { return };
+        let Ok(Kept { windows, charts, cards }) = serde_json::from_str(layout) else { return };
         // Whatever wrote it, a workbench has its four windows and a chart.
         if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) && charts.has_a_chart() {
             (self.windows, self.contents.charts) = (windows, charts);
+            // A card that is on the drawing already goes where it was, too.
+            for (_, drawn) in self.contents.snarl.nodes_ids_data_mut() {
+                if let Some(Place { at: [x, y], .. }) = cards.get(&drawn.value.key()) {
+                    drawn.pos = egui::pos2(*x, *y);
+                }
+            }
+            self.contents.places = cards;
         }
     }
 
@@ -297,7 +312,8 @@ impl Contents {
     /// Take what the runtimes last reported, and bring the drawing in line with it.
     fn refresh(&mut self) {
         (self.inventories, self.rates) = (self.feed.inventories(), self.feed.rates());
-        graph::sync(&mut self.snarl, &self.inventories);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+        graph::sync_with(&mut self.snarl, &self.inventories, &mut self.places, now);
         self.colors.update(self.inventories.iter().map(|inventory| inventory.runtime.as_str()));
         if let Focus::Node { key, .. } = &self.focus
             && !self.snarl.nodes().any(|card| card.key() == *key)
@@ -382,6 +398,8 @@ impl Contents {
             ui.horizontal(|ui| {
                 if ui.small_button("Tidy").on_hover_text("Lay the nodes out again, by what feeds what").clicked() {
                     graph::tidy(&mut self.snarl);
+                    // Laid out afresh, the cards are where they belong now: where they were put is forgotten.
+                    self.places.clear();
                     self.fit = true;
                 }
                 self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();

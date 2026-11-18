@@ -135,3 +135,71 @@ fn the_workbench_is_as_it_was_when_it_was_last_closed() -> triq::Result {
     assert!(arranged(&harness) == before && shows(&harness, &rate));
     Ok(())
 }
+
+/// Where on screen the text of a port is, on the card that is at `place` in the graph.
+fn port_on(harness: &Bench<'_>, place: egui::Pos2, port: &str) -> egui::Pos2 {
+    let on_card = |written: &egui::Rect| written.left() >= place.x && written.top() >= place.y;
+    let nearest = |written: &egui::Rect| (written.left_top() - place).length();
+    let found = harness.query_all_by_role_and_label(Role::Label, port).map(|text| text.rect()).filter(on_card);
+    let written = found.min_by(|a, b| nearest(a).total_cmp(&nearest(b))).expect("the port is written on the card");
+    view(harness) * written.center()
+}
+
+#[test]
+fn a_card_is_where_it_was_put_when_its_program_runs_again() -> triq::Result {
+    // A program with a sensor, under a name it will have again when it runs the next time.
+    let robot = format!("w{}-cards", std::process::id());
+    let start = || -> triq::Result<(Runtime, ImuPorts)> {
+        let runtime = Runtime::new(&robot)?;
+        let imu = runtime.attach("imu")?;
+        Ok((runtime, imu))
+    };
+    let place = |harness: &Bench<'_>| {
+        let mut cards = harness.state().graph().nodes_pos();
+        cards.find(|(_, card)| card.runtime == robot && card.node.name == "imu").map(|found| found.0)
+    };
+    let (runtime, imu) = start()?;
+    let mut harness = open()?;
+    assert!(until(&mut harness, |harness| place(harness).is_some()), "its card appears");
+    harness.run_steps(4);
+
+    // The user drags the card somewhere else, by the text of its port.
+    let was = place(&harness).unwrap();
+    let port = port_on(&harness, was, "pose: Pose");
+    drag(&mut harness, port, port + egui::vec2(150.0, 110.0));
+    harness.run_steps(3);
+    let put = place(&harness).unwrap();
+    assert!((put - was).length() > 100.0, "the card moved, from {was:?} to {put:?}");
+
+    // The workbench says how it is, to be kept. Then it closes, and so does the program.
+    let layout = harness.state().layout();
+    drop((harness, imu, runtime));
+
+    // The next run, told how it was. The program is not running: there is no card.
+    let mut harness = open()?;
+    harness.state_mut().arrange(&layout);
+    assert!(until(&mut harness, |harness| place(harness).is_none()));
+    // It runs again, and its card is where the user put it.
+    let (runtime, imu) = start()?;
+    assert!(until(&mut harness, |harness| place(harness).is_some()), "its card appears again");
+    assert_eq!(place(&harness), Some(put));
+
+    // `Tidy` lays every card out afresh, and forgets where cards were put.
+    harness.get_by_label("Tidy").click();
+    harness.run_steps(3);
+    let tidied = place(&harness).unwrap();
+    assert_ne!(tidied, put);
+    drop((imu, runtime));
+    assert!(until(&mut harness, |harness| place(harness).is_none()));
+    let (_runtime, _imu) = start()?;
+    assert!(until(&mut harness, |harness| place(harness).is_some()));
+    assert_ne!(place(&harness), Some(put), "it is not put back where it was before the tidying");
+
+    // A layout from before cards were remembered is taken as it is, with no cards.
+    let mut older: serde_json::Value = serde_json::from_str(&layout).expect("a layout is JSON");
+    assert!(older.as_object_mut().unwrap().remove("cards").is_some(), "cards are part of what is kept");
+    harness.state_mut().arrange(&older.to_string());
+    harness.run_steps(3);
+    assert_eq!(arranged(&harness).iter().flatten().count(), 5, "the four windows and a chart are there");
+    Ok(())
+}

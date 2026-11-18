@@ -227,8 +227,8 @@ begin with, the first three are side by side and the charts are under them.
 - The cross beside a name closes the window. The row along the top lists every window; click a
   name there to open or close it. A window that is opened again returns to where it was.
 - The workbench opens as it was when it last closed: the size and place of its window, how the
-  four windows and the charts are arranged, which of them are open, and what is on each chart. It
-  saves this from time to time, and when it closes.
+  four windows and the charts are arranged, which of them are open, what is on each chart, and
+  where the cards were put in the graph. It saves this from time to time, and when it closes.
 
 ### Arranging panes
 
@@ -266,6 +266,9 @@ In `Runtimes`, `Graph` and `Details`:
 - Drag a card by any part of it to move it, scroll to move the view, and pinch to zoom. `Fit`
   brings every card back into view and `Tidy` lays the cards out again. When the graph's window is
   moved or resized, whatever was in its middle stays in the middle.
+- A card stays where it is put. It is known by the names of its runtime and node: when its program
+  stops and runs again, also in a later run of the workbench, the card is back in its place. `Tidy`
+  forgets where cards were put. The places of the last 500 cards are kept.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
 - Beside every pin is the rate of what passes through it, such as `120/s`, or `0/s` when nothing
   does: what a node takes in is on its left, and what it sends is on its right. `Details` adds how
@@ -622,8 +625,6 @@ cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [
 ## Not there yet
 
 - Anything across the network.
-- The workbench does not remember where cards were placed in the graph between runs.
-- Serde-encoded messages as a convenience next to `#[repr(C)]` data.
 - Linux and Windows: see [Platforms](#platforms).
 - Requests are served one at a time, so a slow `Node::new` delays other requests to that runtime.
 

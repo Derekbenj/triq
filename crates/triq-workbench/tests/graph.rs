@@ -4,8 +4,8 @@ mod scene;
 use scene::*;
 use std::time::Duration;
 use triq::prelude::*;
-use triq_workbench::egui::Rect;
-use triq_workbench::graph::{self, Card, Reading};
+use triq_workbench::egui::{Rect, pos2};
+use triq_workbench::graph::{self, Card, Place, Places, Reading};
 use triq_workbench::snarl::Snarl;
 
 #[derive(Ports)]
@@ -279,4 +279,50 @@ fn a_rate_is_timed_by_when_the_samples_were_sent() -> triq::Result {
         triq_workbench::history::Connection { to: format!("{robot}/smoother/raw"), from: format!("{robot}/imu/pose") };
     assert!((history.latest(&filtered).expect("a point").rate - 60.0).abs() < 1e-6);
     Ok(())
+}
+
+#[test]
+fn a_card_that_comes_back_is_put_where_it_was() -> triq::Result {
+    let scene = Scene::new()?;
+    let (mut snarl, mut places) = (Snarl::new(), Places::new());
+    graph::sync_with(&mut snarl, &scene.inventories(), &mut places, 100);
+    let position = |snarl: &Snarl<Card>, name: &str| {
+        snarl.nodes_pos().find(|(_, card)| card.node.name == name).map(|found| found.0)
+    };
+    let laid_out = position(&snarl, "imu").unwrap();
+
+    // The user moves the smoother's card.
+    let put = pos2(700.0, 420.0);
+    for (_, drawn) in snarl.nodes_ids_data_mut().filter(|(_, drawn)| drawn.value.node.name == "smoother") {
+        drawn.pos = put;
+    }
+    // The robot's program stops: its cards go, and where they were is remembered.
+    graph::sync_with(&mut snarl, &[scene.desk.inventory()], &mut places, 200);
+    assert_eq!(position(&snarl, "smoother"), None);
+    let smoother = format!("{}/smoother", scene.robot.name());
+    assert_eq!(places[&smoother], Place { at: [700.0, 420.0], seen: 200 });
+
+    // It runs again. The card is where the user put it, and a card that was never moved is where it was.
+    graph::sync_with(&mut snarl, &scene.inventories(), &mut places, 300);
+    assert_eq!((position(&snarl, "smoother"), position(&snarl, "imu")), (Some(put), Some(laid_out)));
+    assert_eq!(places[&smoother].seen, 300, "and it was seen again just now");
+
+    // A node that was never there before is laid out as always.
+    scene.robot.spawn_kind("filter", "late", triq::Placement::Dedicated, serde_json::json!(null))?;
+    graph::sync_with(&mut snarl, &scene.inventories(), &mut places, 400);
+    assert!(position(&snarl, "late").is_some_and(|place| place != put));
+    Ok(())
+}
+
+#[test]
+fn only_the_cards_seen_last_are_remembered() {
+    // Programs come and go under names that are never used again; their cards are not kept for ever.
+    let place = |seen| Place { at: [seen as f32, 0.0], seen };
+    let places: Places =
+        (0..graph::REMEMBERED as u64 + 10).map(|seen| (format!("run{seen}/imu"), place(seen))).collect();
+    let kept = graph::remembered(&places);
+    assert_eq!(kept.len(), graph::REMEMBERED);
+    assert!(!kept.contains_key("run0/imu") && !kept.contains_key("run9/imu"), "the oldest ten are let go");
+    assert!(kept.contains_key("run10/imu") && kept.contains_key(&format!("run{}/imu", graph::REMEMBERED + 9)));
+    assert_eq!(graph::remembered(&kept), kept, "what fits is kept as it is");
 }

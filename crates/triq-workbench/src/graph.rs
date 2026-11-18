@@ -2,6 +2,8 @@
 //! per live connection. Nothing here talks to a runtime or to the screen.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, OutPinId, Snarl};
+use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use triq::{Direction, Inventory, NodeInfo, PortSpec};
 
@@ -45,8 +47,43 @@ impl Card {
     }
 }
 
+/// Where a card is on the drawing, and when it was last there, in seconds since 1970.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Place {
+    pub at: [f32; 2],
+    pub seen: u64,
+}
+
+/// Where cards are and were, by `runtime/node`. A node is known by what it is
+/// called: when a program runs again, its cards are where they were.
+pub type Places = BTreeMap<String, Place>;
+
+/// How many cards are remembered from one run of the workbench to the next.
+/// Programs come and go under names that are never used again, and their
+/// cards are not kept for ever.
+pub const REMEMBERED: usize = 500;
+
+/// What is kept of `places` from one run to the next: the cards seen last.
+pub fn remembered(places: &Places) -> Places {
+    let mut newest: Vec<(&String, &Place)> = places.iter().collect();
+    newest.sort_by_key(|(_, place)| Reverse(place.seen));
+    newest.into_iter().take(REMEMBERED).map(|(key, place)| (key.clone(), *place)).collect()
+}
+
 /// Make the drawing match the machine. Cards keep the places the user gave them.
 pub fn sync(snarl: &mut Snarl<Card>, inventories: &[Inventory]) {
+    sync_with(snarl, inventories, &mut Places::new(), 0);
+}
+
+/// Make the drawing match the machine, with a memory of where cards were: a
+/// card that is new to the drawing goes where `places` has it, if it was
+/// there before. `places` is brought up to date with where every card is at
+/// `now`, in seconds since 1970.
+pub fn sync_with(snarl: &mut Snarl<Card>, inventories: &[Inventory], places: &mut Places, now: u64) {
+    // Where every card is, noted before any of them goes.
+    for (place, card) in snarl.nodes_pos() {
+        places.insert(card.key(), Place { at: [place.x, place.y], seen: now });
+    }
     let mut reported: BTreeMap<String, Card> = inventories
         .iter()
         .flat_map(|inventory| {
@@ -72,7 +109,11 @@ pub fn sync(snarl: &mut Snarl<Card>, inventories: &[Inventory]) {
 
     // What is left is new.
     for card in sources_first(reported.into_values().collect()) {
-        let place = place(&snarl.nodes_pos().collect::<Vec<_>>(), &card);
+        let place = match places.get(&card.key()) {
+            Some(Place { at: [x, y], .. }) => pos2(*x, *y),
+            None => place(&snarl.nodes_pos().collect::<Vec<_>>(), &card),
+        };
+        places.insert(card.key(), Place { at: [place.x, place.y], seen: now });
         snarl.insert_node(place, card);
     }
 
