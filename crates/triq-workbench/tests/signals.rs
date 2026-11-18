@@ -167,3 +167,18 @@ fn a_topic_of_another_program_is_read_for_what_can_be_known_of_it()
     assert!(line.len() == 1 && line[0].0 >= before && line[0].0 < before + 3.0);
     Ok(())
 }
+
+#[test]
+fn what_was_read_is_let_go_of_by_the_time_reading_stops() -> triq::Result {
+    let scene = Scene::new()?;
+    let sensor = format!("{}/imu/pose", scene.robot.name());
+    let signals = Signals::start()?;
+    signals.watch(wanted([(&sensor, &[])]));
+    assert!(wait_for(|| scene.imu.pose.subscribers() == 2), "the filter, and the workbench");
+
+    // When the workbench closes, its program ends at once. Whatever is still being read then is
+    // left on the machine for another program to clear away, so nothing is.
+    drop(signals);
+    assert_eq!(scene.imu.pose.subscribers(), 1, "only the filter again, as soon as the reading is dropped");
+    Ok(())
+}

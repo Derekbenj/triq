@@ -8,13 +8,13 @@
 //! the window. A third reads the topics whose messages the user looks into.
 use crate::graph;
 use crate::history::History;
-use crate::signals::Signals;
+use crate::signals::{Signals, ended};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use triq::{Inventory, Placement, Remote, Watch};
 
@@ -66,7 +66,10 @@ pub enum Request {
 
 pub struct Feed {
     shared: Arc<Shared>,
-    requests: mpsc::Sender<Request>,
+    /// `None` only while the feed is being dropped.
+    requests: Option<mpsc::Sender<Request>>,
+    /// The thread that watches the machine, and the one that carries out requests.
+    threads: Vec<JoinHandle<()>>,
     signals: Signals,
 }
 
@@ -92,7 +95,7 @@ impl Feed {
         });
         let redraw = Arc::new(redraw);
         let watch = Watch::new()?;
-        thread::Builder::new().name("workbench-watch".into()).spawn({
+        let watching = thread::Builder::new().name("workbench-watch".into()).spawn({
             let (shared, redraw) = (shared.clone(), redraw.clone());
             move || {
                 // The reading the pins' rates are measured from, and when it was made.
@@ -125,7 +128,7 @@ impl Feed {
             }
         })?;
         let (requests, queue) = mpsc::channel::<Request>();
-        thread::Builder::new().name("workbench-requests".into()).spawn({
+        let asking = thread::Builder::new().name("workbench-requests".into()).spawn({
             let shared = shared.clone();
             move || {
                 for request in queue {
@@ -136,7 +139,7 @@ impl Feed {
                 }
             }
         })?;
-        Ok(Self { shared, requests, signals: Signals::start()? })
+        Ok(Self { shared, requests: Some(requests), threads: vec![watching, asking], signals: Signals::start()? })
     }
 
     /// The numbers inside the messages of the topics that are watched.
@@ -162,7 +165,9 @@ impl Feed {
 
     /// Carry out a request in the background. Its effect shows in a later inventory.
     pub fn ask(&self, request: Request) {
-        let _ = self.requests.send(request);
+        if let Some(requests) = &self.requests {
+            let _ = requests.send(request);
+        }
     }
 
     /// Show the user a problem that did not come from a runtime.
@@ -183,6 +188,10 @@ impl Feed {
 impl Drop for Feed {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
+        // With nobody left to ask, the thread that carries out requests ends. The one that
+        // watches the machine looks for the stop within a tenth of a second.
+        self.requests = None;
+        self.threads.drain(..).for_each(ended);
     }
 }
 

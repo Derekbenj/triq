@@ -104,3 +104,20 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
     assert!(wait_for(|| feed.inventories().iter().all(|inventory| inventory.runtime != desk_name)));
     Ok(())
 }
+
+#[test]
+fn nothing_of_the_feed_runs_once_it_is_dropped() -> triq::Result {
+    // What the feed calls to have the window drawn again belongs to its threads.
+    let kept = Arc::new(());
+    let feed = Feed::start({
+        let kept = kept.clone();
+        move || _ = &kept
+    })?;
+    assert!(Arc::strong_count(&kept) > 1);
+
+    // When the workbench closes, its program ends at once, and a thread that is still in the
+    // middle of something leaves that on the machine. So dropping the feed waits for them.
+    drop(feed);
+    assert_eq!(Arc::strong_count(&kept), 1, "its threads have ended, and let go of what they held");
+    Ok(())
+}

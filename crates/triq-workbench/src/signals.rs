@@ -12,7 +12,7 @@ use crate::history::{History, between};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use triq::{Field, Remote, Stamp};
 use triq_tap::{Tap, Taps, Topic};
@@ -29,12 +29,16 @@ const AT_ONCE: usize = 64;
 const LISTED: Duration = Duration::from_secs(1);
 /// How many points of one number are kept: 16 MB of them.
 const MOST: usize = 1_000_000;
+/// How long a thread that was told to stop is waited for.
+const PATIENCE: Duration = Duration::from_secs(1);
 
 /// The topics to read, and of each the numbers whose past a chart wants.
 pub type Wanted = BTreeMap<String, BTreeSet<String>>;
 
 pub struct Signals {
     shared: Arc<Shared>,
+    /// The thread that reads. `None` only while it is being dropped.
+    thread: Option<JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -68,11 +72,11 @@ impl Signals {
     /// Start the thread that lists the machine's topics and reads the ones that are watched.
     pub fn start() -> triq::Result<Self> {
         let (taps, shared) = (Taps::new()?, Arc::new(Shared::default()));
-        thread::Builder::new().name("workbench-taps".into()).spawn({
+        let thread = thread::Builder::new().name("workbench-taps".into()).spawn({
             let shared = shared.clone();
             move || read(&taps, &shared)
         })?;
-        Ok(Self { shared })
+        Ok(Self { shared, thread: Some(thread) })
     }
 
     /// Say what to read from now on. What is left out is no longer read, and its past is let go.
@@ -111,6 +115,23 @@ impl Signals {
 impl Drop for Signals {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
+        // The thread looks for this every few milliseconds, and closes what it was reading as it ends.
+        self.thread.take().into_iter().for_each(ended);
+    }
+}
+
+/// Wait for a thread that was told to stop: until it has ended, and let go of what it held.
+///
+/// The program of a window ends as soon as the window is closed. A thread that is still at
+/// work then leaves what it held on the machine, for another program to clear away. A thread
+/// that is held up, by a runtime that does not answer, is not waited for for ever.
+pub(crate) fn ended(thread: JoinHandle<()>) {
+    let deadline = Instant::now() + PATIENCE;
+    while !thread.is_finished() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(1));
+    }
+    if thread.is_finished() {
+        let _ = thread.join();
     }
 }
 
