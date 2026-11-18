@@ -184,7 +184,12 @@ impl Workers {
             .collect::<Result<Vec<_>>>()?;
         let workers = Self { programs };
         let deadline = Instant::now() + Duration::from_secs(5);
-        while workers.programs.iter().any(|(name, ..)| Remote::open(name).is_err()) {
+        // A worker can be opened as soon as its runtime has started, a moment before it offers its nodes.
+        let ready = |name: &str| {
+            let offered = Remote::open(name).and_then(|remote| remote.inventory());
+            offered.is_ok_and(|inventory| inventory.factories.iter().any(|factory| factory.kind == "duplex"))
+        };
+        while workers.programs.iter().any(|(name, ..)| !ready(name)) {
             if Instant::now() > deadline {
                 return Err(Error::Timeout);
             }
