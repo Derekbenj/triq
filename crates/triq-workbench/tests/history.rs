@@ -39,7 +39,10 @@ fn a_connection_gets_a_point_for_what_happened_between_two_readings() -> triq::R
     let first = scene.inventories();
     history.record(&first);
     // The viewer's other input waits for an output that does not exist: that is not a connection yet.
-    assert_eq!(history.connections().collect::<Vec<_>>(), [&filtered, &viewed], "sorted by the input");
+    // Which of the two inputs comes first depends on the names the two runtimes were given.
+    let mut both = [&filtered, &viewed];
+    both.sort_by(|one, other| one.to.cmp(&other.to));
+    assert_eq!(history.connections().collect::<Vec<_>>(), both, "sorted by the input");
     assert_eq!(history.points(&filtered).count(), 0, "one reading says nothing about the time between two");
 
     // Thirty samples in half a second, by the robot's clock.
