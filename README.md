@@ -182,7 +182,10 @@ that owns the node, and a refusal comes back as the same error it would raise
 locally. Opening a runtime costs many times as much as asking it something, so
 a thread keeps the runtimes it has opened: `Remote::open` and `discover` are
 cheap from the second time on, and a runtime that stopped or started again is
-noticed.
+noticed. A thread lets go of what it kept when it ends. The main thread of a
+program does not end that way, so a program that looked at other runtimes
+calls `triq::release()` before `main` returns. Then it leaves nothing of
+itself on the machine for the next program to clear away.
 
 The `triq` command-line tool does the same from a terminal. Install it with
 `cargo install triq`; on macOS, add `--locked --git https://github.com/Derekbenj/triq`,

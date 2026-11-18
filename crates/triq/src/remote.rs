@@ -4,11 +4,12 @@ use crate::control::{Caller, Reply, Request, announcements};
 use crate::raw::{IpcNode, Listener, Svc, quiet_logs};
 use crate::{Error, Inventory, Layout, Placement, Result};
 use iceoryx2::prelude::{CallbackProgression, Config, NodeBuilder, Service, SignalHandlingMode};
+use iceoryx2::service::ServiceDynamicDetails;
 use iceoryx2::service::static_config::messaging_pattern::MessagingPattern;
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 /// A handle for asking one runtime to change.
@@ -16,14 +17,21 @@ use std::time::Duration;
 /// Every request is carried out by the runtime that owns the nodes involved,
 /// under its own rules; the program asking needs no rights over them.
 pub struct Remote {
-    caller: Arc<Caller>,
+    opened: Arc<Opened>,
+}
+
+/// A runtime as this program has it open.
+struct Opened {
+    caller: Caller,
+    /// What the caller was made with. It is let go of after the caller.
+    _node: ClientNode,
 }
 
 thread_local! {
     /// The runtimes this thread has opened, by name. Opening a runtime's control
     /// service costs many times what asking it something does, and a tool that
     /// shows the machine asks every runtime again and again.
-    static OPENED: RefCell<BTreeMap<String, Arc<Caller>>> = const { RefCell::new(BTreeMap::new()) };
+    static OPENED: RefCell<BTreeMap<String, Arc<Opened>>> = const { RefCell::new(BTreeMap::new()) };
 }
 
 /// Hears every runtime on the machine say that it changed.
@@ -33,12 +41,14 @@ thread_local! {
 /// missed: it is still waiting to be heard.
 pub struct Watch {
     listener: Listener,
+    _node: ClientNode,
 }
 
 impl Watch {
     pub fn new() -> Result<Self> {
-        let listener = announcements(&client_node()?.lock().unwrap())?.listener_builder().create()?;
-        Ok(Self { listener })
+        let node = client_node()?;
+        let listener = announcements(&node.lock().unwrap())?.listener_builder().create()?;
+        Ok(Self { listener, _node: node })
     }
 
     /// Sleep until a runtime starts, stops or changes, or until `timeout` passes.
@@ -59,6 +69,7 @@ pub fn discover() -> Result<Vec<Inventory>> {
         let details = &service.static_details;
         if let (Some(runtime), MessagingPattern::RequestResponse(_)) =
             (details.name().as_str().strip_suffix("/_control"), details.messaging_pattern())
+            && held(service.dynamic_details.as_ref())
         {
             runtimes.push(runtime.to_owned());
         }
@@ -69,6 +80,25 @@ pub fn discover() -> Result<Vec<Inventory>> {
     OPENED.with_borrow_mut(|opened| opened.retain(|runtime, _| runtimes.contains(runtime)));
     // A runtime that exits while we ask is simply not listed.
     Ok(runtimes.iter().filter_map(|runtime| Remote::open(runtime).and_then(|remote| remote.inventory()).ok()).collect())
+}
+
+/// Let go of every runtime this thread has opened.
+///
+/// A thread keeps the runtimes it has opened, to ask them again cheaply, and
+/// lets go of them when it ends. The main thread of a program does not end
+/// that way. Call this before `main` returns, and the program leaves nothing
+/// of itself on the machine for another one to clear away.
+pub fn release() {
+    OPENED.with_borrow_mut(BTreeMap::clear);
+}
+
+/// Whether any program holds a service, by what iceoryx2 reports of it.
+///
+/// A program that ends badly can leave a service behind that nobody holds and
+/// that iceoryx2 never clears away. Such a one is not a runtime, and is passed
+/// over without being opened.
+fn held(service: Option<&ServiceDynamicDetails<Svc>>) -> bool {
+    service.is_some_and(|service| !service.nodes.is_empty())
 }
 
 /// Make the input `to` receive from the output `from`. Both are `runtime/node/port`.
@@ -95,19 +125,21 @@ impl Remote {
     /// Fails with [`Error::Unknown`] if no runtime of that name is running.
     pub fn open(runtime: &str) -> Result<Self> {
         OPENED.with_borrow_mut(|opened| {
-            if let Some(caller) = opened.get(runtime).filter(|caller| caller.answering()) {
-                return Ok(Self { caller: caller.clone() });
+            if let Some(kept) = opened.get(runtime).filter(|kept| kept.caller.answering()) {
+                return Ok(Self { opened: kept.clone() });
             }
             // Never opened by this thread, or its runtime stopped since.
             opened.remove(runtime);
-            let caller = Arc::new(Caller::open(&client_node()?.lock().unwrap(), runtime)?);
-            opened.insert(runtime.to_owned(), caller.clone());
-            Ok(Self { caller })
+            let node = client_node()?;
+            let caller = Caller::open(&node.lock().unwrap(), runtime)?;
+            let kept = Arc::new(Opened { caller, _node: node });
+            opened.insert(runtime.to_owned(), kept.clone());
+            Ok(Self { opened: kept })
         })
     }
 
     pub fn inventory(&self) -> Result<Inventory> {
-        match self.caller.ask(&Request::Inventory)? {
+        match self.opened.caller.ask(&Request::Inventory)? {
             Reply::Inventory(inventory) => Ok(*inventory),
             _ => Err(Error::Other("the runtime answered without an inventory".into())),
         }
@@ -116,7 +148,7 @@ impl Remote {
     /// Which numbers the messages of an output hold, and where: enough to
     /// read them from the bytes of a message without having its type.
     pub fn layout(&self, node: &str, port: &str) -> Result<Layout> {
-        match self.caller.ask(&Request::Layout { node: node.into(), port: port.into() })? {
+        match self.opened.caller.ask(&Request::Layout { node: node.into(), port: port.into() })? {
             Reply::Layout(layout) => Ok(layout),
             _ => Err(Error::Other("the runtime answered without a layout".into())),
         }
@@ -163,17 +195,38 @@ impl Remote {
     }
 
     fn done(&self, request: Request) -> Result {
-        self.caller.ask(&request).map(|_| ())
+        self.opened.caller.ask(&request).map(|_| ())
     }
 }
 
-/// One iceoryx2 node per process for outgoing requests, created on first use.
-fn client_node() -> Result<&'static Mutex<IpcNode>> {
-    static NODE: OnceLock<Mutex<IpcNode>> = OnceLock::new();
-    if let Some(node) = NODE.get() {
+/// The iceoryx2 node that a program's requests go out from.
+type ClientNode = Arc<Mutex<IpcNode>>;
+
+/// One node per process for outgoing requests. It is made on first use and
+/// lasts for as long as anything made with it is held: an opened runtime, or
+/// a [`Watch`]. A program that has let go of all of them has no node.
+fn client_node() -> Result<ClientNode> {
+    static NODE: Mutex<Weak<Mutex<IpcNode>>> = Mutex::new(Weak::new());
+    let mut kept = NODE.lock().unwrap();
+    if let Some(node) = kept.upgrade() {
         return Ok(node);
     }
     quiet_logs();
-    let node = NodeBuilder::new().signal_handling_mode(SignalHandlingMode::Disabled).create::<Svc>()?;
-    Ok(NODE.get_or_init(|| Mutex::new(node)))
+    let node =
+        Arc::new(Mutex::new(NodeBuilder::new().signal_handling_mode(SignalHandlingMode::Disabled).create::<Svc>()?));
+    *kept = Arc::downgrade(&node);
+    Ok(node)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_service_that_nobody_holds_is_passed_over() {
+        // Left behind with nothing but its file,
+        assert!(!held(None));
+        // or with nobody listed as holding it.
+        assert!(!held(Some(&ServiceDynamicDetails { nodes: Vec::new() })));
+    }
 }

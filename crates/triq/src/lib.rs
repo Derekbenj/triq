@@ -66,7 +66,7 @@ pub use inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, Outp
 pub use message::{Headed, Header, MessageType, Payload, Stamp};
 pub use node::{Node, Placement, Trigger};
 pub use port::{Binder, Direction, Input, Loan, Output, PortField, PortOptions, PortSpec, Ports, Sample};
-pub use remote::{Remote, Watch, connect, disconnect, discover};
+pub use remote::{Remote, Watch, connect, disconnect, discover, release};
 pub use runtime::{Builder, Local, LocalFactory, LocalNode, LocalNodes, Runtime};
 pub use triq_macros::{Fields, Ports};
 

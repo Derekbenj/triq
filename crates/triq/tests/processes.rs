@@ -3,27 +3,8 @@
 #[path = "support/helpers.rs"]
 mod helpers;
 use helpers::*;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use triq::{Inventory, NodeInfo};
-
-/// A child process that is killed when the test ends, however it ends.
-struct Program(Child);
-
-impl Drop for Program {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// `examples/station.rs`: a runtime that offers `counter`, `doubler` and `logger` nodes.
-fn station(runtime: &str) -> Program {
-    let mut path = PathBuf::from(env!("CARGO_BIN_EXE_triq"));
-    path.pop();
-    path.push("examples/station");
-    Program(Command::new(path).arg(runtime).stdout(Stdio::null()).spawn().expect("start a station"))
-}
 
 /// Run the command-line tool and return what it printed.
 fn triq(args: &[&str]) -> Result<String, String> {

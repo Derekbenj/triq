@@ -1,8 +1,28 @@
 //! Shared by the integration tests. Included with `#[path]`, so no `mod.rs`.
 #![allow(dead_code)]
+use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use triq::prelude::*;
+
+/// A child process that is killed when the test ends, however it ends.
+pub struct Program(pub Child);
+
+impl Drop for Program {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `examples/station.rs`: a runtime that offers `counter`, `doubler` and `logger` nodes.
+pub fn station(runtime: &str) -> Program {
+    let mut path = PathBuf::from(env!("CARGO_BIN_EXE_triq"));
+    path.pop();
+    path.push("examples/station");
+    Program(Command::new(path).arg(runtime).stdout(Stdio::null()).spawn().expect("start a station"))
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, ZeroCopySend, Fields)]
 #[repr(C)]

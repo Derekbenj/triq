@@ -27,7 +27,10 @@ usage:
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    match run(&args) {
+    let done = run(&args);
+    // What this thread opened is closed, so that the tool leaves nothing of itself behind.
+    triq::release();
+    match done {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("triq: {error}");
