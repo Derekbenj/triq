@@ -14,9 +14,11 @@ use std::time::Duration;
 /// Code that triq runs for you.
 ///
 /// The node is only ever on one thread at a time. `run` is called when an
-/// input has data. Take what you need from the inputs each time; `run` is not
-/// called again for data it left waiting. A node can also, or instead, be
-/// called on a fixed period: see [`trigger`](Node::trigger).
+/// input has data: because data arrived, not once for every message, so
+/// several messages may be waiting. A node that takes some of them and
+/// leaves some is run again at once, until it has taken them all or takes
+/// none. A node can also, or instead, be called on a fixed period: see
+/// [`trigger`](Node::trigger).
 pub trait Node: Send + Sized + 'static {
     type Ports: Ports;
     /// Settings chosen when the node is created. Use `()` if there are none.
@@ -101,6 +103,8 @@ pub(crate) struct Slot {
     due: AtomicU8,
     /// Used by shared pools only: keeps the node on one thread at a time.
     claim: AtomicU8,
+    /// Set when the node is taken from its thread for good. It is not run after that.
+    retired: AtomicBool,
 }
 
 /// Bits of `Slot::due`.
@@ -159,7 +163,13 @@ impl Slot {
             stopped: OnceLock::new(),
             due: AtomicU8::new(0),
             claim: AtomicU8::new(FREE),
+            retired: AtomicBool::new(false),
         }
+    }
+
+    /// The node is being removed, or its runtime is stopping: do not run it again.
+    pub fn retire(&self) {
+        self.retired.store(true, Ordering::Release);
     }
 
     /// Note that an input has data.
@@ -174,13 +184,24 @@ impl Slot {
 
     /// Call the node for whatever is due. An error is recorded and the node
     /// goes on; a panic stops it for good.
-    pub fn run(&self) {
+    ///
+    /// True if the node is due again at once. Data arriving is one reason to
+    /// run, however many messages arrived, and a node may take only one of
+    /// them a run. Left at that, it would fall behind whatever sends faster
+    /// than it is woken, with messages waiting that nothing tells it of. So a
+    /// node that took some of what was waiting and left some is run again.
+    /// One that took nothing is left alone until more arrives, and one that
+    /// read until nothing was left costs no more than three loads here.
+    pub fn run(&self) -> bool {
         let due = self.due.swap(0, Ordering::AcqRel);
-        if due == 0 || self.paused.load(Ordering::Acquire) || self.stopped.get().is_some() {
-            return;
+        let idle = self.paused.load(Ordering::Acquire) || self.retired.load(Ordering::Acquire);
+        if due == 0 || idle || self.stopped.get().is_some() {
+            return false;
         }
         let mut body = self.body.lock().unwrap_or_else(PoisonError::into_inner);
         self.runs.fetch_add(1, Ordering::Relaxed);
+        let taken = || self.inputs.iter().map(|input| input.taken()).sum::<u64>();
+        let before = taken();
         let call = |body: &mut Box<dyn Body>| -> Result {
             if due & INPUT != 0 {
                 body.run()?;
@@ -203,8 +224,14 @@ impl Slot {
                     .or_else(|| panic.downcast_ref::<String>().cloned())
                     .unwrap_or_else(|| "panicked".into());
                 let _ = self.stopped.set(message);
+                return false;
             }
         }
+        let behind = due & INPUT != 0 && taken() > before && self.inputs.iter().any(|input| input.left_waiting());
+        if behind {
+            self.input_arrived();
+        }
+        behind
     }
 
     /// Ask for the node on behalf of a worker thread. True if the caller should
@@ -214,11 +241,11 @@ impl Slot {
         self.claim.fetch_update(Ordering::AcqRel, Ordering::Acquire, claim) == Ok(FREE)
     }
 
-    /// Run a claimed node until no more work arrived for it, then give it up.
+    /// Run a claimed node until no more work arrived for it and none is left for it, then give it up.
     pub fn run_claimed(&self) {
         loop {
-            self.run();
-            if self.claim.compare_exchange(CLAIMED, FREE, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            let behind = self.run();
+            if !behind && self.claim.compare_exchange(CLAIMED, FREE, Ordering::AcqRel, Ordering::Acquire).is_ok() {
                 return;
             }
             self.claim.store(CLAIMED, Ordering::Release);

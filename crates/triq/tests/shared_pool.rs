@@ -175,3 +175,42 @@ fn periodic_nodes_and_removal_work_in_a_shared_pool() -> triq::Result {
     assert_eq!(collect(&probe.input, 1)[0], 1, "and its name is free again");
     Ok(())
 }
+
+/// Forwards one value each time it runs, however many are waiting.
+struct OneAtATime;
+
+impl Node for OneAtATime {
+    type Ports = Through;
+    type Params = ();
+    fn new(_: ()) -> triq::Result<Self> {
+        Ok(Self)
+    }
+    fn run(&mut self, ports: &mut Through) -> triq::Result {
+        if let Some(value) = ports.input.recv()? {
+            ports.output.send(*value)?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn in_a_shared_pool_too_a_node_is_run_until_nothing_waits_for_it() -> triq::Result {
+    let rt = Runtime::builder(&unique("sips")).shared_pool("work", 2).start()?;
+    rt.spawn::<OneAtATime>("node", Placement::pool("work"), ())?;
+    let bench = around(&rt, "node")?;
+    rt.pause("node")?;
+    for value in 0..20 {
+        bench.feed.send(value)?;
+    }
+    rt.resume("node")?;
+    assert_eq!(collect(&bench.probe, 20), (0..20).collect::<Vec<u64>>());
+    // Removed while more keeps arriving for it, it is let go of all the same.
+    let flood = std::thread::scope(|scope| {
+        let sending = scope.spawn(|| (0..2000).try_for_each(|value| bench.feed.send(value).map(|_| ())));
+        std::thread::sleep(Duration::from_millis(5));
+        let removed = rt.remove("node");
+        (sending.join().expect("the sender"), removed)
+    });
+    assert!(flood.1.is_ok(), "{:?}", flood.1);
+    Ok(())
+}

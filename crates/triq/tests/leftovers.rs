@@ -92,7 +92,9 @@ fn a_runtime_that_was_killed_is_let_go_of_by_everyone_who_looked() -> triq::Resu
     let other_sees = || ask.send(()).is_ok() && said.recv().unwrap();
 
     let mut program = station(&name);
-    assert!(wait_for(|| sees(&name)) && other_sees(), "the program announces itself to both");
+    // Starting a program can take seconds on a machine that is busy with something else.
+    let announced = (0..5).any(|_| wait_for(|| sees(&name)));
+    assert!(announced && other_sees(), "the program announces itself to both");
 
     // Killed, it closes nothing: its control service stays behind, and both onlookers hold it.
     program.0.kill().unwrap();

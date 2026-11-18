@@ -128,6 +128,13 @@ Optional parts of `Node`:
 | `tick()` | called on the period; does what `run` does unless overridden |
 | `set_params()` | accept new settings while running |
 
+`run` is called because data arrived, not once for every message: several may
+be waiting. Take them all with `while let Some(sample) = ports.raw.recv()?`,
+or only the newest with `ports.raw.latest()?`. A node that takes one message
+and returns is run again at once while more waits for it, so it does not fall
+behind without anyone noticing; the other nodes on its thread have their turn
+in between.
+
 ## Running nodes
 
 ```rust
@@ -331,7 +338,7 @@ number is kept from the moment it is put on a chart.
 `graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
 `history.rs` (what connections and outputs did, as plain data), `signals.rs`
 (the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the windows) are about 2,470 lines together,
+background threads) and `app.rs` (the windows) are about 2,560 lines together,
 and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
@@ -578,16 +585,16 @@ of a message.
 | --- | ---: | --- |
 | `message.rs` | 220 | message types, headers, the stamp on every sample |
 | `fields.rs` | 132 | the numbers a message lists, and reading one from bytes |
-| `port.rs`, `port/output.rs`, `port/input.rs` | 716 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
-| `node.rs` | 252 | the `Node` trait, `Trigger`, `Placement` |
-| `executor.rs` | 206 | the thread that waits and runs nodes |
+| `port.rs`, `port/output.rs`, `port/input.rs` | 744 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
+| `node.rs` | 277 | the `Node` trait, `Trigger`, `Placement` |
+| `executor.rs` | 220 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
 | `runtime.rs` | 682 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 175 | factories whose nodes the application runs |
-| `control.rs`, `remote.rs` | 450 | requests between programs, discovery, change announcements |
+| `control.rs`, `remote.rs` | 503 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 308 | report types, the error type, iceoryx2 type names |
 
-About 3,200 lines including comments, plus the derive macros (108) and the command-line tool (175).
+About 3,300 lines including comments, plus the derive macros (108) and the command-line tool (178).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

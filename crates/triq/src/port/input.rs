@@ -9,6 +9,7 @@ use iceoryx2::prelude::{CallbackProgression, PortFactory, PortName, ServiceName}
 use iceoryx2::service::builder::event::EventOpenError;
 use iceoryx2::service::builder::publish_subscribe::PublishSubscribeOpenError;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +33,12 @@ pub(crate) trait InputPort: Send + Sync {
     /// One per linked output; a thread waiting on them wakes when data arrives.
     fn listeners(&self) -> Vec<Arc<Listener>>;
     fn info(&self) -> Vec<SourceInfo>;
+    /// How many samples the node has taken from this input so far.
+    fn taken(&self) -> u64;
+    /// Whether the node stopped taking samples here while some were left: it took one, has
+    /// not since found the input empty, and a sample waits. A node that reads until nothing
+    /// is left has seen that for itself, and is told of whatever comes after.
+    fn left_waiting(&self) -> bool;
 }
 
 pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
@@ -39,6 +46,9 @@ pub(crate) struct Shared<T: Payload + ?Sized, H: Header> {
     port: PortName,
     depth: Option<usize>,
     sources: Mutex<Sources<T, H>>,
+    taken: AtomicU64,
+    /// True from when the node takes a sample until it finds nothing waiting.
+    unsure: AtomicBool,
 }
 
 struct Sources<T: Payload + ?Sized, H: Header> {
@@ -135,9 +145,12 @@ impl<T: Payload + ?Sized, H: Header> Input<T, H> {
                 source.count(raw.user_header().stamp);
                 let output = source.output.clone();
                 sources.next = index + 1;
+                self.shared.taken.fetch_add(1, Ordering::Relaxed);
+                self.shared.unsure.store(true, Ordering::Relaxed);
                 return Ok(Some(Sample { raw, output }));
             }
         }
+        self.shared.unsure.store(false, Ordering::Relaxed);
         Ok(None)
     }
 
@@ -239,6 +252,8 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
             port: PortName::new(port)?,
             depth: options.depth,
             sources: Mutex::new(Sources { list: Vec::new(), next: 0 }),
+            taken: AtomicU64::new(0),
+            unsure: AtomicBool::new(false),
         })
     }
 
@@ -337,6 +352,19 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
     fn listeners(&self) -> Vec<Arc<Listener>> {
         let sources = self.sources.lock().unwrap();
         sources.list.iter().filter_map(|source| source.link.as_ref()).map(|link| link.listener.clone()).collect()
+    }
+
+    fn taken(&self) -> u64 {
+        self.taken.load(Ordering::Relaxed)
+    }
+
+    fn left_waiting(&self) -> bool {
+        if !self.unsure.load(Ordering::Relaxed) {
+            return false;
+        }
+        let sources = self.sources.lock().unwrap();
+        let mut linked = sources.list.iter().filter_map(|source| source.link.as_ref());
+        linked.any(|link| link.subscriber.has_samples().unwrap_or(false))
     }
 
     fn info(&self) -> Vec<SourceInfo> {

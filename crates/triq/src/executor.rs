@@ -82,6 +82,7 @@ impl Executor {
     /// Returns once the thread no longer refers to the slot, so the caller's
     /// reference is the last one. Gives up waiting if the node is stuck in `run`.
     pub fn remove(&self, slot: &Arc<Slot>) {
+        slot.retire();
         self.shared.slots.lock().unwrap().retain(|other| !Arc::ptr_eq(other, slot));
         let version = self.refresh();
         wait_until(|| self.shared.applied.load(Ordering::Acquire) >= version || self.finished());
@@ -108,6 +109,8 @@ impl Executor {
 impl Drop for Executor {
     fn drop(&mut self) {
         self.shared.stop.store(true, Ordering::Release);
+        // A node that is behind is run again and again; not any more.
+        self.shared.slots.lock().unwrap().iter().for_each(|slot| slot.retire());
         let _ = self.shared.wake.notify();
         let Some(thread) = self.thread.take() else {
             return;
@@ -121,10 +124,14 @@ impl Drop for Executor {
 }
 
 impl Shared {
-    fn run(&self, slot: &Arc<Slot>) {
+    /// Run a node that is due, or have a worker do it. True if this thread ran it and it is due again.
+    fn run(&self, slot: &Arc<Slot>) -> bool {
         match &self.workers {
             None => slot.run(),
-            Some(workers) => workers.submit(slot),
+            Some(workers) => {
+                workers.submit(slot);
+                false
+            }
         }
     }
 }
@@ -168,18 +175,25 @@ fn serve(shared: &Shared, wake: &Listener) -> Result {
         shared.applied.store(version, Ordering::Release);
 
         // A resumed or newly connected node may already have data waiting.
-        for slot in slots.iter().filter(|slot| slot.trigger().on_input()) {
+        let mut ready = vec![false; slots.len()];
+        for (slot, ready) in slots.iter().zip(&mut ready).filter(|(slot, _)| slot.trigger().on_input()) {
             slot.input_arrived();
-            shared.run(slot);
+            *ready = shared.run(slot);
         }
 
         let mut woken = Vec::new();
-        let mut ready = vec![false; slots.len()];
         while shared.version.load(Ordering::Acquire) == version && !shared.stop.load(Ordering::Acquire) {
-            waitset.wait_and_process_once(|id| {
+            let mut note = |id| {
                 woken.extend(reasons.get(&id).copied());
                 CallbackProgression::Continue
-            })?;
+            };
+            // A node that is behind is run again at once. The others on this thread have their
+            // turn in between: what has arrived for them meanwhile is looked for, without waiting.
+            if ready.contains(&true) {
+                waitset.wait_and_process_once_with_timeout(&mut note, Duration::ZERO)?;
+            } else {
+                waitset.wait_and_process_once(&mut note)?;
+            }
             wake.try_wait(|_| {})?;
             for reason in woken.drain(..) {
                 match reason {
@@ -197,7 +211,7 @@ fn serve(shared: &Shared, wake: &Listener) -> Result {
             }
             for (slot, ready) in slots.iter().zip(&mut ready) {
                 if std::mem::take(ready) {
-                    shared.run(slot);
+                    *ready = shared.run(slot);
                 }
             }
         }

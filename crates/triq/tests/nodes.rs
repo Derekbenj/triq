@@ -548,3 +548,92 @@ fn a_factory_gives_its_nodes_what_settings_cannot_carry() -> triq::Result {
     assert!(rt.inventory().nodes.iter().all(|node| node.name != "third"));
     Ok(())
 }
+
+/// Forwards one value each time it runs, however many are waiting, after working that many milliseconds on it.
+struct OneAtATime {
+    work_ms: u64,
+}
+
+impl Node for OneAtATime {
+    type Ports = Through;
+    type Params = u64;
+    fn new(work_ms: u64) -> triq::Result<Self> {
+        Ok(Self { work_ms })
+    }
+    fn run(&mut self, ports: &mut Through) -> triq::Result {
+        if let Some(value) = ports.input.recv()? {
+            std::thread::sleep(Duration::from_millis(self.work_ms));
+            ports.output.send(*value)?;
+        }
+        Ok(())
+    }
+}
+
+/// Send `count` values to a node while it cannot run.
+fn pile_up(rt: &Runtime, node: &str, bench: &Bench, count: u64) -> triq::Result {
+    rt.pause(node)?;
+    for value in 0..count {
+        bench.feed.send(value)?;
+    }
+    rt.resume(node)
+}
+
+#[test]
+fn a_node_that_takes_one_message_a_run_is_run_until_none_waits() -> triq::Result {
+    let rt = Runtime::new(&unique("one"))?;
+    rt.spawn::<OneAtATime>("node", Placement::Dedicated, 0)?;
+    let bench = around(&rt, "node")?;
+    // Twenty messages wait for the node. Data arriving is one reason to run, however much of it
+    // there is: the node is not told twenty times. So it is run again while it leaves some waiting.
+    pile_up(&rt, "node", &bench, 20)?;
+    assert_eq!(collect(&bench.probe, 20), (0..20).collect::<Vec<u64>>());
+    Ok(())
+}
+
+/// Reads nothing.
+struct Deaf;
+
+impl Node for Deaf {
+    type Ports = Through;
+    type Params = ();
+    fn new(_: ()) -> triq::Result<Self> {
+        Ok(Self)
+    }
+    fn run(&mut self, _: &mut Through) -> triq::Result {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_node_that_takes_nothing_is_not_run_over_and_over() -> triq::Result {
+    let rt = Runtime::new(&unique("deaf"))?;
+    rt.spawn::<Deaf>("node", Placement::Dedicated, ())?;
+    let bench = around(&rt, "node")?;
+    for value in 0..5 {
+        bench.feed.send(value)?;
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    // Five messages wait for it still. It was run for their arriving, and then left alone.
+    let runs = rt.inventory().nodes.iter().find(|node| node.name == "node").expect("the node").runs;
+    assert!((1..=6).contains(&runs), "it ran {runs} times");
+    Ok(())
+}
+
+#[test]
+fn a_node_that_is_behind_does_not_keep_its_thread_from_the_others() -> triq::Result {
+    // Two nodes on the one thread of a pool.
+    let rt = Runtime::builder(&unique("fair")).pool("one", 1).start()?;
+    rt.spawn::<OneAtATime>("busy", Placement::pool("one"), 2)?;
+    rt.spawn::<OneAtATime>("other", Placement::pool("one"), 0)?;
+    let (busy, other) = (around(&rt, "busy")?, around(&rt, "other")?);
+    // Thirty messages wait for the busy one: sixty milliseconds of work, a message at a time.
+    pile_up(&rt, "busy", &busy, 30)?;
+    // The other has its turn in between, not after all of that.
+    let asked = std::time::Instant::now();
+    other.feed.send(7)?;
+    assert_eq!(collect(&other.probe, 1), [7]);
+    let waited = asked.elapsed();
+    assert!(waited < Duration::from_millis(30), "the other node waited {waited:?}");
+    assert_eq!(collect(&busy.probe, 30).len(), 30, "and the busy one gets through all of its own");
+    Ok(())
+}
