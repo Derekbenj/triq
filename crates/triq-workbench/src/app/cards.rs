@@ -359,12 +359,19 @@ impl SnarlViewer<Card> for Viewer<'_> {
         default.fill(default.fill.lerp_to_gamma(tint, self.strength(card))).corner_radius(9)
     }
 
-    /// The header of a group fades through the colours of the runtimes its
-    /// nodes run in, from left to right, with as much room for each as for any other.
+    /// The header of a group has the colours of the runtimes its nodes run
+    /// in, from left to right, with as much room for each as for any other.
+    ///
+    /// The graph fades from each colour it is given to the next, over the
+    /// room of one. Halfway between two colours is neither, and a wide
+    /// stretch of that looks washed out. So each colour is given several
+    /// times over: most of its room is the colour itself, and the fade to
+    /// the next is short.
     fn header_gradient(&mut self, default: Color32, node: NodeId, snarl: &Snarl<Card>) -> Vec<Color32> {
+        const TIMES: usize = 4;
         let card = &snarl[node];
         let tinted = |runtime| default.lerp_to_gamma(self.colors.of(runtime, self.dark), self.strength(card));
-        self.fades(card).into_iter().map(tinted).collect()
+        self.fades(card).into_iter().flat_map(|runtime| [tinted(runtime); TIMES]).collect()
     }
 
     fn has_node_style(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], snarl: &Snarl<Card>) -> bool {
