@@ -8,6 +8,7 @@ use egui_kittest::kittest::Queryable;
 use scene::*;
 use serde_json::json;
 use triq::{NodeState, Placement, Remote};
+use triq_workbench::egui::{Pos2, Shape};
 use triq_workbench::feed::Request;
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
@@ -48,6 +49,24 @@ fn drawn(harness: &Bench<'_>, viewer: &str) -> Vec<String> {
     from
 }
 
+/// How many wires have a glow along them. Such a wire is drawn several times
+/// over: under the wire itself are wider and fainter lines along the same way.
+fn glowing(harness: &Bench<'_>) -> usize {
+    fn lines(shape: &Shape, found: &mut Vec<Vec<Pos2>>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| lines(shape, found)),
+            Shape::Path(path) if !path.closed => found.push(path.points.clone()),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    harness.output().shapes.iter().for_each(|clipped| lines(&clipped.shape, &mut found));
+    let mut repeated: Vec<&Vec<Pos2>> =
+        found.iter().filter(|line| found.iter().filter(|other| other == line).count() > 1).collect();
+    repeated.dedup();
+    repeated.len()
+}
+
 /// The outputs the viewer's input for poses really hears.
 fn heard(desk: &triq::Runtime) -> Vec<String> {
     let viewer = desk.inventory().nodes.into_iter().find(|node| node.name == "viewer").expect("the viewer");
@@ -71,6 +90,7 @@ fn what_is_changed_while_drafting_waits_until_the_draft_is_applied() -> triq::Re
 
     // Begin a draft, and in it have the viewer hear the second filter instead of the first.
     assert!(harness.state().drafted().is_empty() && !shows(&harness, "Apply draft"));
+    assert_eq!(glowing(&harness), 0);
     press(&mut harness, "Draft");
     assert!(shows(&harness, "Draft: no changes") && shows(&harness, "Apply draft"));
     let graph = harness.state().graph();
@@ -81,6 +101,8 @@ fn what_is_changed_while_drafting_waits_until_the_draft_is_applied() -> triq::Re
     // The machine is as it was. The drawing shows both wires: the one that is to go, and the one that is to come.
     assert_eq!(heard(&scene.desk), std::slice::from_ref(&first));
     assert_eq!(drawn(&harness, &viewer), [second.clone(), first.clone()]);
+    // Each of the two has a glow along it, and no other wire has.
+    assert_eq!(glowing(&harness), 2);
     // What is held back is listed in the order it was done.
     assert_eq!(harness.state().drafted(), [cut.clone(), join.clone()]);
     assert!(shows(&harness, "Draft: 2 changes"));
@@ -107,7 +129,7 @@ fn what_is_changed_while_drafting_waits_until_the_draft_is_applied() -> triq::Re
     assert!(wait_for(|| heard(&scene.desk) == [second.clone()]), "{:?}", heard(&scene.desk));
     assert!(until(&mut harness, |harness| drawn(harness, &viewer) == [second.clone()]));
     assert!(shows(&harness, "Draft") && !shows(&harness, "Apply draft"));
-    assert_eq!(harness.state().drafted(), []);
+    assert_eq!((harness.state().drafted(), glowing(&harness)), (Vec::new(), 0));
     Ok(())
 }
 

@@ -959,7 +959,7 @@ dependencies = [
 [[package]]
 name = "egui-snarl"
 version = "0.13.0"
-source = "git+https://github.com/Derekbenj/egui-snarl.git?rev=070c5d137ac3aaa6abe4eae8b99916a7a09cc546#070c5d137ac3aaa6abe4eae8b99916a7a09cc546"
+source = "git+https://github.com/Derekbenj/egui-snarl.git?rev=a3945ae82e012905c4dcc6fa7ccc10db4b7a5280#a3945ae82e012905c4dcc6fa7ccc10db4b7a5280"
 dependencies = [
  "ahash",
  "egui",

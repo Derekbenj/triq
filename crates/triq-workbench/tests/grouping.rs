@@ -59,7 +59,7 @@ fn nodes_are_grouped_and_a_group_is_looked_into_and_taken_apart_with_blenders_ke
     assert_eq!(cards(&harness), sorted([imu.clone(), smoother.clone(), viewer.clone()]));
 
     // Select the sensor and the filter, with Shift held. That was a mistake: a click beside the
-    // cards with the command key held lets go of them all at once, and then Ctrl+G has nothing to group.
+    // cards lets go of them all at once, and then Ctrl+G has nothing to group.
     let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
     let select = |harness: &mut Bench<'_>| {
         for card in ["imu", "smoother"] {
@@ -67,6 +67,11 @@ fn nodes_are_grouped_and_a_group_is_looked_into_and_taken_apart_with_blenders_ke
             shift_click(harness, name);
         }
     };
+    select(&mut harness);
+    click(&mut harness, empty, PointerButton::Primary);
+    key(&mut harness, Modifiers::CTRL, Key::G);
+    assert_eq!(harness.state().groups(), &Groups::new());
+    // So does a click there with the command key held.
     select(&mut harness);
     click_holding(&mut harness, empty, Modifiers::COMMAND);
     key(&mut harness, Modifiers::CTRL, Key::G);
@@ -285,7 +290,7 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     assert_eq!(cards(&harness), sorted(["/group1".to_owned(), viewer.clone()]));
     // The viewer is put into it from its details, which list the groups it can be moved into.
     let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
-    click_holding(&mut harness, empty, Modifiers::COMMAND);
+    click(&mut harness, empty, PointerButton::Primary);
     let card = header(&harness, "viewer");
     click(&mut harness, card, PointerButton::Primary);
     harness.get_by_role(Role::ComboBox).click();

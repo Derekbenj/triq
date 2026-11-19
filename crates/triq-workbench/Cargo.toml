@@ -15,8 +15,8 @@ triq.workspace = true
 triq-tap.workspace = true
 # With what it takes to keep the window and its arrangement from one run to the next.
 eframe = { version = "=0.37.0", features = ["persistence"] }
-# The fork carries the egui 0.37 port and the wire and menu behaviour the graph relies on.
-egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "070c5d137ac3aaa6abe4eae8b99916a7a09cc546", default-features = false }
+# The fork carries the egui 0.37 port and the wire and click behaviour the graph relies on.
+egui-snarl = { git = "https://github.com/Derekbenj/egui-snarl.git", rev = "a3945ae82e012905c4dcc6fa7ccc10db4b7a5280", default-features = false }
 # Lays the windows and the charts out as panes, which are resized and dragged about.
 egui_tiles = { version = "=0.18.0", default-features = false, features = ["serde"] }
 # The rules that panes are arranged by, shared with the windows that projects make for their views.

@@ -157,7 +157,7 @@ fn plain(dark: bool) -> Color32 {
 }
 
 /// The glow around a card that the draft creates, changes or removes, and
-/// around the pins of a wire that it draws or cuts.
+/// along a wire that it draws or cuts, with the pins at its ends.
 fn glow(dark: bool) -> egui::Shadow {
     egui::Shadow { offset: [0, 0], blur: 12, spread: 4, color: drafted(dark).gamma_multiply(0.7) }
 }
@@ -364,6 +364,13 @@ impl SnarlViewer<Card> for Viewer<'_> {
             None if self.dimmed(source) => grey(self.dark),
             None => sender,
         }
+    }
+
+    /// A wire that the draft draws or cuts has a glow along it.
+    fn connected_wire_glow(&mut self, from: OutPinId, to: InPinId, snarl: &Snarl<Card>) -> Option<Color32> {
+        let (source, sink) = (&snarl[from.node], &snarl[to.node]);
+        let mark = self.marks.wire(&source.output(from.output), &sink.input(to.input));
+        mark.map(|_| glow(self.dark).color)
     }
 
     fn inputs(&mut self, card: &Card) -> usize {

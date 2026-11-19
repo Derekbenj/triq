@@ -299,8 +299,8 @@ In `Runtimes`, `Graph` and `Details`:
 - Everything can be drafted: wires drawn and cut, settings, pausing and resuming, removing a node,
   and creating one. A node that is to be created is drawn with the ports its factory says it will
   have, and can be wired like any other.
-- What is only drafted is grey, with a glow around it: a new node, a new wire, and the pins at the
-  ends of a wire that is new or to be cut. A wire that is to be cut is faint. A card that is to
+- What is only drafted is grey, with a glow around it: a new node, and a new wire with the pins at
+  its ends. A wire that is to be cut is faint, and has the same glow along it. A card that is to
   be changed or removed keeps its colour, has the glow, and says what is to happen to it.
 - A draft holds what it takes to get from the machine to the drawing and no more: one change for
   each thing that differs. Draw a wire and take it away again twenty times, and there is nothing
@@ -325,7 +325,7 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 | To | Do this |
 | --- | --- |
 | select several cards | hold Shift and click them, or hold Shift and drag across them |
-| let go of all that is selected | hold `Cmd` and click beside the cards |
+| let go of all that is selected | click beside the cards |
 | let go of one card | hold `Cmd` and click it |
 | make a group of the selected cards | `Cmd+G`, or `Make Group` in `Details` |
 | put the selected cards into a group that is there | select that group last and press `Cmd+Shift+G`, or `Move into` in `Details` |

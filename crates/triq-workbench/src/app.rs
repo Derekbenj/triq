@@ -586,8 +586,8 @@ impl Contents {
                     ui.weak("Pause a node with the button on its card. Its details have the rest.");
                     ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
                     ui.weak(format!(
-                        "Hold Shift and click nodes, or drag across them, to select several. With {held} held, a click \
-                         beside the nodes lets go of them all."
+                        "Hold Shift and click nodes, or drag across them, to select several. A click beside the \
+                         nodes lets go of them all, and a click on one with {held} held lets go of that one."
                     ));
                     ui.weak(format!(
                         "{make} makes a group of what is selected, which is drawn as one node, and {into} puts it \
