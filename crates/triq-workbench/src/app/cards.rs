@@ -2,9 +2,10 @@
 //! of cards, pins and wires, and what a click, a drag or a menu there asks for.
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
-//! the wires that leave it. The card of a group is white, or black on a
-//! light background, with a dot for each runtime its nodes run in, and each
-//! of its pins is the colour of its node. When a card is clicked, every card
+//! the wires that leave it. The card of a group is outlined in white, or in
+//! black on a light background. Its header is tinted with the colours of the
+//! runtimes its nodes run in, mixed, with a dot for each, and each of its
+//! pins is the colour of its node. When a card is clicked, every card
 //! that no wire joins to it goes grey. What is only drafted is a light grey,
 //! with a glow around it.
 use super::details::{rate, toggle};
@@ -67,6 +68,19 @@ impl Viewer<'_> {
                 Kind::Group { .. } | Kind::Entry { .. } | Kind::Exit { .. } => plain(self.dark),
             },
         }
+    }
+
+    /// What the header of a card is tinted with: the colour of the card,
+    /// and for a group the colours of the runtimes its nodes run in, mixed.
+    fn tint(&self, card: &Card) -> Color32 {
+        let mixed = match &card.kind {
+            Kind::Group { members, .. } if self.mark(card) != Some(Mark::New) && !self.dimmed(card) => {
+                let runtimes: BTreeSet<&str> = members.iter().map(|(runtime, _)| runtime.as_str()).collect();
+                self.colors.blend(runtimes, self.dark)
+            }
+            _ => None,
+        };
+        mixed.unwrap_or_else(|| self.color(card))
     }
 
     /// A pin, and any wire that leaves it, in the colour of the runtime of
@@ -330,19 +344,19 @@ impl SnarlViewer<Card> for Viewer<'_> {
         snarl: &Snarl<Card>,
     ) -> egui::Frame {
         let card = &snarl[node];
-        // A card that is greyed has hardly any of its colour, and one that is no runtime's has little.
-        let tint = match &card.kind {
+        // A card that is greyed has hardly any of its colour, and one that stands for the outside has little.
+        let strength = match &card.kind {
             _ if self.dimmed(card) => 0.08,
-            Kind::Node { .. } => {
+            Kind::Node { .. } | Kind::Group { .. } => {
                 if self.dark {
                     0.28
                 } else {
                     0.20
                 }
             }
-            Kind::Group { .. } | Kind::Entry { .. } | Kind::Exit { .. } => 0.12,
+            Kind::Entry { .. } | Kind::Exit { .. } => 0.12,
         };
-        default.fill(default.fill.lerp_to_gamma(self.color(card), tint)).corner_radius(9)
+        default.fill(default.fill.lerp_to_gamma(self.tint(card), strength)).corner_radius(9)
     }
 
     fn has_node_style(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], snarl: &Snarl<Card>) -> bool {

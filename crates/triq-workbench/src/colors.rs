@@ -55,6 +55,16 @@ impl Colors {
         self.chosen.get(runtime).copied().unwrap_or_else(given)
     }
 
+    /// The colours of some runtimes mixed in equal parts, for what belongs to them all.
+    pub fn blend<'a>(&self, runtimes: impl IntoIterator<Item = &'a str>, dark: bool) -> Option<Color32> {
+        let colors: Vec<Color32> = runtimes.into_iter().map(|runtime| self.of(runtime, dark)).collect();
+        let mean = |part: fn(&Color32) -> u8| {
+            let sum: usize = colors.iter().map(|color| usize::from(part(color))).sum();
+            (sum / colors.len()) as u8
+        };
+        (!colors.is_empty()).then(|| Color32::from_rgb(mean(Color32::r), mean(Color32::g), mean(Color32::b)))
+    }
+
     /// Choose the colour of a runtime, or with `None` give it one of the palette again.
     pub fn choose(&mut self, runtime: &str, color: Option<Color32>) {
         match color {

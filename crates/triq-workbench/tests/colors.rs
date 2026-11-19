@@ -67,3 +67,15 @@ fn a_colour_that_was_chosen_for_a_runtime_is_its_colour_until_it_is_given_back()
     assert!(colors.chosen().is_empty());
     assert_eq!(colors.of("bevy", true), given);
 }
+
+#[test]
+fn a_group_has_the_colours_of_its_runtimes_mixed() {
+    let mut colors = Colors::default();
+    colors.update(["bevy", "xbox"]);
+    colors.choose("bevy", Some(Color32::from_rgb(0, 0, 200)));
+    colors.choose("xbox", Some(Color32::from_rgb(200, 100, 0)));
+    // Nodes of one runtime: that runtime's colour. Of two: what lies halfway between them.
+    assert_eq!(colors.blend(["bevy"], true), Some(Color32::from_rgb(0, 0, 200)));
+    assert_eq!(colors.blend(["bevy", "xbox"], true), Some(Color32::from_rgb(100, 50, 100)));
+    assert_eq!(colors.blend([], true), None);
+}
