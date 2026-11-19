@@ -326,3 +326,24 @@ fn only_the_cards_seen_last_are_remembered() {
     assert!(kept.contains_key("run10/imu") && kept.contains_key(&format!("run{}/imu", graph::REMEMBERED + 9)));
     assert_eq!(graph::remembered(&kept), kept, "what fits is kept as it is");
 }
+
+#[test]
+fn the_cards_that_wires_join_to_a_card_are_found_also_through_others() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name(), scene.desk.name());
+    // A node that is wired to nothing.
+    let _spare: ImuPorts = scene.desk.attach("spare")?;
+    let mut snarl = Snarl::new();
+    graph::sync(&mut snarl, &scene.inventories());
+    let joined = |key: &str| graph::joined(&snarl, key).into_iter().collect::<Vec<_>>();
+
+    // The sensor feeds the filter and the filter the viewer: whichever is asked about, it is the three.
+    let chain = sorted([format!("{robot}/imu"), format!("{robot}/smoother"), format!("{desk}/viewer")]);
+    for card in &chain {
+        assert_eq!(joined(card), chain, "from {card}");
+    }
+    // A card with no wire is joined to itself alone, and what is not on the drawing to nothing.
+    assert_eq!(joined(&format!("{desk}/spare")), [format!("{desk}/spare")]);
+    assert_eq!(joined(&format!("{desk}/nobody")), Vec::<String>::new());
+    Ok(())
+}

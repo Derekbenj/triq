@@ -1,10 +1,10 @@
 //! From what the runtimes report to what is drawn: one card per node, one wire
 //! per live connection. Nothing here talks to a runtime or to the screen.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
-use egui_snarl::{InPinId, OutPinId, Snarl};
+use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use triq::{Direction, Inventory, NodeInfo, PortSpec};
 
 /// One node of one runtime, as drawn.
@@ -141,6 +141,28 @@ pub fn sync_with(snarl: &mut Snarl<Card>, inventories: &[Inventory], places: &mu
     for (from, to) in wanted.difference(&drawn) {
         snarl.connect(*from, *to);
     }
+}
+
+/// The cards that wires join to the card called `key`, also by way of other
+/// cards, and that card itself. Which way a wire carries data does not
+/// matter. Nothing, if no card on the drawing is called that.
+pub fn joined(snarl: &Snarl<Card>, key: &str) -> BTreeSet<String> {
+    let called = snarl.nodes_ids_data().filter(|(_, drawn)| drawn.value.key() == key);
+    let mut reached: HashSet<NodeId> = called.map(|(id, _)| id).collect();
+    let wires: Vec<[NodeId; 2]> = snarl.wires().map(|(from, to)| [from.node, to.node]).collect();
+    // Each round takes in the cards one wire further out, until there is none.
+    loop {
+        let before = reached.len();
+        for ends in &wires {
+            if ends.iter().any(|end| reached.contains(end)) {
+                reached.extend(ends);
+            }
+        }
+        if reached.len() == before {
+            break;
+        }
+    }
+    reached.into_iter().map(|id| snarl[id].key()).collect()
 }
 
 const LEFT: f32 = 40.0;

@@ -13,7 +13,8 @@
 //! a request to a runtime. A wire appears when its owner says it exists.
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
-//! the wires that leave it.
+//! the wires that leave it. When a card is clicked, every card that no wire
+//! joins to it goes grey, until a click beside the cards.
 use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
@@ -24,7 +25,7 @@ use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tabs, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{FactoryInfo, Inventory, NodeState, Placement, PoolInfo, PortSpec};
@@ -375,6 +376,7 @@ impl Contents {
                     "Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.",
                 );
                 ui.weak("Right-click a node to pause or remove it.");
+                ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
             }
             Focus::Node { key, settings } => {
                 let card = self.snarl.nodes().find(|card| card.key() == *key);
@@ -431,7 +433,13 @@ impl Contents {
         let carried = self.canvas.replace(canvas).map_or(egui::Vec2::ZERO, |before| canvas.center() - before.center());
         let (feed, colors, dark) = (&self.feed, &self.colors, ui.visuals().dark_mode);
         let (inventories, rates) = (&inventories[..], &*rates);
-        let mut viewer = Viewer { feed, colors, dark, focus: &mut self.focus, inventories, rates, frame, carried };
+        // With a card selected, only what wires join to it keeps its colour.
+        let lit = match &self.focus {
+            Focus::Node { key, .. } => Some(graph::joined(&self.snarl, key)).filter(|lit| !lit.is_empty()),
+            _ => None,
+        };
+        let focus = &mut self.focus;
+        let mut viewer = Viewer { feed, colors, dark, focus, lit, inventories, rates, frame, carried };
         // Text that could be selected would swallow the press that moves, selects or opens the menu of a card.
         ui.style_mut().interaction.selectable_labels = false;
         SnarlWidget::new().id_salt("triq-graph").style(style).show(&mut self.snarl, &mut viewer, ui);
@@ -685,6 +693,9 @@ struct Viewer<'a> {
     /// Whether the window is drawn light on dark.
     dark: bool,
     focus: &'a mut Focus,
+    /// The cards that keep their colour while one is selected: that one, and
+    /// all that wires join to it. `None` while none is: then every card does.
+    lit: Option<BTreeSet<String>>,
     inventories: &'a [Inventory],
     rates: &'a Rates,
     /// A view to switch to this frame.
@@ -694,14 +705,25 @@ struct Viewer<'a> {
 }
 
 impl Viewer<'_> {
+    /// Whether a card is greyed: another is selected, and no wire joins this one to it.
+    fn dimmed(&self, card: &Card) -> bool {
+        self.lit.as_ref().is_some_and(|lit| !lit.contains(&card.key()))
+    }
+
+    /// The colour of a card's runtime, or grey for a card that is greyed.
     fn color(&self, card: &Card) -> Color32 {
-        self.colors.of(&card.runtime, self.dark)
+        if self.dimmed(card) { grey(self.dark) } else { self.colors.of(&card.runtime, self.dark) }
     }
 
     /// A pin, and any wire that leaves it, in the colour of the node's runtime.
     fn pin(&self, card: &Card) -> PinInfo {
         PinInfo::circle().with_fill(self.color(card)).with_wire_color(self.color(card))
     }
+}
+
+/// The grey of a card that no wire joins to the one that is selected.
+fn grey(dark: bool) -> Color32 {
+    Color32::from_gray(if dark { 105 } else { 150 })
 }
 
 /// A dot in the colour of a runtime. It stands for the runtime, and is named after it.
@@ -761,7 +783,12 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let card = &snarl[node];
         ui.horizontal(|ui| {
             dot(ui, self.color(card), &card.runtime);
-            ui.strong(&card.node.name);
+            // The name of a card that is greyed does not stand out either.
+            if self.dimmed(card) {
+                ui.label(&card.node.name)
+            } else {
+                ui.strong(&card.node.name)
+            };
             match &card.node.state {
                 NodeState::Running => ui.weak("running"),
                 NodeState::Paused => ui.colored_label(ui.visuals().warn_fg_color, "paused"),
@@ -798,8 +825,29 @@ impl SnarlViewer<Card> for Viewer<'_> {
         _: &[OutPin],
         snarl: &Snarl<Card>,
     ) -> egui::Frame {
-        let tint = if self.dark { 0.28 } else { 0.20 };
-        default.fill(default.fill.lerp_to_gamma(self.color(&snarl[node]), tint)).corner_radius(9)
+        let card = &snarl[node];
+        let tint = if self.dimmed(card) {
+            0.08
+        } else if self.dark {
+            0.28
+        } else {
+            0.20
+        };
+        default.fill(default.fill.lerp_to_gamma(self.color(card), tint)).corner_radius(9)
+    }
+
+    fn has_node_style(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], snarl: &Snarl<Card>) -> bool {
+        self.dimmed(&snarl[node])
+    }
+
+    /// What is written on a card that is greyed is grey too.
+    fn apply_node_style(&mut self, style: &mut egui::Style, _: NodeId, _: &[InPin], _: &[OutPin], _: &Snarl<Card>) {
+        style.visuals.override_text_color = Some(grey(self.dark));
+    }
+
+    /// A wire is greyed with the cards at its ends.
+    fn connected_wire_color(&mut self, from: OutPinId, _: InPinId, snarl: &Snarl<Card>, sender: Color32) -> Color32 {
+        if self.dimmed(&snarl[from.node]) { grey(self.dark) } else { sender }
     }
 
     fn inputs(&mut self, card: &Card) -> usize {
