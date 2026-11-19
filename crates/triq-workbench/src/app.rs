@@ -596,6 +596,10 @@ impl Contents {
                          and Tab leaves it again. Inside, P moves what is selected one group out. {apart} takes a \
                          group apart."
                     ));
+                    ui.weak(
+                        "Inside a group, a pin on Group Input or Group Output stands for what is connected \
+                         outside: wire to it and cut its wire like any other.",
+                    );
                 }
                 Focus::Node { key, settings } => {
                     if let Some((home, node)) = node(&inventories, key) {

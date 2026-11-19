@@ -12,6 +12,7 @@ use serde_json::json;
 use triq::{Group, Placement};
 use triq_workbench::egui::accesskit::Role;
 use triq_workbench::egui::{self, Key, Modifiers, PointerButton};
+use triq_workbench::feed::Request;
 use triq_workbench::graph::{Card, Groups};
 use window::*;
 
@@ -82,6 +83,25 @@ fn fading(harness: &Bench<'_>) -> usize {
         }
     }
     harness.output().shapes.iter().map(|clipped| meshes(&clipped.shape)).sum()
+}
+
+/// Where the pin of a port is on screen: the circle on the edge of a card, in the row where
+/// `label` is written. `after` is whether the pin is to the right of that, as an output's is.
+fn pin(harness: &Bench<'_>, label: &str, after: bool) -> egui::Pos2 {
+    fn circles(shape: &egui::Shape, found: &mut Vec<egui::Pos2>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| circles(shape, found)),
+            egui::Shape::Circle(circle) => found.push(circle.center),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    harness.output().shapes.iter().for_each(|clipped| circles(&clipped.shape, &mut found));
+    let written = seen(harness, &text(harness, label));
+    let level = 6.0 * view(harness).scaling;
+    let in_row = found.into_iter().filter(|pin| (pin.y - written.y).abs() < level && (pin.x > written.x) == after);
+    let nearest = in_row.min_by(|a, b| (a.x - written.x).abs().total_cmp(&(b.x - written.x).abs()));
+    nearest.unwrap_or_else(|| panic!("no pin beside {label:?}"))
 }
 
 fn sorted<const N: usize>(mut names: [String; N]) -> Vec<String> {
@@ -449,5 +469,139 @@ fn a_group_that_a_runtime_offers_as_a_kind_is_created_whole() -> triq::Result {
     harness.get_by_label("Discard draft").click();
     harness.run_steps(4);
     assert!(!cards(&harness).contains(&"/pair1/pair3".to_owned()));
+    Ok(())
+}
+
+#[test]
+fn a_wire_is_cut_with_a_right_click_wherever_it_is_drawn() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    // The sensor and the filter are one group. The viewer, which hears the filter, is another.
+    scene.robot.set_group("imu", "sensing")?;
+    scene.robot.set_group("smoother", "sensing")?;
+    scene.desk.set_group("viewer", "looking")?;
+    let cut = Request::Disconnect { from: format!("{robot}/smoother/smooth"), to: format!("{desk}/viewer/pose") };
+    let mut harness = open()?;
+    let outside = sorted(["/looking".to_owned(), "/sensing".to_owned()]);
+    assert!(until(&mut harness, |harness| cards(harness) == outside), "{:?}", cards(&harness));
+    harness.run_steps(4);
+    // What is cut is held back in a draft, to be seen at once. Each time, the draft is begun afresh.
+    let draft = |harness: &mut Bench<'_>| {
+        if shows(harness, "Discard draft") {
+            harness.get_by_label("Discard draft").click();
+            harness.run_steps(3);
+        }
+        harness.get_by_label("Draft").click();
+        harness.run_steps(3);
+    };
+    let right_click = |harness: &mut Bench<'_>, at: egui::Pos2, what: &str| {
+        draft(harness);
+        click(harness, at, PointerButton::Secondary);
+        harness.run_steps(2);
+        assert_eq!(harness.state().drafted(), std::slice::from_ref(&cut), "a right click on {what}");
+    };
+    let halfway = |from: egui::Pos2, to: egui::Pos2| from + (to - from) / 2.0;
+
+    // From outside, the wire runs from the card of one group to the card of the other.
+    let (from, to) = (pin(&harness, "smoother.smooth: Pose", true), pin(&harness, "viewer.pose: Pose", false));
+    right_click(&mut harness, halfway(from, to), "the wire between two groups");
+    right_click(&mut harness, to, "the pin it arrives at");
+    right_click(&mut harness, from, "the pin it leaves");
+
+    // Inside the group that sends, the wire runs from the filter to the card that stands for the
+    // outside. Cutting it there cuts the filter off from what hears it outside the group.
+    let card = header(&harness, "sensing");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("sensing"));
+    let (from, to) = (pin(&harness, "smooth: Pose", true), pin(&harness, "smoother.smooth: Pose", false));
+    right_click(&mut harness, halfway(from, to), "the wire to Group Output");
+    right_click(&mut harness, to, "the pin on Group Output");
+    right_click(&mut harness, from, "the pin of the filter");
+    harness.get_all_by_label("Exit Group").next().expect("the way out").click();
+    harness.run_steps(4);
+
+    // Inside the group that hears, it runs from the card that stands for the outside to the viewer.
+    let card = header(&harness, "looking");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("looking"));
+    let (from, to) = (pin(&harness, "viewer.pose: Pose", true), pin(&harness, "pose: Pose", false));
+    right_click(&mut harness, halfway(from, to), "the wire from Group Input");
+    right_click(&mut harness, from, "the pin on Group Input");
+    right_click(&mut harness, to, "the pin of the viewer");
+    Ok(())
+}
+
+#[test]
+fn inside_a_group_a_pin_for_the_outside_is_wired_as_what_it_stands_for() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    // The sensor and the filter are one group. The viewer, which hears the filter, is another, with
+    // a second filter that feeds the first.
+    scene.robot.spawn_kind("filter", "spare", Placement::Dedicated, json!(null))?;
+    scene.robot.connect("spare/smooth", "smoother/raw")?;
+    for (runtime, node, group) in [
+        (&scene.robot, "imu", "sensing"),
+        (&scene.robot, "smoother", "sensing"),
+        (&scene.robot, "spare", "looking"),
+        (&scene.desk, "viewer", "looking"),
+    ] {
+        runtime.set_group(node, group)?;
+    }
+    let (sensor, filtered) = (format!("{robot}/imu/pose"), format!("{robot}/smoother/smooth"));
+    let viewer = format!("{desk}/viewer/pose");
+    let connect = |from: &String, to: &String| Request::Connect { from: from.clone(), to: to.clone() };
+    let mut harness = open()?;
+    let outside = sorted(["/looking".to_owned(), "/sensing".to_owned()]);
+    assert!(until(&mut harness, |harness| cards(harness) == outside), "{:?}", cards(&harness));
+    harness.run_steps(4);
+    harness.get_by_label("Draft").click();
+    harness.run_steps(3);
+
+    // Inside the group that sends, the viewer is to hear the sensor instead of the filter. It is
+    // not in here: the pin on Group Output stands for it, and says so.
+    let card = header(&harness, "sensing");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("sensing"));
+    let written = seen(&harness, &text(&harness, "smoother.smooth: Pose"));
+    harness.hover_at(written);
+    harness.run_steps(6);
+    assert!(harness.query_by_label_contains(&format!("goes to {viewer}")).is_some(), "the pin says where it leads");
+    // Cut the filter's wire to that pin, and draw one from the sensor to it.
+    let (filter, door) = (pin(&harness, "smooth: Pose", true), pin(&harness, "smoother.smooth: Pose", false));
+    click(&mut harness, filter + (door - filter) / 2.0, PointerButton::Secondary);
+    let source = pin(&harness, "pose: Pose", true);
+    drag(&mut harness, source, door);
+    harness.run_steps(3);
+    let cut = Request::Disconnect { from: filtered.clone(), to: viewer.clone() };
+    assert_eq!(harness.state().drafted(), [cut, connect(&sensor, &viewer)]);
+    // The sensor leads outside now as well, and has a pin of its own on Group Output.
+    assert!(shows(&harness, "imu.pose: Pose"));
+    harness.remove_cursor();
+    harness.run_steps(3);
+    picture(&mut harness, "draft-inside-group.png");
+    harness.get_all_by_label("Exit Group").next().expect("the way out").click();
+    harness.run_steps(4);
+    harness.get_by_label("Discard draft").click();
+    harness.run_steps(3);
+    harness.get_by_label("Draft").click();
+    harness.run_steps(3);
+
+    // Inside the group that hears, the second filter is to hear what the viewer hears. A wire from
+    // the viewer's pin on Group Input is a connection from the output that comes in there.
+    let card = header(&harness, "looking");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("looking"));
+    let (entry, spare) = (pin(&harness, "viewer.pose: Pose", true), pin(&harness, "raw: Pose", false));
+    drag(&mut harness, entry, spare);
+    harness.run_steps(3);
+    assert_eq!(harness.state().drafted(), [connect(&filtered, &format!("{robot}/spare/raw"))]);
+    // A wire from one of the two cards to the other would pass every node of the group by: it is refused.
+    let exit = pin(&harness, "spare.smooth: Pose", false);
+    drag(&mut harness, entry, exit);
+    harness.run_steps(3);
+    assert_eq!(harness.state().drafted().len(), 1);
+    assert!(harness.query_by_label_contains("begins or ends at one of its nodes").is_some());
     Ok(())
 }

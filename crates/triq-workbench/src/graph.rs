@@ -9,7 +9,9 @@
 //! of the groups inside it, each as one card again, and of two more cards
 //! that stand for the outside. Whatever the group hears from outside comes
 //! from the one, and whatever it sends there goes to the other. A port that
-//! is connected to nothing is on neither: it leads nowhere yet.
+//! is connected to nothing is on neither: it leads nowhere yet. A pin on one
+//! of the two knows what it stands for out there, so that it can be wired
+//! from inside the group (see `app/cards.rs`).
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
@@ -51,6 +53,11 @@ pub struct Pin {
     pub runtime: String,
     pub node: String,
     pub port: Port,
+    /// On the card of a group, and on a card that stands for the outside of
+    /// one: the ports outside the group that this one is connected with,
+    /// each `runtime/node/port`. For an input they are the outputs it hears
+    /// from there, and for an output the inputs that hear it there.
+    pub outside: Vec<String>,
 }
 
 /// What a runtime reports of a port.
@@ -154,7 +161,7 @@ pub fn replant(inner: &str, from: &str, to: Option<&str>) -> Option<String> {
 impl Card {
     /// The card of a node: a pin for each of its ports.
     pub fn of(runtime: &str, node: &NodeInfo) -> Self {
-        let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
+        let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port, outside: Vec::new() };
         Self {
             kind: Kind::Node { runtime: runtime.to_owned(), node: node.clone() },
             left: node.inputs.iter().cloned().map(Port::Input).map(pin).collect(),
@@ -287,11 +294,14 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
         let mut parts = output.split('/');
         group_of(parts.next()?, parts.next()?)
     };
-    // For each output, the group of every node that hears it.
-    let mut heard_in: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
+    // For each output, every input that hears it, with the group of its node.
+    let mut heard_by: HashMap<&str, Vec<(String, Option<&str>)>> = HashMap::new();
     for (runtime, node) in nodes() {
-        for source in node.inputs.iter().flat_map(|input| &input.sources) {
-            heard_in.entry(&source.output).or_default().push(group_of(runtime, &node.name));
+        for input in &node.inputs {
+            let name = format!("{runtime}/{}/{}", node.name, input.port.name);
+            for source in &input.sources {
+                heard_by.entry(&source.output).or_default().push((name.clone(), group_of(runtime, &node.name)));
+            }
         }
     }
     // The ports of a group that lead outside it, on the left what it hears and on the right what
@@ -299,18 +309,20 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
     let shown = |group: &str, unconnected: bool| {
         let (mut left, mut right) = (Vec::new(), Vec::new());
         for (runtime, node) in members(group) {
-            let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
+            let pin = |port, outside| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port, outside };
             for input in &node.inputs {
-                let from_outside = input.sources.iter().any(|source| !is_in(sent_from(&source.output), group));
-                if from_outside || (unconnected && input.sources.is_empty()) {
-                    left.push(pin(Port::Input(input.clone())));
+                let outputs = input.sources.iter().map(|source| &source.output);
+                let outside: Vec<String> = outputs.filter(|output| !is_in(sent_from(output), group)).cloned().collect();
+                if !outside.is_empty() || (unconnected && input.sources.is_empty()) {
+                    left.push(pin(Port::Input(input.clone()), outside));
                 }
             }
             for output in &node.outputs {
-                let heard = heard_in.get(output.service.as_str());
-                let outside = heard.is_some_and(|heard| heard.iter().any(|by| !is_in(*by, group)));
-                if outside || (unconnected && heard.is_none()) {
-                    right.push(pin(Port::Output(output.clone())));
+                let heard = heard_by.get(output.service.as_str());
+                let inputs = heard.into_iter().flatten().filter(|(_, by)| !is_in(*by, group));
+                let outside: Vec<String> = inputs.map(|(input, _)| input.clone()).collect();
+                if !outside.is_empty() || (unconnected && heard.is_none()) {
+                    right.push(pin(Port::Output(output.clone()), outside));
                 }
             }
         }

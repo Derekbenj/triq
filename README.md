@@ -397,6 +397,20 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   outside comes from `Group Input`, and what it sends there goes to `Group Output`. A port that is
   connected to nothing is on neither; it is a pin of its node, to be wired inside the group. Step
   out, and the card of the group offers it, to be wired from outside.
+- A pin on one of those two cards stands for what its port is connected with outside the group.
+  Hover over it to see what that is. Wire it as you would the port out there:
+  - Cut its wire, with a right-click on the wire or on a pin, and the port is cut off from
+    everything the pin stands for.
+  - Draw a wire from an output in the group to a pin of `Group Output`, and that output is
+    connected to the inputs the pin stands for.
+  - Draw a wire from a pin of `Group Input` to an input in the group, and that input hears the
+    outputs the pin stands for.
+
+  So what enters or leaves a group can be rewired without leaving it. Such a pin is there for as
+  long as its port is connected with the outside. In a draft, a wire that is cut stays until the
+  draft is applied, and its pin with it: cut one wire to the pin and draw another there. Without
+  a draft the pin goes with its last wire, and the same is done from outside, between the cards
+  of the two groups.
 - What is created while the graph shows the inside of a group is in that group: a node, or a
   group of a kind that its runtime offers, which is then a group inside the one that is shown.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.

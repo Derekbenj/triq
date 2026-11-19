@@ -131,6 +131,10 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     assert_eq!((entry.name(), exit.name()), ("Group Input", "Group Output"));
     assert_eq!(written(entry), [vec![], vec!["smoother.raw: Pose".to_owned()]]);
     assert_eq!(written(exit), [vec!["smoother.smooth: Pose".to_owned()], vec![]]);
+    // Each pin there stands for what its port is connected with outside the group: the output
+    // that comes in, and the input that it goes out to.
+    assert_eq!(entry.right[0].outside, [format!("{robot}/imu/pose")]);
+    assert_eq!(exit.left[0].outside, [format!("{desk}/viewer/pose")]);
     graph::show(&mut snarl, cards, &mut places, 2);
     assert_eq!(wires(&snarl), ["Group Input raw -> smoother raw", "smoother smooth -> Group Output smooth"]);
     // The filter's card is where it was outside, with the two others to its left and to its right.
