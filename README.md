@@ -310,6 +310,10 @@ where it will land, and it matters how high on the other pane you drop it:
 - A pane dropped on a bar, among its names, becomes one more name on that bar.
 - Clicking a name on a bar brings its pane to the front.
 - A group that is left with only one pane stops being a group, and its bar disappears.
+- `Runtimes`, `Details` and the list of numbers in `Charts` are laid out in the width they are
+  given: what is written wraps, and what is filled in has less room. Each has a least width, about
+  200 points. Made narrower than that, a pane squeezes nothing further, and cuts off what does
+  not fit. The list of numbers gives way to the charts beside it down to its least width.
 
 ### The graph
 
@@ -393,24 +397,19 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - The card of a group shows the ports of its nodes that are connected to nothing, or to something
   outside the group, each as `node.port`. Wires between the nodes of a group are not shown from
   outside. A pin of a group is the port of its node: wire it as you would the node's own pin.
-- Inside a group, two more cards stand for the outside, as in Blender: what the group hears from
-  outside comes from `Group Input`, and what it sends there goes to `Group Output`. A port that is
-  connected to nothing is on neither; it is a pin of its node, to be wired inside the group. Step
-  out, and the card of the group offers it, to be wired from outside.
-- A pin on one of those two cards stands for what its port is connected with outside the group.
-  Hover over it to see what that is. Wire it as you would the port out there:
-  - Cut its wire, with a right-click on the wire or on a pin, and the port is cut off from
-    everything the pin stands for.
-  - Draw a wire from an output in the group to a pin of `Group Output`, and that output is
-    connected to the inputs the pin stands for.
-  - Draw a wire from a pin of `Group Input` to an input in the group, and that input hears the
-    outputs the pin stands for.
-
-  So what enters or leaves a group can be rewired without leaving it. Such a pin is there for as
-  long as its port is connected with the outside. In a draft, a wire that is cut stays until the
-  draft is applied, and its pin with it: cut one wire to the pin and draw another there. Without
-  a draft the pin goes with its last wire, and the same is done from outside, between the cards
-  of the two groups.
+- Inside a group, two more cards stand for the outside, as in Blender, and show the ports out
+  there in the same way. `Group Input` has the outputs that the group hears, and `Group Output`
+  the inputs that hear it. With them are the ports that nothing is connected to yet, of the nodes
+  around the group: those of the group that this one is inside of, or of the whole machine if it
+  is inside none. So a group is wired to its surroundings without leaving it: every wire in there
+  is one connection, drawn and cut like any other.
+- A pin on one of those two cards is the port of a node outside the group, written `node.port`.
+  Hover over it to see it in full, with its runtime. A wire from `Group Input` straight to
+  `Group Output` is refused: it would connect nothing of the group.
+- In a draft, a port whose last wire is cut counts as connected to nothing at once: it is offered
+  on the card of its group, and on the two cards for the outside, with the glow of what is
+  drafted. Cut a wire inside a group, step out, and both its ends are pins of the group's card,
+  to be wired there in the same draft.
 - What is created while the graph shows the inside of a group is in that group: a node, or a
   group of a kind that its runtime offers, which is then a group inside the one that is shown.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.

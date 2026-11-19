@@ -26,8 +26,13 @@ pub fn alone() -> MutexGuard<'static, ()> {
 }
 
 pub fn open() -> triq::Result<Bench<'static>> {
+    open_as_wide_as(1500.0)
+}
+
+/// The workbench in a window that is so many points across.
+pub fn open_as_wide_as(width: f32) -> triq::Result<Bench<'static>> {
     Ok(Harness::builder()
-        .with_size(egui::vec2(1500.0, 900.0))
+        .with_size(egui::vec2(width, 900.0))
         .wgpu()
         .build_ui_state(|ui, bench: &mut Workbench| bench.show(ui), Workbench::new(Feed::start(|| {})?)))
 }

@@ -112,17 +112,16 @@ impl Viewer<'_> {
     /// through it. The counters are a hover away and in the details.
     fn row(&self, ui: &mut Ui, card: &Card, pin: &graph::Pin) -> Pin {
         let written = ui.label(card.written(pin));
-        // On a card that stands for the outside of a group, a pin says what it stands for out there.
-        let beyond = match &card.kind {
-            Kind::Entry { .. } => format!("\ncomes from {}", pin.outside.join(", ")),
-            Kind::Exit { .. } => format!("\ngoes to {}", pin.outside.join(", ")),
-            Kind::Node { .. } | Kind::Group { .. } => String::new(),
+        // On a card with the ports of several nodes, a pin says in full whose it is.
+        let whose = match &card.kind {
+            Kind::Node { .. } => String::new(),
+            Kind::Group { .. } | Kind::Entry { .. } | Kind::Exit { .. } => format!("{}\n", pin.name()),
         };
         match &pin.port {
             Port::Input(input) => {
                 let received: u64 = input.sources.iter().map(|source| source.received).sum();
                 let lost: u64 = input.sources.iter().map(|source| source.lost).sum();
-                written.on_hover_text(format!("{received} received, {lost} lost{beyond}"));
+                written.on_hover_text(format!("{whose}{received} received, {lost} lost"));
                 let waiting: Vec<&str> = input
                     .sources
                     .iter()
@@ -136,17 +135,11 @@ impl Viewer<'_> {
                 }
             }
             Port::Output(output) => {
-                written.on_hover_text(format!("{} sent to {} inputs{beyond}", output.sent, output.subscribers));
+                written.on_hover_text(format!("{whose}{} sent to {} inputs", output.sent, output.subscribers));
                 aside(ui, rate(self.rates, &output.service));
             }
         }
         self.pin(card, pin)
-    }
-
-    /// What the draft does to each of the connections that a wire stands for.
-    fn wire_marks(&self, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) -> Vec<Option<Mark>> {
-        let (source, sink) = (&snarl[from.node].right[from.output], &snarl[to.node].left[to.input]);
-        connections(source, sink).iter().map(|(output, input)| self.marks.wire(output, input)).collect()
     }
 
     /// The name at the top of a card. On a card that is greyed it does not stand out.
@@ -239,39 +232,19 @@ fn aside(ui: &mut Ui, text: String) -> egui::Response {
     space.inner
 }
 
-/// The connections that a wire between two pins stands for, each from an
-/// output to an input.
-///
-/// Between the pins of two nodes it is one. Inside a group, a pin of `Group
-/// Input` stands for the outputs that come in there, and a pin of `Group
-/// Output` for the inputs that it goes out to: a wire from or to such a pin
-/// is a connection with each of them. So the wire that joins a port to its
-/// own pin on one of those cards stands for everything the port is connected
-/// with outside the group.
-fn connections(source: &graph::Pin, sink: &graph::Pin) -> Vec<(String, String)> {
-    let outputs = match &source.port {
-        Port::Output(_) => vec![source.name()],
-        Port::Input(_) => source.outside.clone(),
-    };
-    let inputs = match &sink.port {
-        Port::Input(_) => vec![sink.name()],
-        Port::Output(_) => sink.outside.clone(),
-    };
-    outputs.iter().flat_map(|output| inputs.iter().map(move |input| (output.clone(), input.clone()))).collect()
+/// Whether a wire would run from one of the two cards that stand for the
+/// outside of a group to the other, past every node of the group.
+fn passes_by(snarl: &Snarl<Card>, from: OutPinId, to: InPinId) -> bool {
+    matches!((&snarl[from.node].kind, &snarl[to.node].kind), (Kind::Entry { .. }, Kind::Exit { .. }))
 }
 
-/// Whether a wire would run from `Group Input` straight to `Group Output`, past every node of the group.
-fn passes_through(source: &graph::Pin, sink: &graph::Pin) -> bool {
-    matches!((&source.port, &sink.port), (Port::Input(_), Port::Output(_)))
-}
-
-/// Ask for the connections that a wire from one pin to another would be.
+/// Ask for the connection that a wire from one pin to another would be.
 pub(super) fn wire(asking: &mut Asking<'_>, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
     let (source, sink) = (&snarl[from.node].right[from.output], &snarl[to.node].left[to.input]);
     let (output, input) = (source.spec(), sink.spec());
-    if passes_through(source, sink) {
+    if passes_by(snarl, from, to) {
         asking.feed.report("A wire inside a group begins or ends at one of its nodes".to_owned());
-    } else if output.message != input.message {
+    } else if !graph::compatible(output, input) {
         asking.feed.report(format!(
             "{} and {} carry different messages: {} and {}",
             source.name(),
@@ -280,18 +253,14 @@ pub(super) fn wire(asking: &mut Asking<'_>, snarl: &Snarl<Card>, from: OutPinId,
             input.message
         ));
     } else {
-        for (from, to) in connections(source, sink) {
-            asking.ask(Request::Connect { from, to });
-        }
+        asking.ask(Request::Connect { from: source.name(), to: sink.name() });
     }
 }
 
-/// Ask for the connections that a wire stands for to be removed.
+/// Ask for the connection that a wire stands for to be removed.
 pub(super) fn unwire(asking: &mut Asking<'_>, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
     let (source, sink) = (&snarl[from.node].right[from.output], &snarl[to.node].left[to.input]);
-    for (from, to) in connections(source, sink) {
-        asking.ask(Request::Disconnect { from, to });
-    }
+    asking.ask(Request::Disconnect { from: source.name(), to: sink.name() });
 }
 
 impl SnarlViewer<Card> for Viewer<'_> {
@@ -424,21 +393,20 @@ impl SnarlViewer<Card> for Viewer<'_> {
     /// A wire that is only drafted is grey as what is drafted is, and one
     /// that the draft cuts is faint. Any other is greyed with the cards at its ends.
     fn connected_wire_color(&mut self, from: OutPinId, to: InPinId, snarl: &Snarl<Card>, sender: Color32) -> Color32 {
-        // A wire may stand for several connections: it is drawn so if the draft does that to all of them.
-        let marks = self.wire_marks(snarl, from, to);
-        let all = |mark: Mark| !marks.is_empty() && marks.iter().all(|drafted| *drafted == Some(mark));
-        match () {
-            () if all(Mark::New) => drafted(self.dark),
-            () if all(Mark::Going) => sender.gamma_multiply(0.3),
-            () if self.dimmed(&snarl[from.node]) => grey(self.dark),
-            () => sender,
+        let (source, sink) = (&snarl[from.node], &snarl[to.node]);
+        match self.marks.wire(&source.output(from.output), &sink.input(to.input)) {
+            Some(Mark::New) => drafted(self.dark),
+            Some(_) => sender.gamma_multiply(0.3),
+            None if self.dimmed(source) => grey(self.dark),
+            None => sender,
         }
     }
 
     /// A wire that the draft draws or cuts has a glow along it.
     fn connected_wire_glow(&mut self, from: OutPinId, to: InPinId, snarl: &Snarl<Card>) -> Option<Color32> {
-        let marked = self.wire_marks(snarl, from, to).iter().any(Option::is_some);
-        marked.then(|| glow(self.dark).color)
+        let (source, sink) = (&snarl[from.node], &snarl[to.node]);
+        let mark = self.marks.wire(&source.output(from.output), &sink.input(to.input));
+        mark.map(|_| glow(self.dark).color)
     }
 
     fn inputs(&mut self, card: &Card) -> usize {
@@ -459,10 +427,11 @@ impl SnarlViewer<Card> for Viewer<'_> {
         self.row(ui, card, &card.right[pin.id.output])
     }
 
-    /// A wire being dragged only snaps to a pin it could be connected to.
+    /// A wire being dragged only snaps to an input it could be connected to.
     fn can_snap(&mut self, from: &OutPin, to: &InPin, snarl: &Snarl<Card>) -> bool {
-        let (source, sink) = (&snarl[from.id.node].right[from.id.output], &snarl[to.id.node].left[to.id.input]);
-        !passes_through(source, sink) && source.spec().message == sink.spec().message
+        let output = snarl[from.id.node].right[from.id.output].spec();
+        let input = snarl[to.id.node].left[to.id.input].spec();
+        !passes_by(snarl, from.id, to.id) && graph::compatible(output, input)
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Card>) {

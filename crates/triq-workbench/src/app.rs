@@ -490,12 +490,14 @@ impl Contents {
             None => (self.real.clone(), Marks::default()),
         };
         self.grouping = graph::groups(&self.inventories);
-        let mut cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
         // A group that has no node left has no inside to show: the graph shows the group around it.
-        while settled && let Some(empty) = self.inside.take_if(|_| cards.is_empty()) {
+        let emptied = |group: &String| !self.grouping.values().any(|of| graph::within(of, group));
+        while settled && let Some(empty) = self.inside.take_if(|group| emptied(group)) {
             (self.inside, self.fit) = (graph::parent(&empty).map(str::to_owned), true);
-            cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
         }
+        // A port whose last connection the draft cuts is offered as one that is connected to nothing.
+        let cut = self.marks.cut();
+        let cards = graph::cards_with(&self.inventories, &self.grouping, self.inside.as_deref(), &cut);
         graph::show(&mut self.snarl, cards, &mut self.places, now());
         self.colors.update(self.real.iter().map(|inventory| inventory.runtime.as_str()));
         // What the details were about may be gone.
@@ -522,15 +524,17 @@ impl Contents {
     /// Every runtime with its pools, the kinds of node it offers, and its nodes.
     fn runtimes(&mut self, ui: &mut Ui) {
         let inventories = self.inventories.clone();
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        column(ui, NARROWEST_LIST, |ui| {
             if inventories.is_empty() {
                 ui.weak("No runtime is running on this machine.");
             }
             for inventory in inventories.iter() {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     paint(ui, &mut self.colors, &inventory.runtime);
                     ui.strong(&inventory.runtime);
-                    ui.weak(format!("process {}", inventory.pid));
+                    // Kept in one piece: where the row is too short for it, it goes under the name.
+                    let process = egui::RichText::new(format!("process {}", inventory.pid)).weak();
+                    ui.add(egui::Label::new(process).extend());
                 });
                 for pool in &inventory.pools {
                     let shared = if pool.shared { ", shared" } else { "" };
@@ -575,17 +579,21 @@ impl Contents {
         let mut asking = Asking { feed, draft: draft.as_mut(), real };
         // A node of a group that was clicked there, to turn to; and what the form asked for.
         let (mut turn_to, mut created) = (None, None);
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        column(ui, NARROWEST_DETAILS, |ui| {
             match focus {
                 Focus::Nothing => {
                     if let Some(draft) = &mut asking.draft {
                         details::held_back(ui, draft, asking.real);
                         ui.separator();
                     }
-                    ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
+                    ui.weak(
+                        "Click a node to see where it runs, or pick a kind of node among the runtimes to create one.",
+                    );
                     ui.weak("Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.");
                     ui.weak("Pause a node with the button on its card. Its details have the rest.");
-                    ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
+                    ui.weak(
+                        "A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.",
+                    );
                     ui.weak(format!(
                         "Hold Shift and click nodes, or drag across them, to select several. A click beside the \
                          nodes lets go of them all, and a click on one with {held} held lets go of that one."
@@ -597,8 +605,8 @@ impl Contents {
                          group apart."
                     ));
                     ui.weak(
-                        "Inside a group, a pin on Group Input or Group Output stands for what is connected \
-                         outside: wire to it and cut its wire like any other.",
+                        "Inside a group, Group Input and Group Output have the ports outside it: those it is \
+                         connected with, and those of the nodes around it that nothing is connected to yet.",
                     );
                 }
                 Focus::Node { key, settings } => {
@@ -962,6 +970,21 @@ impl eframe::App for Workbench {
     fn raw_input_hook(&mut self, window: &egui::Context, typed: &mut egui::RawInput) {
         self.keys(window, typed);
     }
+}
+
+/// The least width that the list of runtimes is laid out in, and the details. See [`column`].
+const NARROWEST_LIST: f32 = 170.0;
+const NARROWEST_DETAILS: f32 = 220.0;
+
+/// What a window holds, in a column that scrolls up and down. It is laid out
+/// in the width the window has: what is written wraps, and what is to be
+/// filled in has less room. Below `narrowest` nothing is squeezed any
+/// further: a window that is made narrower than that cuts off what does not fit.
+fn column(ui: &mut Ui, narrowest: f32, contents: impl FnOnce(&mut Ui)) {
+    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+        ui.set_width(ui.available_width().max(narrowest));
+        contents(ui);
+    });
 }
 
 /// The present, in seconds since 1970.

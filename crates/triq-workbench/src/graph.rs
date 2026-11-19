@@ -5,13 +5,15 @@
 //! A card is a node, with a pin for each of its ports. Nodes can be put
 //! together in a group, and a group is drawn as one card: its pins are the
 //! ports of its nodes that are connected to nothing, or to something outside
-//! the group. The inside of a group is a drawing of its own: of its nodes,
-//! of the groups inside it, each as one card again, and of two more cards
-//! that stand for the outside. Whatever the group hears from outside comes
-//! from the one, and whatever it sends there goes to the other. A port that
-//! is connected to nothing is on neither: it leads nowhere yet. A pin on one
-//! of the two knows what it stands for out there, so that it can be wired
-//! from inside the group (see `app/cards.rs`).
+//! the group.
+//!
+//! The inside of a group is a drawing of its own: of its nodes, of the
+//! groups inside it, each as one card again, and of two more cards that stand
+//! for the outside. On those two are the ports out there, as a group's ports
+//! are on its card: the outputs the group hears on the one, the inputs that
+//! hear it on the other, and with them the ports of the nodes around the
+//! group that are connected to nothing. So every wire in the drawing is a
+//! connection, and whatever can be wired to from here has a pin.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
@@ -47,17 +49,13 @@ pub enum Kind {
 }
 
 /// A port of a node, as a pin: on the card of its node, on the card of the
-/// group its node is in, or inside that group on a card that stands for the outside.
+/// group its node is in, or, inside a group that its node is not in, on a
+/// card that stands for the outside.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pin {
     pub runtime: String,
     pub node: String,
     pub port: Port,
-    /// On the card of a group, and on a card that stands for the outside of
-    /// one: the ports outside the group that this one is connected with,
-    /// each `runtime/node/port`. For an input they are the outputs it hears
-    /// from there, and for an output the inputs that hear it there.
-    pub outside: Vec<String>,
 }
 
 /// What a runtime reports of a port.
@@ -94,12 +92,10 @@ impl Pin {
         sources.iter().map(|source| source.output.as_str())
     }
 
-    /// Whether a wire runs from this pin to another: from an output to an
-    /// input that is connected to it; or, inside a group, between a port and
-    /// the pin that stands for it on a card for the outside.
+    /// Whether a wire runs from this pin to another: from an output to an input that is connected to it.
     fn feeds(&self, to: &Pin) -> bool {
         let name = self.name();
-        name == to.name() || to.heard().any(|output| output == name)
+        to.heard().any(|output| output == name)
     }
 }
 
@@ -161,7 +157,7 @@ pub fn replant(inner: &str, from: &str, to: Option<&str>) -> Option<String> {
 impl Card {
     /// The card of a node: a pin for each of its ports.
     pub fn of(runtime: &str, node: &NodeInfo) -> Self {
-        let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port, outside: Vec::new() };
+        let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
         Self {
             kind: Kind::Node { runtime: runtime.to_owned(), node: node.clone() },
             left: node.inputs.iter().cloned().map(Port::Input).map(pin).collect(),
@@ -262,6 +258,10 @@ pub fn groups(inventories: &[Inventory]) -> Groups {
     grouped.map(|(inventory, node)| (format!("{}/{}", inventory.runtime, node.name), node.group.clone())).collect()
 }
 
+/// Connections that are drawn and are to go: a draft has cut them. Each is
+/// an output and an input, `runtime/node/port`.
+pub type Cut = BTreeSet<(String, String)>;
+
 /// The cards to draw of a machine whose nodes are grouped so.
 ///
 /// Outside every group, with `inside` as `None`: a card for each node that is
@@ -271,10 +271,21 @@ pub fn groups(inventories: &[Inventory]) -> Groups {
 ///
 /// A group shows the ports of its nodes, and of the nodes in the groups
 /// inside it, that are connected to nothing or to something outside it.
-/// What is connected only within the group is its own affair. The two cards
-/// that stand for the outside have the ports that are connected to
-/// something outside, and not those that are connected to nothing.
+/// What is connected only within the group is its own affair.
+///
+/// The two cards that stand for the outside show the same of what is out
+/// there: on `Group Input` the outputs that the group hears, and on `Group
+/// Output` the inputs that hear it; and with them the ports that are
+/// connected to nothing, of the nodes around the group. Those are the nodes
+/// that the group around this one holds, or all the others if there is none.
 pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -> Vec<Card> {
+    cards_with(inventories, groups, inside, &Cut::new())
+}
+
+/// [`cards`], of a machine as a draft would have it. A connection in `cut`
+/// is still drawn, but a port that has no other is connected to nothing
+/// once the draft is applied, and is offered to be wired as such a port is.
+pub fn cards_with(inventories: &[Inventory], groups: &Groups, inside: Option<&str>, cut: &Cut) -> Vec<Card> {
     let nodes = || {
         let runtimes = inventories.iter();
         runtimes.flat_map(|inventory| inventory.nodes.iter().map(move |node| (inventory.runtime.as_str(), node)))
@@ -282,13 +293,13 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
     let group_of = |runtime: &str, node: &str| groups.get(&format!("{runtime}/{node}")).map(String::as_str);
     // Whether a node is in a group, or in a group inside it.
     let is_in = |of: Option<&str>, group: &str| of.is_some_and(|of| within(of, group));
-    // The nodes of a group, in order of name: so its pins are, in whatever order the runtimes are listed.
-    let members = |group: &str| -> Vec<(&str, &NodeInfo)> {
-        let mut members: Vec<_> =
-            nodes().filter(|(runtime, node)| is_in(group_of(runtime, &node.name), group)).collect();
-        members.sort_by_key(|(runtime, node)| (*runtime, &node.name));
-        members
-    };
+    // Some of the nodes, in order of name: so their pins are, in whatever order the runtimes are listed.
+    fn sorted<'a>(mut some: Vec<(&'a str, &'a NodeInfo)>) -> Vec<(&'a str, &'a NodeInfo)> {
+        some.sort_by_key(|(runtime, node)| (*runtime, &node.name));
+        some
+    }
+    let members =
+        |group: &str| sorted(nodes().filter(|(runtime, node)| is_in(group_of(runtime, &node.name), group)).collect());
     // The group of the node that an output belongs to.
     let sent_from = |output: &str| {
         let mut parts = output.split('/');
@@ -304,30 +315,39 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
             }
         }
     }
-    // The ports of a group that lead outside it, on the left what it hears and on the right what
-    // it sends: those that are connected to something outside, and if `unconnected`, to nothing.
-    let shown = |group: &str, unconnected: bool| {
-        let (mut left, mut right) = (Vec::new(), Vec::new());
-        for (runtime, node) in members(group) {
-            let pin = |port, outside| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port, outside };
-            for input in &node.inputs {
-                let outputs = input.sources.iter().map(|source| &source.output);
-                let outside: Vec<String> = outputs.filter(|output| !is_in(sent_from(output), group)).cloned().collect();
-                if !outside.is_empty() || (unconnected && input.sources.is_empty()) {
-                    left.push(pin(Port::Input(input.clone()), outside));
-                }
-            }
-            for output in &node.outputs {
-                let heard = heard_by.get(output.service.as_str());
-                let inputs = heard.into_iter().flatten().filter(|(_, by)| !is_in(*by, group));
-                let outside: Vec<String> = inputs.map(|(input, _)| input.clone()).collect();
-                if !outside.is_empty() || (unconnected && heard.is_none()) {
-                    right.push(pin(Port::Output(output.clone()), outside));
-                }
-            }
-        }
-        (left, right)
+    // Whether a port is connected to nothing, not counting the connections that are to go.
+    let stays = |output: &str, input: &str| cut.is_empty() || !cut.contains(&(output.to_owned(), input.to_owned()));
+    let free_input = |name: &str, input: &InputInfo| !input.sources.iter().any(|source| stays(&source.output, name));
+    let free_output = |output: &OutputInfo| {
+        let heard = heard_by.get(output.service.as_str()).into_iter().flatten();
+        !heard.into_iter().any(|(input, _)| stays(&output.service, input))
     };
+    // The ports of some nodes that are wired, or can be, across the edge of a group. `across` says
+    // whether a node on the other end of a connection is across it, and `offered` whether a
+    // node's ports that are connected to nothing are shown as well. Inputs first, then outputs.
+    let ports =
+        |some: Vec<(&str, &NodeInfo)>, across: &dyn Fn(Option<&str>) -> bool, offered: &dyn Fn(&str, &str) -> bool| {
+            let (mut inputs, mut outputs) = (Vec::new(), Vec::new());
+            for (runtime, node) in some {
+                let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
+                let offered = offered(runtime, &node.name);
+                for input in &node.inputs {
+                    let name = format!("{runtime}/{}/{}", node.name, input.port.name);
+                    let wired = input.sources.iter().any(|source| across(sent_from(&source.output)));
+                    if wired || (offered && free_input(&name, input)) {
+                        inputs.push(pin(Port::Input(input.clone())));
+                    }
+                }
+                for output in &node.outputs {
+                    let heard = heard_by.get(output.service.as_str()).into_iter().flatten();
+                    let wired = heard.into_iter().any(|(_, by)| across(*by));
+                    if wired || (offered && free_output(output)) {
+                        outputs.push(pin(Port::Output(output.clone())));
+                    }
+                }
+            }
+            (inputs, outputs)
+        };
 
     // What is drawn here: the nodes that are in just this group, and a card for each group directly inside it.
     let here = nodes().filter(|(runtime, node)| group_of(runtime, &node.name) == inside);
@@ -335,18 +355,23 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
     let inner: BTreeSet<&str> =
         nodes().filter_map(|(runtime, node)| child(group_of(runtime, &node.name)?, inside)).collect();
     for path in inner {
+        // Its ports that are connected with something outside it, and those that are connected to nothing.
+        let (left, right) = ports(members(path), &|other| !is_in(other, path), &|_, _| true);
         let members = members(path).into_iter().map(|(runtime, node)| (runtime.to_owned(), node.clone())).collect();
-        let (left, right) = shown(path, true);
         cards.push(Card { kind: Kind::Group { path: path.to_owned(), members }, left, right });
     }
-    // Inside a group, what it hears from outside and what it sends there has a card each.
+    // Inside a group, the outside has two cards: one for what can be heard from there, and one for what hears.
     if let Some(group) = inside {
-        let (heard, sent) = shown(group, false);
+        let outside = sorted(nodes().filter(|(runtime, node)| !is_in(group_of(runtime, &node.name), group)).collect());
+        // The ports out there that are connected with the group; and, of the nodes around it, those that are connected to nothing.
+        let around =
+            |runtime: &str, node: &str| parent(group).is_none_or(|outer| is_in(group_of(runtime, node), outer));
+        let (hearing, heard) = ports(outside, &|other| is_in(other, group), &around);
         if !heard.is_empty() {
             cards.push(Card { kind: Kind::Entry { group: group.to_owned() }, left: Vec::new(), right: heard });
         }
-        if !sent.is_empty() {
-            cards.push(Card { kind: Kind::Exit { group: group.to_owned() }, left: sent, right: Vec::new() });
+        if !hearing.is_empty() {
+            cards.push(Card { kind: Kind::Exit { group: group.to_owned() }, left: hearing, right: Vec::new() });
         }
     }
     cards
@@ -424,20 +449,21 @@ pub fn show(snarl: &mut Snarl<Card>, cards: Vec<Card>, places: &mut Places, now:
         snarl.insert_node(place, card);
     }
 
-    // A wire for every connection whose two ends are on the drawing. Inside a group, a wire
-    // also joins each port that leads outside to the pin that stands for it on a card for the outside.
+    // A wire for every connection whose two ends are on the drawing. Not for one between the two
+    // cards that stand for the outside of a group: that connects nothing of the group.
     let mut leaving: HashMap<String, Vec<OutPinId>> = HashMap::new();
     for (node, drawn) in snarl.nodes_ids_data() {
         for (output, pin) in drawn.value.right.iter().enumerate() {
             leaving.entry(pin.name()).or_default().push(OutPinId { node, output });
         }
     }
+    let entry = |node: NodeId| matches!(snarl[node].kind, Kind::Entry { .. });
     let mut wires: HashSet<(OutPinId, InPinId)> = HashSet::new();
     for (node, drawn) in snarl.nodes_ids_data() {
+        let exit = matches!(drawn.value.kind, Kind::Exit { .. });
         for (input, pin) in drawn.value.left.iter().enumerate() {
-            let own = pin.name();
-            let from = pin.heard().chain([own.as_str()]).filter_map(|name| leaving.get(name)).flatten();
-            wires.extend(from.map(|from| (*from, InPinId { node, input })));
+            let from = pin.heard().filter_map(|name| leaving.get(name)).flatten();
+            wires.extend(from.filter(|from| !(exit && entry(from.node))).map(|from| (*from, InPinId { node, input })));
         }
     }
     let drawn: HashSet<(OutPinId, InPinId)> = snarl.wires().collect();
@@ -505,14 +531,20 @@ fn sources_first(mut cards: Vec<Card>) -> Vec<Card> {
 }
 
 /// Where a card goes among those already placed: right of every card that
-/// feeds it, below whatever is already there. The card that stands for what
-/// comes from outside a group goes left of all it feeds.
+/// feeds it, below whatever is already there. The two cards that stand for
+/// the outside of a group go to the ends: the one for what comes in left of
+/// all the others, and the one for what goes out right of them.
 fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
     let feeders = placed.iter().filter(|(_, other)| other.feeds(card));
     let mut x = feeders.map(|(place, other)| place.x + size(other).x + GAP.x).fold(LEFT, f32::max);
-    if matches!(card.kind, Kind::Entry { .. }) {
-        let fed = placed.iter().filter(|(_, other)| card.feeds(other));
-        x = fed.map(|(place, _)| place.x - size(card).x - GAP.x).fold(f32::INFINITY, f32::min).min(x);
+    match card.kind {
+        Kind::Entry { .. } => {
+            x = placed.iter().map(|(place, _)| place.x - size(card).x - GAP.x).fold(x, f32::min);
+        }
+        Kind::Exit { .. } => {
+            x = placed.iter().map(|(place, other)| place.x + size(other).x + GAP.x).fold(x, f32::max);
+        }
+        Kind::Node { .. } | Kind::Group { .. } => {}
     }
     let beside = placed.iter().filter(|(place, other)| place.x < x + size(card).x && x < place.x + size(other).x);
     let y = beside.map(|(place, other)| place.y + size(other).y + GAP.y).fold(TOP, f32::max);

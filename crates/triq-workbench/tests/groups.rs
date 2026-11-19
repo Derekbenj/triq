@@ -1,10 +1,11 @@
 //! Nodes put together in a group: drawn as one card from outside, and from
-//! inside as its nodes between two cards that stand for the outside.
+//! inside as its nodes between two cards that stand for the outside, with the
+//! ports out there on them.
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
 use triq::{Placement, Remote};
-use triq_workbench::graph::{self, Card, Groups, Kind, Places};
+use triq_workbench::graph::{self, Card, Cut, Groups, Kind, Places};
 use triq_workbench::snarl::Snarl;
 
 fn keys(cards: &[Card]) -> Vec<String> {
@@ -129,32 +130,45 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     );
     let (entry, exit) = (called(&cards, "//in/filtering"), called(&cards, "//out/filtering"));
     assert_eq!((entry.name(), exit.name()), ("Group Input", "Group Output"));
-    assert_eq!(written(entry), [vec![], vec!["smoother.raw: Pose".to_owned()]]);
-    assert_eq!(written(exit), [vec!["smoother.smooth: Pose".to_owned()], vec![]]);
-    // Each pin there stands for what its port is connected with outside the group: the output
-    // that comes in, and the input that it goes out to.
-    assert_eq!(entry.right[0].outside, [format!("{robot}/imu/pose")]);
-    assert_eq!(exit.left[0].outside, [format!("{desk}/viewer/pose")]);
+    // On them are the ports out there, as a group's ports are on its card: the output that the
+    // filter hears, and the input that hears the filter.
+    assert_eq!(written(entry), [vec![], vec!["imu.pose: Pose".to_owned()]]);
+    assert_eq!(written(exit), [vec!["viewer.pose: Pose".to_owned()], vec![]]);
+    assert_eq!((entry.output(0), exit.input(0)), (format!("{robot}/imu/pose"), format!("{desk}/viewer/pose")));
     graph::show(&mut snarl, cards, &mut places, 2);
-    assert_eq!(wires(&snarl), ["Group Input raw -> smoother raw", "smoother smooth -> Group Output smooth"]);
+    // So every wire in here is a connection, as it is anywhere.
+    assert_eq!(wires(&snarl), ["Group Input pose -> smoother raw", "smoother smooth -> Group Output pose"]);
     // The filter's card is where it was outside, with the two others to its left and to its right.
     let inside = |key: &str| place(&snarl, key).expect("a card inside the group");
     assert_eq!(inside(&format!("{robot}/smoother")), outside);
     assert!(inside("//in/filtering").x < outside.x && outside.x < inside("//out/filtering").x);
 
-    // A port that nothing is connected to leads nowhere, and is not on the cards for the outside:
-    // inside the group it is a pin of its node like any other, to be wired there. From outside, the
-    // card of the group offers it, to be wired from there.
+    // A port of the group that nothing is connected to is a pin of its node, in here. From outside,
+    // the card of the group offers it, to be wired from there.
     scene.robot.spawn_kind("filter", "spare", Placement::Dedicated, serde_json::json!(null))?;
     let mut with_spare = filtering.clone();
     with_spare.insert(format!("{robot}/spare"), "filtering".to_owned());
     let cards = graph::cards(&scene.inventories(), &with_spare, Some("filtering"));
-    assert_eq!(written(called(&cards, "//in/filtering"))[1], ["smoother.raw: Pose"]);
-    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["smoother.smooth: Pose"]);
+    assert_eq!(written(called(&cards, "//in/filtering"))[1], ["imu.pose: Pose"]);
+    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["viewer.pose: Pose"]);
     let cards = graph::cards(&scene.inventories(), &with_spare, None);
     let offered = written(called(&cards, "/filtering"));
     assert_eq!(offered[0], ["smoother.raw: Pose", "spare.raw: Pose"]);
     assert_eq!(offered[1], ["smoother.smooth: Pose", "spare.smooth: Pose"]);
+
+    // It is the same the other way round. With that node outside the group, its ports that nothing
+    // is connected to are on the two cards for the outside, to be wired from in here.
+    let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
+    let on = |card: &str, side: usize| {
+        let mut pins = written(called(&cards, card))[side].clone();
+        pins.sort();
+        pins
+    };
+    assert_eq!(on("//in/filtering", 1), ["imu.pose: Pose", "spare.smooth: Pose"]);
+    assert_eq!(on("//out/filtering", 0), ["spare.raw: Pose", "viewer.pose: Pose"]);
+    // Nothing is wired to them yet.
+    graph::show(&mut snarl, cards, &mut places, 2);
+    assert_eq!(wires(&snarl), ["Group Input pose -> smoother raw", "smoother smooth -> Group Output pose"]);
     Remote::open(&robot)?.remove("spare")?;
 
     // Outside again, the group is one card where its node was wired: the sensor feeds it, and it the viewer.
@@ -173,9 +187,65 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
         (format!("{desk}/viewer"), "all"),
     ]);
     let cards = graph::cards(&scene.inventories(), &all, Some("all"));
-    // Only the viewer's input for images leads outside: it waits for an output that does not exist.
-    assert!(cards.iter().all(|card| card.key() != "//out/all"));
-    assert_eq!(written(called(&cards, "//in/all"))[1], ["viewer.image: u8[]"]);
+    // The viewer's input for images waits for an output that does not exist: there is no pin for
+    // that out there. The viewer's own pin says what it waits for.
+    assert!(cards.iter().all(|card| card.node().is_some()));
+    assert_eq!(called(&cards, &format!("{desk}/viewer")).waiting(1), [format!("{robot}/camera/image")]);
+    Ok(())
+}
+
+#[test]
+fn the_ports_around_a_group_are_offered_one_group_out_and_no_further() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    scene.robot.spawn_kind("filter", "spare", Placement::Dedicated, serde_json::json!(null))?;
+    scene.robot.spawn_kind("filter", "near", Placement::Dedicated, serde_json::json!(null))?;
+    // The filter is a group inside the group that holds the sensor and one of two spare filters.
+    let nested = groups([
+        (format!("{robot}/imu"), "sensing"),
+        (format!("{robot}/near"), "sensing"),
+        (format!("{robot}/smoother"), "sensing/filters"),
+    ]);
+    let free = |inside: &str| {
+        let cards = graph::cards(&scene.inventories(), &nested, Some(inside));
+        let mut pins = written(called(&cards, &format!("//out/{inside}")))[0].clone();
+        pins.sort();
+        pins
+    };
+    // In the inner group, the spare filter beside it is offered. The one outside both is two groups away.
+    assert_eq!(free("sensing/filters"), ["near.raw: Pose", "viewer.pose: Pose"]);
+    // In the outer group, that one is offered.
+    assert_eq!(free("sensing"), ["spare.raw: Pose", "viewer.pose: Pose"]);
+    Ok(())
+}
+
+#[test]
+fn a_port_whose_last_connection_a_draft_cuts_is_offered_as_one_that_is_connected_to_nothing() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    let sensing = groups([(format!("{robot}/imu"), "sensing"), (format!("{robot}/smoother"), "sensing")]);
+    let pins = |cut: &Cut, inside: Option<&str>, card: &str| {
+        let cards = graph::cards_with(&scene.inventories(), &sensing, inside, cut);
+        written(called(&cards, card))
+    };
+    // The wire from the sensor to the filter is inside the group: neither end is on the group's card.
+    assert_eq!(pins(&Cut::new(), None, "/sensing"), [vec![], vec!["smoother.smooth: Pose".to_owned()]]);
+
+    // A draft cuts it. It is still drawn, inside, but both its ends will be connected to nothing:
+    // the card of the group offers them already, to be wired from outside in the same draft.
+    let inner: Cut = [(format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"))].into();
+    let offered = pins(&inner, None, "/sensing");
+    assert_eq!(offered[0], ["smoother.raw: Pose"]);
+    assert_eq!(offered[1], ["imu.pose: Pose", "smoother.smooth: Pose"]);
+    let cards = graph::cards_with(&scene.inventories(), &sensing, Some("sensing"), &inner);
+    let mut snarl = Snarl::new();
+    graph::show(&mut snarl, cards, &mut Places::new(), 0);
+    assert!(wires(&snarl).contains(&"imu pose -> smoother raw".to_owned()));
+
+    // The same goes for what is outside a group. With the wire to the viewer cut, the viewer's
+    // input is still on Group Output, where its wire is, and stays there as one that is free.
+    let outer: Cut = [(format!("{robot}/smoother/smooth"), format!("{desk}/viewer/pose"))].into();
+    assert_eq!(pins(&outer, Some("sensing"), "//out/sensing")[0], ["viewer.pose: Pose"]);
     Ok(())
 }
 
@@ -207,7 +277,7 @@ fn a_group_can_be_inside_another() -> triq::Result {
     assert_eq!(written(inner), [vec!["smoother.raw: Pose".to_owned()], vec!["smoother.smooth: Pose".to_owned()]]);
     let mut snarl = Snarl::new();
     graph::show(&mut snarl, cards, &mut Places::new(), 0);
-    assert_eq!(wires(&snarl), ["filters smooth -> Group Output smooth", "imu pose -> filters raw"]);
+    assert_eq!(wires(&snarl), ["filters smooth -> Group Output pose", "imu pose -> filters raw"]);
 
     // Inside the inner group: the filter, between the two cards for what is outside it.
     let cards = graph::cards(&inventories, &nested, Some("sensing/filters"));

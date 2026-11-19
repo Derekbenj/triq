@@ -14,7 +14,7 @@
 //! asked for it. And a group that a runtime offers as a kind is one change,
 //! however many nodes it creates.
 use crate::feed::Request;
-use crate::graph::{group_key, groups, parent, within};
+use crate::graph::{Cut, group_key, groups, parent, within};
 use std::collections::BTreeMap;
 use triq::{Direction, FactoryInfo, InputInfo, Inventory, Member, NodeInfo, NodeState, OutputInfo, SourceInfo};
 
@@ -57,6 +57,12 @@ impl Marks {
     /// Whether a wire that the draft draws or cuts ends at this port.
     pub fn port(&self, name: &str) -> bool {
         self.wires.keys().any(|(from, to)| from == name || to == name)
+    }
+
+    /// The connections that the draft cuts: they are still drawn, and are to go.
+    pub fn cut(&self) -> Cut {
+        let going = self.wires.iter().filter(|(_, mark)| **mark == Mark::Going);
+        going.map(|(wire, _)| wire.clone()).collect()
     }
 }
 

@@ -72,7 +72,7 @@ impl Form {
         ui.add_space(8.0);
 
         let name = ui.label("Name");
-        ui.text_edit_singleline(&mut self.name).labelled_by(name.id);
+        ui.add(wide(egui::TextEdit::singleline(&mut self.name))).labelled_by(name.id);
         if let Some(group) = &factory.group {
             // Where its nodes run and how they are set is the kind's to say.
             ui.weak("Its nodes are created together, wired to each other, in a group of this name:");
@@ -93,7 +93,7 @@ impl Form {
         }
         if factory.group.is_none() {
             ui.label("Settings");
-            ui.add(egui::TextEdit::multiline(&mut self.settings).code_editor().desired_rows(4));
+            ui.add(wide(egui::TextEdit::multiline(&mut self.settings)).code_editor().desired_rows(4));
         }
         let params = serde_json::from_str::<Value>(&self.settings);
         if let Err(error) = &params {
@@ -106,7 +106,7 @@ impl Form {
 
         ui.add_space(8.0);
         let mut filled = Filled::Open;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let ready = params.is_ok() && !self.name.is_empty();
             if ui.add_enabled(ready, egui::Button::new("Create")).clicked()
                 && let Ok(params) = params
@@ -149,7 +149,9 @@ pub(super) fn node_details(
         ui.weak(format!("{}, when the draft is applied", awaits(mark)));
     }
     ui.add_space(8.0);
-    egui::Grid::new("facts").num_columns(2).show(ui, |ui| {
+    // What is said of it has the room that the window has, beside the words for what is said.
+    let room = (ui.available_width() - 90.0).max(90.0);
+    egui::Grid::new("facts").num_columns(2).max_col_width(room).show(ui, |ui| {
         let mut fact = |name: &str, value: String| {
             ui.weak(name);
             ui.label(value);
@@ -171,12 +173,12 @@ pub(super) fn node_details(
             fact("Errors", format!("{}, last: {error}", node.errors));
         }
     });
-    ui.horizontal(|ui| actions(ui, asking, &home.runtime, node));
+    ui.horizontal_wrapped(|ui| actions(ui, asking, &home.runtime, node));
 
     if !node.params.is_null() {
         ui.separator();
         ui.strong("Settings");
-        ui.add(egui::TextEdit::multiline(settings).code_editor().desired_rows(3));
+        ui.add(wide(egui::TextEdit::multiline(settings)).code_editor().desired_rows(3));
         match serde_json::from_str::<Value>(settings) {
             Ok(params) => {
                 if ui.button("Apply").clicked() {
@@ -190,7 +192,7 @@ pub(super) fn node_details(
     for input in &node.inputs {
         let name = format!("{key}/{}", input.port.name);
         ui.separator();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(port(&input.port));
             ui.weak(rate(rates, &name));
         });
@@ -209,7 +211,7 @@ pub(super) fn node_details(
                 (None, false) => "waiting for the output".to_owned(),
             };
             ui.weak(format!("from {}", source.output));
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.weak(link);
                 if drafted == Some(Mark::Going) {
                     ui.weak("to be disconnected");
@@ -221,7 +223,7 @@ pub(super) fn node_details(
     }
     for output in &node.outputs {
         ui.separator();
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(port(&output.port));
             ui.weak(rate(rates, &output.service));
         });
@@ -253,7 +255,7 @@ pub(super) fn group_details(
         ui.weak(format!("{}, when the draft is applied", awaits(mark)));
     }
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let about = if shown { "Show what is around the group again" } else { "Show what is inside it" };
         if ui.button(if shown { "Exit Group" } else { "Edit Group" }).on_hover_text(about).clicked() {
             *wish = Some(if shown { Wish::Leave } else { Wish::Enter(group.to_owned()) });
@@ -266,17 +268,20 @@ pub(super) fn group_details(
     ui.separator();
     let label = ui.label("Name");
     ui.horizontal(|ui| {
-        ui.text_edit_singleline(renamed).labelled_by(label.id);
-        let changed = !renamed.trim().is_empty() && renamed != graph::called(group);
-        if ui.add_enabled(changed, egui::Button::new("Rename")).clicked() {
-            *wish = Some(Wish::Rename(group.to_owned(), renamed.clone()));
-        }
+        // The button is put down first, at the far end, and the name has the room that is left.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let changed = !renamed.trim().is_empty() && renamed != graph::called(group);
+            if ui.add_enabled(changed, egui::Button::new("Rename")).clicked() {
+                *wish = Some(Wish::Rename(group.to_owned(), renamed.clone()));
+            }
+            ui.add(wide(egui::TextEdit::singleline(renamed))).labelled_by(label.id);
+        });
     });
     ui.separator();
     ui.strong("Nodes");
     let mut clicked = None;
     for (node, of) in nodes {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.selectable_label(false, node.as_str()).clicked() {
                 clicked = Some((*node).clone());
             }
@@ -372,6 +377,11 @@ pub(super) fn held_back(ui: &mut Ui, draft: &mut Draft, real: &[Inventory]) {
             ui.label(format!("{}. {change}", number + 1));
         });
     }
+}
+
+/// A place to write in that is as wide as the room it is given, and narrower in a narrower window.
+fn wide(field: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
+    field.desired_width(f32::INFINITY)
 }
 
 pub(super) fn pretty(value: &Value) -> String {

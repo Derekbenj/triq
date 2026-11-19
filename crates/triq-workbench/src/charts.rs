@@ -35,6 +35,11 @@ pub struct Recorded<'a> {
     pub signals: &'a Signals,
 }
 
+/// The least width that the list of numbers is laid out in, and the least that it leaves the
+/// charts beside it. A window that is narrower than both cuts off what does not fit.
+const NARROWEST_LIST: f32 = 180.0;
+const NARROWEST_CHARTS: f32 = 260.0;
+
 /// How far behind the present the lines of what runtimes report end, in
 /// seconds. The machine is read ten times a second, so the newest point is up
 /// to a tenth of a second old, and a little more by the time it has been
@@ -193,11 +198,13 @@ impl Charts {
     /// Draw the list of numbers and the charts. `now` is the present, the time
     /// at the right edge of every chart, in seconds since 1970.
     pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, now: f64) {
+        // In a narrow window the list gives way to the charts, down to the least it is laid out in.
+        let most = (ui.available_width() - NARROWEST_CHARTS).max(NARROWEST_LIST);
+        let list = egui::Panel::left("numbers").default_size(300.0).size_range(NARROWEST_LIST..=most);
         // A list that is hidden has no topic open that anyone could see.
-        let list = egui::Panel::left("numbers").default_size(300.0);
         let opened = if self.listed { list.show(ui, |ui| numbers(ui, recorded)).inner } else { BTreeSet::new() };
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.toggle_value(&mut self.listed, "Numbers").on_hover_text("Show or hide the list of numbers");
                 ui.separator();
                 // How much of the past every chart shows.
