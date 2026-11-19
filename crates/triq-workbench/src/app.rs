@@ -29,9 +29,9 @@ use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::{Feed, Request};
-use crate::graph::{self, Card, Groups, Place, Places};
+use crate::graph::{self, Card, Groups, Kind, Place, Places};
 use cards::Viewer;
-use details::Form;
+use details::{Filled, Form};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Align, Color32, Key, Layout, Modifiers, Rect, Stroke, Ui, UiBuilder, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinPlacement, SnarlStyle, SnarlWidget, WireStyle};
@@ -124,6 +124,8 @@ struct Contents {
     colors: Colors,
     charts: Charts,
     focus: Focus,
+    /// Something was clicked that the details are now about: their window is to be seen.
+    reveal: bool,
     /// What was asked for that changes what the graph shows, to be done once the frame is drawn.
     wish: Option<Wish>,
     /// Tab was pressed over the graph: see [`Workbench::keys`].
@@ -175,6 +177,8 @@ enum Wish {
     Leave,
     /// Put these cards, of nodes and of groups, together in a new group.
     Group(Vec<String>),
+    /// Put these cards into a group that is there.
+    Insert(Vec<String>, String),
     /// Take a group apart: what was in it is where the group was.
     Ungroup(String),
     /// Move these cards out of the group that is shown, into the one around it.
@@ -221,6 +225,7 @@ impl Workbench {
             colors: Colors::default(),
             charts: Charts::default(),
             focus: Focus::Nothing,
+            reveal: false,
             wish: None,
             tabbed: false,
             fit: true,
@@ -362,6 +367,13 @@ impl Workbench {
         if let Some(wish) = self.contents.wish.take() {
             self.contents.grant(wish);
             ui.ctx().request_repaint();
+        }
+        // What was clicked has its details shown: their window is opened, in front of what shares its place.
+        if std::mem::take(&mut self.contents.reveal)
+            && let Some(place) = self.windows.tiles.find_pane(&Window::Details)
+        {
+            self.windows.set_visible(place, true);
+            self.windows.make_active(|tile, _| tile == place);
         }
     }
 
@@ -530,14 +542,14 @@ impl Contents {
                 }
                 for factory in &inventory.factories {
                     if ui.button(format!("New {}", factory.kind)).clicked() {
-                        self.focus = Focus::Form(Form::new(inventory, factory));
+                        (self.focus, self.reveal) = (Focus::Form(Form::new(inventory, factory)), true);
                     }
                 }
                 for node in &inventory.nodes {
                     let key = format!("{}/{}", inventory.runtime, node.name);
                     let focused = matches!(&self.focus, Focus::Node { key: focus, .. } if *focus == key);
                     if ui.selectable_label(focused, &node.name).clicked() {
-                        self.focus = Focus::node(key, &node.params);
+                        (self.focus, self.reveal) = (Focus::node(key, &node.params), true);
                     }
                 }
                 ui.separator();
@@ -547,50 +559,69 @@ impl Contents {
 
     fn details(&mut self, ui: &mut Ui) {
         let (inventories, rates) = (self.inventories.clone(), self.rates.clone());
+        // What the buttons for groups are about, and the groups on the graph that it could be moved into.
+        let (chosen, in_a_group) = (self.chosen(), self.inside.is_some());
+        let here = self.snarl.nodes().filter_map(|card| match &card.kind {
+            Kind::Group { path, .. } => Some(path.clone()),
+            _ => None,
+        });
+        let here: Vec<String> = here.collect();
+        // What the keys are called on this machine.
+        let [make, into, apart] = [Modifiers::NONE, Modifiers::SHIFT, Modifiers::ALT]
+            .map(|more| ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(Modifiers::COMMAND | more, Key::G)));
+        let held = ui.ctx().format_modifiers(Modifiers::COMMAND);
         let Contents { feed, draft, real, groups, grouping, marks, focus, inside, wish, .. } = self;
         let mut asking = Asking { feed, draft: draft.as_mut(), real };
-        // A node of a group that was clicked there, to turn to.
-        let mut turn_to = None;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match focus {
-            Focus::Nothing => {
-                if let Some(draft) = &mut asking.draft {
-                    details::held_back(ui, draft, asking.real, groups);
-                    ui.separator();
+        // A node of a group that was clicked there, to turn to; and a node that the form asked for.
+        let (mut turn_to, mut created) = (None, None);
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            match focus {
+                Focus::Nothing => {
+                    if let Some(draft) = &mut asking.draft {
+                        details::held_back(ui, draft, asking.real, groups);
+                        ui.separator();
+                    }
+                    ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
+                    ui.weak("Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.");
+                    ui.weak("Pause a node with the button on its card. Its details have the rest.");
+                    ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
+                    ui.weak(format!(
+                        "Hold Shift and click nodes, or drag across them, to select several. With {held} held, a click \
+                         beside the nodes lets go of them all."
+                    ));
+                    ui.weak(format!(
+                        "{make} makes a group of what is selected, which is drawn as one node, and {into} puts it \
+                         into the group that was clicked last. Tab, or a double click, shows what is inside a group, \
+                         and Tab leaves it again. Inside, P moves what is selected one group out. {apart} takes a \
+                         group apart."
+                    ));
                 }
-                ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
-                ui.weak(
-                    "Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.",
-                );
-                ui.weak("Right-click a node to pause or remove it.");
-                ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
-                ui.weak(
-                    "Hold Shift and click nodes, or drag across them, to select several. With the command key held, \
-                     a click beside the nodes lets go of them all.",
-                );
-                ui.weak(
-                    "Ctrl+G makes a group of what is selected, which is drawn as one node. Tab, or a double click, \
-                     shows what is inside a group, and Tab leaves it again. Inside, P moves what is selected one \
-                     group out. Ctrl+Alt+G takes a group apart.",
-                );
-            }
-            Focus::Node { key, settings } => {
-                if let Some((home, node)) = node(&inventories, key) {
-                    details::node_details(ui, &mut asking, marks, home, node, settings, &rates);
+                Focus::Node { key, settings } => {
+                    if let Some((home, node)) = node(&inventories, key) {
+                        details::node_details(ui, &mut asking, marks, home, node, settings, &rates);
+                    }
                 }
-            }
-            Focus::Group { name, renamed } => {
-                let nodes: Vec<_> = grouping.iter().filter(|(_, of)| graph::within(of, name)).collect();
-                let (mark, shown) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
-                turn_to = details::group_details(ui, name, renamed, &nodes, mark, shown, wish);
-            }
-            Focus::Form(form) => {
-                if form.show(ui, &mut asking, &inventories) {
-                    *focus = Focus::Nothing;
+                Focus::Group { name, renamed } => {
+                    let nodes: Vec<_> = grouping.iter().filter(|(_, of)| graph::within(of, name)).collect();
+                    let (mark, shown) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
+                    turn_to = details::group_details(ui, name, renamed, &nodes, mark, shown, wish);
                 }
+                Focus::Form(form) => match form.show(ui, &mut asking, &inventories) {
+                    Filled::Open => {}
+                    Filled::Created(node) => created = Some(node),
+                    Filled::Closed => *focus = Focus::Nothing,
+                },
+            }
+            if !chosen.is_empty() && matches!(focus, Focus::Node { .. } | Focus::Group { .. }) {
+                details::grouping(ui, &chosen, &here, in_a_group, [&make, "P"], wish);
             }
         });
         if let Some((key, (_, node))) = turn_to.and_then(|key| Some((key.clone(), node(&inventories, &key)?))) {
             *focus = Focus::node(key, &node.params);
+        }
+        // A node that is created while the graph shows the inside of a group is in that group.
+        if let (Some(node), Some(group)) = (created, self.inside.clone()) {
+            self.regroup(vec![(node, Some(group))]);
         }
     }
 
@@ -655,7 +686,7 @@ impl Contents {
     }
 
     fn canvas(&mut self, ui: &mut Ui) {
-        let (inventories, rates) = (self.inventories.clone(), self.rates.clone());
+        let rates = self.rates.clone();
         let style = SnarlStyle {
             collapsible: Some(false),
             header_drag_space: Some(egui::vec2(3.0, 3.0)),
@@ -690,12 +721,10 @@ impl Contents {
             dark: ui.visuals().dark_mode,
             focus: &mut self.focus,
             lit,
-            inventories: &inventories,
             rates: &rates,
             frame,
             carried,
-            selected: &self.selected,
-            inside: self.inside.is_some(),
+            reveal: &mut self.reveal,
             double,
             wish: &mut self.wish,
         };
@@ -711,17 +740,18 @@ impl Contents {
     }
 
     /// What the keys ask for while the pointer is over the graph. They are
-    /// Blender's: Ctrl+G makes a group of the cards that are selected, Tab
-    /// shows the inside of the group that is selected, or else leaves the
-    /// group that is shown, as Ctrl+Tab does, P moves the selected cards one
-    /// group out, and Ctrl+Alt+G takes the selected group apart.
+    /// Blender's, with the command key of a Mac for its Ctrl: Cmd+G makes a
+    /// group of the cards that are selected, Cmd+Shift+G puts them into the
+    /// group that is selected, Tab shows the inside of that group, or else
+    /// leaves the group that is shown, as Ctrl+Tab does, P moves the selected
+    /// cards one group out, and Cmd+Alt+G takes the selected group apart.
     fn typed(&mut self, ui: &Ui, canvas: Rect) -> Option<Wish> {
         let tabbed = std::mem::take(&mut self.tabbed);
         if !ui.rect_contains_pointer(canvas) || ui.ctx().text_edit_focused() {
             return None;
         }
         let pressed = |modifiers, key| ui.input_mut(|input| input.consume_key(modifiers, key));
-        // On a Mac, either of the two keys that other machines have one of.
+        // On a Mac the command key, and Ctrl as well: other machines have the one key for both.
         let with_ctrl = |more, key| pressed(Modifiers::CTRL | more, key) || pressed(Modifiers::COMMAND | more, key);
         let (shown, inside) = (self.inside.as_deref(), self.inside.is_some());
         // The group that is selected is the one the details are about. Tab steps into it if its card is on the graph.
@@ -730,14 +760,12 @@ impl Contents {
             _ => None,
         };
         let enter = group.clone().filter(|group| graph::parent(group) == shown);
-        // The cards that are selected are those that Shift selected, or else the one the details are about.
-        let mut cards = self.selected.clone();
-        if cards.is_empty() {
-            cards.extend(self.card(shown).filter(|card| self.snarl.nodes().any(|drawn| drawn.key() == *card)));
-        }
-        // The keys that ask for more are looked for first: Ctrl+Alt+G is also Ctrl+G.
+        let cards = self.chosen();
+        // The keys that ask for more are looked for first: with Alt or Shift, it is also the key without.
         if with_ctrl(Modifiers::ALT, Key::G) {
             group.map(Wish::Ungroup)
+        } else if with_ctrl(Modifiers::SHIFT, Key::G) {
+            enter.filter(|_| !cards.is_empty()).map(|group| Wish::Insert(cards, group))
         } else if with_ctrl(Modifiers::NONE, Key::G) {
             (!cards.is_empty()).then_some(Wish::Group(cards))
         } else if with_ctrl(Modifiers::NONE, Key::Tab) {
@@ -749,6 +777,22 @@ impl Contents {
         } else {
             None
         }
+    }
+
+    /// The cards that the keys and the buttons for groups are about: those
+    /// that Shift selected, or else the card of what the details are about,
+    /// if that is on the graph.
+    fn chosen(&self) -> Vec<String> {
+        if !self.selected.is_empty() {
+            return self.selected.clone();
+        }
+        let shown = self.inside.as_deref();
+        let own = match &self.focus {
+            Focus::Node { key, .. } => (self.grouping.get(key).map(String::as_str) == shown).then(|| key.clone()),
+            Focus::Group { name, .. } => (graph::parent(name) == shown).then(|| graph::group_key(name)),
+            Focus::Nothing | Focus::Form(_) => None,
+        };
+        own.into_iter().collect()
     }
 
     /// The card that shows what the details are about, where the graph shows
@@ -791,6 +835,12 @@ impl Contents {
                 }
                 cards.iter().for_each(|card| moves.extend(self.moved(card, Some(&group))));
                 self.focus.group(&group);
+                self.reveal = true;
+            }
+            Wish::Insert(cards, group) => {
+                // A group is not put inside itself, nor inside a group that is inside it.
+                let fits = |card: &&String| card.strip_prefix('/').is_none_or(|inner| !graph::within(&group, inner));
+                cards.iter().filter(fits).for_each(|card| moves.extend(self.moved(card, Some(&group))));
             }
             Wish::Ungroup(group) => {
                 // What was in the group is where the group was: its nodes, and the groups inside it.
@@ -808,7 +858,12 @@ impl Contents {
             }
             Wish::Rename(group, name) => self.rename(&group, &name),
         }
-        // At once, or while drafting into the draft.
+        self.regroup(moves);
+    }
+
+    /// Put each of some nodes in a group, or with `None` in none: at once,
+    /// or while drafting into the draft.
+    fn regroup(&mut self, moves: Vec<(String, Option<String>)>) {
         for (node, group) in moves {
             match (&mut self.draft, group) {
                 (Some(draft), group) => draft.group(node, group, &self.groups),
@@ -826,6 +881,10 @@ impl Contents {
         let Some(inner) = card.strip_prefix('/') else {
             return vec![(card.to_owned(), group.map(str::to_owned))];
         };
+        // A group that is there already stays as it is.
+        if graph::parent(inner) == group {
+            return Vec::new();
+        }
         let name = graph::called(inner);
         let to =
             self.free(std::iter::once(name.to_owned()).chain((2..).map(|number| format!("{name}{number}"))), group);

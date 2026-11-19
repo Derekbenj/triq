@@ -3,7 +3,7 @@
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
-use triq::Placement;
+use triq::{Placement, Remote};
 use triq_workbench::graph::{self, Card, Groups, Kind, Places};
 use triq_workbench::snarl::Snarl;
 
@@ -120,6 +120,21 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     let inside = |key: &str| place(&snarl, key).expect("a card inside the group");
     assert_eq!(inside(&format!("{robot}/smoother")), outside);
     assert!(inside("//in/filtering").x < outside.x && outside.x < inside("//out/filtering").x);
+
+    // A port that nothing is connected to leads nowhere, and is not on the cards for the outside:
+    // inside the group it is a pin of its node like any other, to be wired there. From outside, the
+    // card of the group offers it, to be wired from there.
+    scene.robot.spawn_kind("filter", "spare", Placement::Dedicated, serde_json::json!(null))?;
+    let mut with_spare = filtering.clone();
+    with_spare.insert(format!("{robot}/spare"), "filtering".to_owned());
+    let cards = graph::cards(&scene.inventories(), &with_spare, Some("filtering"));
+    assert_eq!(written(called(&cards, "//in/filtering"))[1], ["smoother.raw: Pose"]);
+    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["smoother.smooth: Pose"]);
+    let cards = graph::cards(&scene.inventories(), &with_spare, None);
+    let offered = written(called(&cards, "/filtering"));
+    assert_eq!(offered[0], ["smoother.raw: Pose", "spare.raw: Pose"]);
+    assert_eq!(offered[1], ["smoother.smooth: Pose", "spare.smooth: Pose"]);
+    Remote::open(&robot)?.remove("spare")?;
 
     // Outside again, the group is one card where its node was wired: the sensor feeds it, and it the viewer.
     let cards = graph::cards(&scene.inventories(), &filtering, None);

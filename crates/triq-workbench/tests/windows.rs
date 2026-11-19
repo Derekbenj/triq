@@ -34,7 +34,12 @@ fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
     assert!(runtimes.top() == graph.top() && graph.top() == details.top());
     assert!(charts.top() > graph.top() + 200.0 && charts.left() == runtimes.left(), "the charts under them");
     // Each shows what it is about.
-    let about = ["New filter", "Tidy", "Right-click a node to pause or remove it.", "Drag a number here."];
+    let about = [
+        "New filter",
+        "Tidy",
+        "Pause a node with the button on its card. Its details have the rest.",
+        "Drag a number here.",
+    ];
     assert!(about.iter().all(|label| shows(&harness, label)));
     // A picture of them for a human to look at. Drawing it needs a GPU; without one the rest still stands.
     let picture = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("windows.png");
@@ -94,14 +99,23 @@ fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
     harness.run_steps(10);
     let [runtimes, _, details, _] = names(&harness).map(|name| name.expect("an open window"));
     assert!(runtimes.right() <= details.left() && runtimes.top() == details.top(), "their names are on one bar");
-    assert!(shows(&harness, "Right-click a node to pause or remove it.") && !shows(&harness, "New filter"));
+    assert!(
+        shows(&harness, "Pause a node with the button on its card. Its details have the rest.")
+            && !shows(&harness, "New filter")
+    );
     // The name of the one behind brings it forward.
     bar(&harness, "Runtimes").expect("its name").click();
     harness.run_steps(3);
-    assert!(shows(&harness, "New filter") && !shows(&harness, "Right-click a node to pause or remove it."));
+    assert!(
+        shows(&harness, "New filter")
+            && !shows(&harness, "Pause a node with the button on its card. Its details have the rest.")
+    );
     // Closed, it leaves the place to the other. Opened again, it is in front there.
     close(&mut harness, "Runtimes");
-    assert!(shows(&harness, "Right-click a node to pause or remove it.") && names(&harness)[0].is_none());
+    assert!(
+        shows(&harness, "Pause a node with the button on its card. Its details have the rest.")
+            && names(&harness)[0].is_none()
+    );
     switch(&harness, "Runtimes").click();
     harness.run_steps(3);
     assert!(shows(&harness, "New filter") && names(&harness)[0].is_some());

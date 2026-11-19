@@ -271,13 +271,14 @@ In `Runtimes`, `Graph` and `Details`:
 - Click a node, and it keeps its colour together with everything that wires join to it, directly
   or by way of other nodes. Every other card goes grey, with its wires. A click beside the cards
   brings the colours back.
-- Click a kind in `Runtimes` (or right-click the graph) to create a node: name, thread or pool, settings.
+- Click a kind in `Runtimes` to create a node: name, thread or pool, settings. The form stays after
+  `Create`, under the next name that is free, for another node of the kind.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
-  and its settings, and to disconnect single sources.
-- Pause a node or start it again with the button on its card. Right-clicking the card offers the
-  same choices, and one to remove the node.
+  and its settings, and to disconnect single sources. `Details` opens for it if it was closed.
+- Pause a node or start it again with the button on its card. `Details` has the same button, and
+  one to remove the node.
 - Drag a card by any part of it to move it, scroll to move the view, and pinch to zoom. `Fit`
   brings every card back into view and `Tidy` lays the cards out again. When the graph's window is
   moved or resized, whatever was in its middle stays in the middle.
@@ -317,33 +318,40 @@ hears both for that long. The order of the draft is the order you made the chang
 
 ### Groups
 
-Nodes can be put together in a group, which is drawn as one card. The keys are Blender's, and work
-while the pointer is over the graph.
+Nodes can be put together in a group, which is drawn as one card. The keys are Blender's, with the
+command key of a Mac where Blender has Ctrl, and work while the pointer is over the graph. On Linux
+and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 
 | To | Do this |
 | --- | --- |
 | select several cards | hold Shift and click them, or hold Shift and drag across them |
-| let go of all that is selected | hold the command key (Ctrl on Linux and Windows) and click beside the cards |
-| let go of one card | hold the command key and click it |
-| make a group of the selected cards | `Ctrl+G`, or right-click a card and choose `Make Group` |
+| let go of all that is selected | hold `Cmd` and click beside the cards |
+| let go of one card | hold `Cmd` and click it |
+| make a group of the selected cards | `Cmd+G`, or `Make Group` in `Details` |
+| put the selected cards into a group that is there | select that group last and press `Cmd+Shift+G`, or `Move into` in `Details` |
 | see what is inside a group | select its card and press `Tab`, double-click the card, or press `Edit` on it |
 | go one group out | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
-| move the selected cards one group out, from inside | `P`, or right-click a card |
-| take a group apart | select its card and press `Ctrl+Alt+G`, or right-click it and choose `Ungroup` |
+| move the selected cards one group out, from inside | `P`, or `Move out` in `Details` |
+| take a group apart | select its card and press `Cmd+Option+G`, or `Ungroup` in `Details` |
 
+- The card of a group is white, or black on a light background, with a dot for each runtime its
+  nodes run in. It is never grey: grey is what a card is that is not wired to the selected one.
 - The card of a group shows the ports of its nodes that are connected to nothing, or to something
   outside the group, each as `node.port`. Wires between the nodes of a group are not shown from
   outside. A pin of a group is the port of its node: wire it as you would the node's own pin.
 - Inside a group, two more cards stand for the outside, as in Blender: what the group hears from
-  outside comes from `Group Input`, and what it sends there goes to `Group Output`.
+  outside comes from `Group Input`, and what it sends there goes to `Group Output`. A port that is
+  connected to nothing is on neither; it is a pin of its node, to be wired inside the group. Step
+  out, and the card of the group offers it, to be wired from outside.
+- A node that is created while the graph shows the inside of a group is in that group.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.
   Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
 - A group can be inside a group. The card of a group is selected and grouped like a node's, and
-  `Ctrl+G` inside a group makes the new group there. Above the graph it says where you are, such
+  `Cmd+G` inside a group makes the new group there. Above the graph it says where you are, such
   as `inside sensing/filters`.
 - Everything goes one group at a time. `Tab` and `Ctrl+Tab` leave to the group around the one that
   is shown. `P` moves the selected cards into that group, and out of every group only if there is
-  none around. `Ctrl+Alt+G` takes one group apart: what was in it is where the group was.
+  none around. `Cmd+Option+G` takes one group apart: what was in it is where the group was.
 - A node is directly in one group at most. A group is there for as long as a node is in it.
 - Groups are how the workbench draws the machine. No runtime knows of them, and a node in a group
   runs exactly as before. They are kept by the names of the nodes, like the places of cards.

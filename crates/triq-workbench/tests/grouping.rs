@@ -251,3 +251,70 @@ fn which_nodes_are_grouped_is_held_back_while_drafting() -> triq::Result {
     assert!(!shows(&harness, "to be created") && !shows(&harness, "Apply draft"));
     Ok(())
 }
+
+#[test]
+fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in_it() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    let (imu, smoother, viewer) = (format!("{robot}/imu"), format!("{robot}/smoother"), format!("{desk}/viewer"));
+    let mut harness = open()?;
+    assert!(until(&mut harness, |harness| harness.query_by_label("raw: Pose").is_some()), "the cards appear");
+    harness.run_steps(4);
+
+    // The details are closed. A click on a card opens them, about that card.
+    switch(&harness, "Details").click();
+    harness.run_steps(3);
+    assert!(bar(&harness, "Details").is_none());
+    let sensor = header(&harness, "imu");
+    click(&mut harness, sensor, PointerButton::Primary);
+    harness.run_steps(3);
+    assert!(bar(&harness, "Details").is_some() && shows(&harness, &format!("{robot}, process {}", std::process::id())));
+
+    // The sensor is a group by itself: the details of a card have a button for that, as well as the key.
+    harness.get_by_label("Make Group").click();
+    harness.run_steps(4);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "group1")]));
+    // The filter is put into the group that is there: select it, select the group last, and press Ctrl+Shift+G.
+    for card in ["smoother", "group1"] {
+        let name = header(&harness, card);
+        shift_click(&mut harness, name);
+    }
+    key(&mut harness, Modifiers::CTRL | Modifiers::SHIFT, Key::G);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "group1"), (&smoother, "group1")]));
+    assert_eq!(cards(&harness), sorted(["/group1".to_owned(), viewer.clone()]));
+    // The viewer is put into it from its details, which list the groups it can be moved into.
+    let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
+    click_holding(&mut harness, empty, Modifiers::COMMAND);
+    let card = header(&harness, "viewer");
+    click(&mut harness, card, PointerButton::Primary);
+    harness.get_by_role(Role::ComboBox).click();
+    harness.run_steps(3);
+    harness.get_all_by_label("group1").last().expect("the group, among those it can be moved into").click();
+    harness.run_steps(4);
+    assert_eq!(harness.state().groups().get(&viewer), Some(&"group1".to_owned()));
+    assert_eq!(cards(&harness), ["/group1"]);
+
+    // Inside the group, a node is created. It is in the group, and the form stays for another.
+    let card = header(&harness, "group1");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("group1"));
+    harness.get_all_by_label("New filter").next().expect("the factory").click();
+    assert!(until(&mut harness, |harness| shows(harness, "Create")));
+    harness.get_by_label("Create").click();
+    harness.run_steps(3);
+    let created = format!("{robot}/filter1");
+    assert!(wait_for(|| scene.robot.inventory().nodes.iter().any(|node| node.name == "filter1")));
+    assert!(until(&mut harness, |harness| cards(harness).contains(&created)), "its card is inside the group");
+    assert_eq!(harness.state().groups().get(&created), Some(&"group1".to_owned()));
+    // Nothing is connected to its ports: they lead nowhere yet, and are not on the cards for the outside.
+    assert!(shows(&harness, "viewer.image: u8[]") && !shows(&harness, "filter1.raw: Pose"));
+    // From outside, the card of the group offers them, to be wired there.
+    // The keys are the graph's while the pointer is over it.
+    harness.hover_at(empty);
+    harness.run_steps(2);
+    key(&mut harness, Modifiers::CTRL, Key::Tab);
+    assert_eq!(harness.state().inside(), None);
+    assert!(shows(&harness, "filter1.raw: Pose") && shows(&harness, "filter1.smooth: Pose"));
+    Ok(())
+}

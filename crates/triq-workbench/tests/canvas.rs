@@ -101,14 +101,13 @@ fn the_graph_is_handled_like_a_user_would() -> triq::Result {
     assert!(wait_for(|| state(&scene.robot, "smoother") == NodeState::Running));
     assert!(until(&mut harness, |harness| button(harness, "smoother", "Pause").is_some()));
 
-    // Right-click the card: its menu offers what can be done with the node.
+    // A right click on a card opens no menu: what can be done with a node is on its card and in its details.
     let offered = |harness: &Bench<'_>| ["Pause", "Remove"].map(|word| harness.query_all_by_label(word).count());
     let [pauses, removes] = offered(&harness);
     assert_eq!(removes, 0, "nothing is selected, so nothing offers to remove a node");
     let port = seen(&harness, &text(&harness, "raw: Pose"));
     click(&mut harness, port, PointerButton::Secondary);
-    assert_eq!(offered(&harness), [pauses + 1, 1], "the menu opened");
-    harness.key_press(egui::Key::Escape);
+    assert_eq!(offered(&harness), [pauses, 0], "nothing opened");
     harness.remove_cursor();
     harness.run_steps(3);
 

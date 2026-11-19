@@ -7,6 +7,7 @@ mod window;
 use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use triq::{NodeInfo, NodeState};
+use triq_workbench::egui::accesskit::Role;
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
 use window::{Bench, around, bar, drag, open, switch, until};
@@ -124,6 +125,11 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
         "with the defaults"
     );
     assert!(until(&mut harness, |harness| shows(harness, "filter1")), "and it appears on the graph");
+    // The form stays as it is, for another node of the kind, under the next name that is free.
+    // The details do not turn to the node that was created.
+    let name = harness.get_by_role_and_label(Role::TextInput, "Name").value();
+    assert_eq!(name.as_deref(), Some("filter2"));
+    assert!(shows(&harness, "Create") && !shows(&harness, "Remove"));
 
     // Draw a wire, as dragging from an output pin to an input pin does.
     let (from, to) = (format!("{robot}/imu/pose"), format!("{robot}/filter1/raw"));

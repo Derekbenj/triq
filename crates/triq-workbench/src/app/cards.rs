@@ -2,11 +2,12 @@
 //! of cards, pins and wires, and what a click, a drag or a menu there asks for.
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
-//! the wires that leave it. The card of a group whose nodes run in several
-//! runtimes is no one's colour, and each of its pins is its node's. When a
-//! card is clicked, every card that no wire joins to it goes grey. What is
-//! only drafted is a brighter grey, with a glow around it.
-use super::details::{Form, actions, rate, toggle};
+//! the wires that leave it. The card of a group is white, or black on a
+//! light background, with a dot for each runtime its nodes run in, and each
+//! of its pins is the colour of its node. When a card is clicked, every card
+//! that no wire joins to it goes grey. What is only drafted is a light grey,
+//! with a glow around it.
+use super::details::{rate, toggle};
 use super::{Asking, Focus, Rates, Wish, awaits};
 use crate::colors::Colors;
 use crate::draft::{Mark, Marks};
@@ -16,7 +17,7 @@ use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, WidgetIn
 use egui_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use std::collections::BTreeSet;
-use triq::{Direction, Inventory, NodeState};
+use triq::{Direction, NodeState};
 
 /// How the graph widget asks what to draw and reports what the user did.
 pub(super) struct Viewer<'a> {
@@ -30,16 +31,13 @@ pub(super) struct Viewer<'a> {
     /// The cards that keep their colour while one is selected: that one, and
     /// all that wires join to it. `None` while none is: then every card does.
     pub lit: Option<BTreeSet<String>>,
-    pub inventories: &'a [Inventory],
     pub rates: &'a Rates,
     /// A view to switch to this frame.
     pub frame: Option<TSTransform>,
     /// How far the graph has moved in the window since the last frame. The view moves along.
     pub carried: egui::Vec2,
-    /// The nodes and groups whose cards Shift has selected, by what the cards are called.
-    pub selected: &'a [String],
-    /// Whether the graph shows the inside of a group.
-    pub inside: bool,
+    /// Set when a card is clicked: its details are to be seen.
+    pub reveal: &'a mut bool,
     /// Whether the click of this frame, if there is one, is the second of a double click.
     pub double: bool,
     /// What was asked for that changes what the graph shows.
@@ -57,14 +55,17 @@ impl Viewer<'_> {
         self.marks.card(&card.key())
     }
 
-    /// The colour of a card: that of its runtime, or of none if it stands for
-    /// nodes of several. A card that is only drafted is no runtime's yet, and
-    /// a card that is greyed is grey.
+    /// The colour of a card: that of its node's runtime. A group, and the
+    /// cards that stand for the outside of one, are no one runtime's. A card
+    /// that is only drafted is no runtime's yet, and a card that is greyed is grey.
     fn color(&self, card: &Card) -> Color32 {
         match self.mark(card) {
             Some(Mark::New) => drafted(self.dark),
             _ if self.dimmed(card) => grey(self.dark),
-            _ => card.runtime().map_or(nobodys(self.dark), |runtime| self.colors.of(runtime, self.dark)),
+            _ => match &card.kind {
+                Kind::Node { runtime, .. } => self.colors.of(runtime, self.dark),
+                Kind::Group { .. } | Kind::Entry { .. } | Kind::Exit { .. } => plain(self.dark),
+            },
         }
     }
 
@@ -120,23 +121,6 @@ impl Viewer<'_> {
             ui.strong(card.name())
         };
     }
-
-    /// The cards a menu on a card is about: every card that is selected, if
-    /// this one is among them, and else this one alone.
-    fn chosen(&self, key: String) -> Vec<String> {
-        if self.selected.contains(&key) { self.selected.to_vec() } else { vec![key] }
-    }
-
-    /// What the menu of a node or a group offers for putting cards in a
-    /// group, and inside a group for moving them one group out again.
-    fn grouping(&self, ui: &mut Ui, card: &Card) -> Option<Wish> {
-        let make = ui.button("Make Group").on_hover_text("Ctrl+G does the same for the cards that are selected");
-        let made = make.clicked().then(|| Wish::Group(self.chosen(card.key())));
-        let about =
-            "Into the group that this one is inside of, or into none. P does the same for the cards that are selected";
-        let out = self.inside && ui.button("Move out of the group").on_hover_text(about).clicked();
-        if out { Some(Wish::Separate(self.chosen(card.key()))) } else { made }
-    }
 }
 
 /// A pin as it is drawn, with a glow around it or without.
@@ -165,10 +149,11 @@ fn drafted(dark: bool) -> Color32 {
     Color32::from_gray(if dark { 215 } else { 60 })
 }
 
-/// The colour of a card that is no one runtime's: a group of nodes from
-/// several, and the cards that stand for the outside of a group.
-fn nobodys(dark: bool) -> Color32 {
-    Color32::from_gray(if dark { 165 } else { 95 })
+/// The colour of a card that is no one runtime's: a group, and the cards
+/// that stand for the outside of one. It is nearly white, or on a light
+/// background nearly black: no grey, which is what a greyed card is.
+fn plain(dark: bool) -> Color32 {
+    Color32::from_gray(if dark { 240 } else { 25 })
 }
 
 /// The glow around a card that the draft creates, changes or removes, and
@@ -282,6 +267,13 @@ impl SnarlViewer<Card> for Viewer<'_> {
                     }
                 }
                 Kind::Group { path, members } => {
+                    // A dot for each runtime that its nodes run in.
+                    let runtimes: BTreeSet<&str> = members.iter().map(|(runtime, _)| runtime.as_str()).collect();
+                    for runtime in runtimes {
+                        let color =
+                            if self.dimmed(card) { grey(self.dark) } else { self.colors.of(runtime, self.dark) };
+                        dot(ui, color, runtime);
+                    }
                     self.name(ui, card);
                     ui.weak(if members.len() == 1 { "1 node".to_owned() } else { format!("{} nodes", members.len()) });
                     // A node in it that does not run shows on the outside.
@@ -338,12 +330,17 @@ impl SnarlViewer<Card> for Viewer<'_> {
         snarl: &Snarl<Card>,
     ) -> egui::Frame {
         let card = &snarl[node];
-        let tint = if self.dimmed(card) {
-            0.08
-        } else if self.dark {
-            0.28
-        } else {
-            0.20
+        // A card that is greyed has hardly any of its colour, and one that is no runtime's has little.
+        let tint = match &card.kind {
+            _ if self.dimmed(card) => 0.08,
+            Kind::Node { .. } => {
+                if self.dark {
+                    0.28
+                } else {
+                    0.20
+                }
+            }
+            Kind::Group { .. } | Kind::Entry { .. } | Kind::Exit { .. } => 0.12,
         };
         default.fill(default.fill.lerp_to_gamma(self.color(card), tint)).corner_radius(9)
     }
@@ -410,9 +407,11 @@ impl SnarlViewer<Card> for Viewer<'_> {
         pin.remotes.iter().for_each(|to| unwire(&mut self.asking, snarl, pin.id, *to));
     }
 
-    /// A click on a card selects what it stands for. A double click on a group shows its inside.
+    /// A click on a card selects what it stands for, and its details are
+    /// shown. A double click on a group shows its inside.
     fn node_clicked(&mut self, node: NodeId, snarl: &Snarl<Card>) {
         let card = &snarl[node];
+        *self.reveal = true;
         match &card.kind {
             Kind::Node { node, .. } => *self.focus = Focus::node(card.key(), &node.params),
             Kind::Group { path, .. } => {
@@ -429,56 +428,6 @@ impl SnarlViewer<Card> for Viewer<'_> {
     fn background_clicked(&mut self, _: &Snarl<Card>) {
         if matches!(self.focus, Focus::Node { .. } | Focus::Group { .. }) {
             *self.focus = Focus::Nothing;
-        }
-    }
-
-    fn has_node_menu(&mut self, card: &Card) -> bool {
-        matches!(card.kind, Kind::Node { .. } | Kind::Group { .. })
-    }
-
-    fn show_node_menu(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], ui: &mut Ui, snarl: &mut Snarl<Card>) {
-        let card = &snarl[node];
-        let wish = match &card.kind {
-            Kind::Node { runtime, node } => {
-                if actions(ui, &mut self.asking, runtime, node) {
-                    ui.close();
-                }
-                ui.separator();
-                self.grouping(ui, card)
-            }
-            Kind::Group { path, .. } => {
-                let edit = ui.button("Edit Group").on_hover_text("Show what is inside it. Tab does the same").clicked();
-                let about = "Take the group apart. What was in it is where the group was. Ctrl+Alt+G does the same";
-                let apart = ui.button("Ungroup").on_hover_text(about).clicked();
-                ui.separator();
-                let grouped = self.grouping(ui, card);
-                if edit {
-                    Some(Wish::Enter(path.clone()))
-                } else {
-                    apart.then(|| Wish::Ungroup(path.clone())).or(grouped)
-                }
-            }
-            Kind::Entry { .. } | Kind::Exit { .. } => None,
-        };
-        if wish.is_some() {
-            *self.wish = wish;
-            ui.close();
-        }
-    }
-
-    fn has_graph_menu(&mut self, _: egui::Pos2, _: &mut Snarl<Card>) -> bool {
-        self.inventories.iter().any(|inventory| !inventory.factories.is_empty())
-    }
-
-    /// Right-clicking the background offers every kind of node any runtime can create.
-    fn show_graph_menu(&mut self, _: egui::Pos2, ui: &mut Ui, _: &mut Snarl<Card>) {
-        for inventory in self.inventories {
-            for factory in &inventory.factories {
-                if ui.button(format!("New {} in {}", factory.kind, inventory.runtime)).clicked() {
-                    *self.focus = Focus::Form(Form::new(inventory, factory));
-                    ui.close();
-                }
-            }
         }
     }
 }

@@ -8,7 +8,8 @@
 //! the group. The inside of a group is a drawing of its own: of its nodes,
 //! of the groups inside it, each as one card again, and of two more cards
 //! that stand for the outside. Whatever the group hears from outside comes
-//! from the one, and whatever it sends there goes to the other.
+//! from the one, and whatever it sends there goes to the other. A port that
+//! is connected to nothing is on neither: it leads nowhere yet.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
@@ -253,7 +254,9 @@ pub type Groups = BTreeMap<String, String>;
 ///
 /// A group shows the ports of its nodes, and of the nodes in the groups
 /// inside it, that are connected to nothing or to something outside it.
-/// What is connected only within the group is its own affair.
+/// What is connected only within the group is its own affair. The two cards
+/// that stand for the outside have the ports that are connected to
+/// something outside, and not those that are connected to nothing.
 pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -> Vec<Card> {
     let nodes = || {
         let runtimes = inventories.iter();
@@ -281,20 +284,22 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
             heard_in.entry(&source.output).or_default().push(group_of(runtime, &node.name));
         }
     }
-    // The ports a group shows: on the left what it hears, on the right what it sends.
-    let shown = |group: &str| {
+    // The ports of a group that lead outside it, on the left what it hears and on the right what
+    // it sends: those that are connected to something outside, and if `unconnected`, to nothing.
+    let shown = |group: &str, unconnected: bool| {
         let (mut left, mut right) = (Vec::new(), Vec::new());
         for (runtime, node) in members(group) {
             let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
             for input in &node.inputs {
                 let from_outside = input.sources.iter().any(|source| !is_in(sent_from(&source.output), group));
-                if input.sources.is_empty() || from_outside {
+                if from_outside || (unconnected && input.sources.is_empty()) {
                     left.push(pin(Port::Input(input.clone())));
                 }
             }
             for output in &node.outputs {
                 let heard = heard_in.get(output.service.as_str());
-                if heard.is_none_or(|heard| heard.iter().any(|by| !is_in(*by, group))) {
+                let outside = heard.is_some_and(|heard| heard.iter().any(|by| !is_in(*by, group)));
+                if outside || (unconnected && heard.is_none()) {
                     right.push(pin(Port::Output(output.clone())));
                 }
             }
@@ -309,12 +314,12 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
         nodes().filter_map(|(runtime, node)| child(group_of(runtime, &node.name)?, inside)).collect();
     for path in inner {
         let members = members(path).into_iter().map(|(runtime, node)| (runtime.to_owned(), node.clone())).collect();
-        let (left, right) = shown(path);
+        let (left, right) = shown(path, true);
         cards.push(Card { kind: Kind::Group { path: path.to_owned(), members }, left, right });
     }
     // Inside a group, what it hears from outside and what it sends there has a card each.
     if let Some(group) = inside {
-        let (heard, sent) = shown(group);
+        let (heard, sent) = shown(group, false);
         if !heard.is_empty() {
             cards.push(Card { kind: Kind::Entry { group: group.to_owned() }, left: Vec::new(), right: heard });
         }

@@ -17,31 +17,48 @@ pub(super) struct Form {
     /// `None` for a thread of its own.
     pool: Option<String>,
     settings: String,
+    /// The names of the nodes that were asked for with this form.
+    made: Vec<String>,
+}
+
+/// What became of a form in a frame.
+pub(super) enum Filled {
+    /// It is still being filled in.
+    Open,
+    /// A node was asked for, `runtime/node`. The form stays, for another of the kind.
+    Created(String),
+    /// It is done with: closed, or its runtime or factory went away.
+    Closed,
 }
 
 impl Form {
     pub(super) fn new(inventory: &Inventory, factory: &FactoryInfo) -> Self {
-        // The first name of the form `kind1`, `kind2`, ... that is free in that runtime.
-        let taken = |name: &String| inventory.nodes.iter().any(|node| node.name == *name);
-        let name = (1..).map(|number| format!("{}{number}", factory.kind)).find(|name| !taken(name));
-        Self {
+        let mut form = Self {
             runtime: inventory.runtime.clone(),
             kind: factory.kind.clone(),
-            name: name.unwrap_or_default(),
+            name: String::new(),
             pool: None,
             settings: pretty(&factory.params),
-        }
+            made: Vec::new(),
+        };
+        form.name = form.free(inventory);
+        form
     }
 
-    /// Returns true when the form is done with, created or cancelled.
-    pub(super) fn show(&mut self, ui: &mut Ui, asking: &mut Asking<'_>, inventories: &[Inventory]) -> bool {
+    /// The first name of the form `kind1`, `kind2`, ... that is free in that
+    /// runtime, and that this form has not asked for a node by: a node that
+    /// was asked for a moment ago may not be reported yet.
+    fn free(&self, inventory: &Inventory) -> String {
+        let taken = |name: &String| inventory.nodes.iter().any(|node| node.name == *name) || self.made.contains(name);
+        (1..).map(|number| format!("{}{number}", self.kind)).find(|name| !taken(name)).unwrap_or_default()
+    }
+
+    pub(super) fn show(&mut self, ui: &mut Ui, asking: &mut Asking<'_>, inventories: &[Inventory]) -> Filled {
         let offered = inventories.iter().find(|inventory| inventory.runtime == self.runtime).and_then(|inventory| {
             let factory = inventory.factories.iter().find(|factory| factory.kind == self.kind)?;
             Some((inventory, factory))
         });
-        let Some((inventory, factory)) = offered else {
-            return true; // the runtime or its factory went away
-        };
+        let Some((inventory, factory)) = offered else { return Filled::Closed };
         ui.heading(format!("Create a {} node", self.kind));
         ui.weak(format!("in {}", self.runtime));
         ui.add_space(8.0);
@@ -72,7 +89,7 @@ impl Form {
         }
 
         ui.add_space(8.0);
-        let mut done = false;
+        let mut filled = Filled::Open;
         ui.horizontal(|ui| {
             let ready = params.is_ok() && !self.name.is_empty();
             if ui.add_enabled(ready, egui::Button::new("Create")).clicked()
@@ -80,12 +97,17 @@ impl Form {
             {
                 let placement = self.pool.as_deref().map_or(Placement::Dedicated, Placement::pool);
                 let (runtime, kind, name) = (self.runtime.clone(), self.kind.clone(), self.name.clone());
-                asking.ask(Request::Spawn { runtime, kind, name, placement, params });
-                done = true;
+                filled = Filled::Created(format!("{runtime}/{name}"));
+                asking.ask(Request::Spawn { runtime, kind, name: name.clone(), placement, params });
+                // The form stays as it is, for another node of the kind, under the next name that is free.
+                self.made.push(name);
+                self.name = self.free(inventory);
             }
-            done |= ui.button("Cancel").clicked();
+            if ui.button("Close").clicked() {
+                filled = Filled::Closed;
+            }
         });
-        done
+        filled
     }
 }
 
@@ -241,6 +263,43 @@ pub(super) fn group_details(
         });
     }
     clicked
+}
+
+/// What can be done about groups with the cards that are selected, or with
+/// the one the details are about: put them in a new group, in one of the
+/// groups that are on the graph, or, inside a group, one group out. `keys`
+/// are what the keys for the first and the last of those are called.
+pub(super) fn grouping(
+    ui: &mut Ui,
+    cards: &[String],
+    groups: &[String],
+    inside: bool,
+    keys: [&str; 2],
+    wish: &mut Option<Wish>,
+) {
+    ui.separator();
+    ui.strong(if cards.len() == 1 { "Group".to_owned() } else { format!("Group: {} are selected", cards.len()) });
+    ui.horizontal_wrapped(|ui| {
+        if ui.button("Make Group").on_hover_text(format!("Put it in a new group. {} does the same", keys[0])).clicked()
+        {
+            *wish = Some(Wish::Group(cards.to_vec()));
+        }
+        let about = format!("Into the group around this one, or into none. {} does the same", keys[1]);
+        if inside && ui.button("Move out").on_hover_text(about).clicked() {
+            *wish = Some(Wish::Separate(cards.to_vec()));
+        }
+        // A group is not moved into itself.
+        let others: Vec<&String> = groups.iter().filter(|group| !cards.contains(&graph::group_key(group))).collect();
+        if !others.is_empty() {
+            egui::ComboBox::from_id_salt("move-into").selected_text("Move into").show_ui(ui, |ui| {
+                for group in others {
+                    if ui.selectable_label(false, graph::called(group)).clicked() {
+                        *wish = Some(Wish::Insert(cards.to_vec(), group.clone()));
+                    }
+                }
+            });
+        }
+    });
 }
 
 /// How a node is paused or started again: the word for it and the request.
