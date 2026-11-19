@@ -16,11 +16,24 @@ fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
 }
 
-/// The cards on the graph, by what they are called.
+/// The cards on the graph, by what they are called: those of groups, and those of the nodes
+/// of this test. Other programs may be running, and their nodes have cards too.
 fn cards(harness: &Bench<'_>) -> Vec<String> {
-    let mut cards: Vec<String> = harness.state().graph().nodes().map(Card::key).collect();
+    let own = format!("w{}-", std::process::id());
+    let cards = harness.state().graph().nodes().map(Card::key);
+    let mut cards: Vec<String> = cards.filter(|key| key.starts_with('/') || key.starts_with(&own)).collect();
     cards.sort();
     cards
+}
+
+/// Ask for a filter in the robot: pick the kind among the runtimes, and create it under the
+/// name the form proposes. The list of runtimes may be long, with the kind out of sight.
+fn create(harness: &mut Bench<'_>) {
+    harness.get_all_by_label("New filter").next().expect("the factory").scroll_to_me();
+    harness.run_steps(3);
+    harness.get_all_by_label("New filter").next().expect("the factory").click();
+    assert!(until(harness, |harness| shows(harness, "Create")));
+    harness.get_by_label("Create").click();
 }
 
 fn sorted<const N: usize>(mut names: [String; N]) -> Vec<String> {
@@ -304,9 +317,7 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     let card = header(&harness, "group1");
     double_click(&mut harness, card);
     assert_eq!(harness.state().inside(), Some("group1"));
-    harness.get_all_by_label("New filter").next().expect("the factory").click();
-    assert!(until(&mut harness, |harness| shows(harness, "Create")));
-    harness.get_by_label("Create").click();
+    create(&mut harness);
     harness.run_steps(3);
     let created = format!("{robot}/filter1");
     assert!(wait_for(|| scene.robot.inventory().nodes.iter().any(|node| node.name == "filter1")));
@@ -321,5 +332,14 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     key(&mut harness, Modifiers::CTRL, Key::Tab);
     assert_eq!(harness.state().inside(), None);
     assert!(shows(&harness, "filter1.raw: Pose") && shows(&harness, "filter1.smooth: Pose"));
+
+    // The node is removed, and out here one of the same name is created. It is where it was
+    // created: beside the group, not in the group that the node before it was in.
+    triq::Remote::open(&robot)?.remove("filter1")?;
+    assert!(until(&mut harness, |harness| !shows(harness, "filter1.raw: Pose")));
+    create(&mut harness);
+    harness.run_steps(3);
+    assert!(until(&mut harness, |harness| cards(harness).contains(&created)), "{:?}", cards(&harness));
+    assert_eq!(harness.state().groups().get(&created), None);
     Ok(())
 }

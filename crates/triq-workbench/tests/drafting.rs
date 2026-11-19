@@ -150,6 +150,9 @@ fn a_draft_can_be_discarded_and_what_is_refused_of_one_stays_a_draft() -> triq::
 
     // In a draft, a node is created, wired, and another paused and cut off. Nothing of it happens.
     press(&mut harness, "Draft");
+    // The list of runtimes may be long, with other programs running, and the kind out of sight.
+    harness.get_all_by_label("New filter").next().expect("the factory").scroll_to_me();
+    harness.run_steps(3);
     harness.get_all_by_label("New filter").next().expect("the factory").click();
     assert!(until(&mut harness, |harness| shows(harness, "Create")));
     harness.get_by_label("Create").click();

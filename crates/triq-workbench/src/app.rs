@@ -619,9 +619,10 @@ impl Contents {
         if let Some((key, (_, node))) = turn_to.and_then(|key| Some((key.clone(), node(&inventories, &key)?))) {
             *focus = Focus::node(key, &node.params);
         }
-        // A node that is created while the graph shows the inside of a group is in that group.
-        if let (Some(node), Some(group)) = (created, self.inside.clone()) {
-            self.regroup(vec![(node, Some(group))]);
+        // A node is created where the graph is looking: in the group whose inside it shows, or in
+        // none. A node of that name before it may have been in another group, which is not its.
+        if let Some(node) = created {
+            self.regroup(vec![(node, self.inside.clone())]);
         }
     }
 
