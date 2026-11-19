@@ -6,8 +6,9 @@
 //! together in a group, and a group is drawn as one card: its pins are the
 //! ports of its nodes that are connected to nothing, or to something outside
 //! the group. The inside of a group is a drawing of its own: of its nodes,
-//! and of two more cards that stand for the outside. Whatever the group hears
-//! from outside comes from the one, and whatever it sends there goes to the other.
+//! of the groups inside it, each as one card again, and of two more cards
+//! that stand for the outside. Whatever the group hears from outside comes
+//! from the one, and whatever it sends there goes to the other.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
@@ -30,8 +31,10 @@ pub struct Card {
 pub enum Kind {
     /// One node of one runtime.
     Node { runtime: String, node: NodeInfo },
-    /// The nodes of a group, each with its runtime, drawn as one card.
-    Group { name: String, members: Vec<(String, NodeInfo)> },
+    /// A group, drawn as one card: where it is among the groups, as
+    /// `outer/inner`, and every node in it and in the groups inside it,
+    /// each with its runtime.
+    Group { path: String, members: Vec<(String, NodeInfo)> },
     /// Inside a group: the card that all it hears from outside comes from.
     Entry { group: String },
     /// Inside a group: the card that all it sends to the outside goes to.
@@ -92,14 +95,57 @@ impl Pin {
 
 /// What the card of a group is called across syncs. It begins with a slash,
 /// which no `runtime/node` does.
-pub fn group_key(name: &str) -> String {
-    format!("/{name}")
+pub fn group_key(group: &str) -> String {
+    format!("/{group}")
 }
 
 /// What the three cards of a group are called: its own, and inside it the
-/// two that stand for the outside.
-pub fn group_keys(name: &str) -> [String; 3] {
-    [group_key(name), format!("/{name}/in"), format!("/{name}/out")]
+/// two that stand for the outside, which begin with two slashes.
+pub fn group_keys(group: &str) -> [String; 3] {
+    [group_key(group), format!("//in/{group}"), format!("//out/{group}")]
+}
+
+/// The group that a group is inside of. `None` for one that is inside no other.
+pub fn parent(group: &str) -> Option<&str> {
+    group.rsplit_once('/').map(|(parent, _)| parent)
+}
+
+/// What a group is called among the groups beside it: the last part of `outer/inner`.
+pub fn called(group: &str) -> &str {
+    group.rsplit('/').next().unwrap_or(group)
+}
+
+/// A group by the group it is inside of, if any, and what it is called there.
+pub fn join(parent: Option<&str>, name: &str) -> String {
+    parent.map_or(name.to_owned(), |parent| format!("{parent}/{name}"))
+}
+
+/// Whether a group is `group`, or is inside it.
+pub fn within(inner: &str, group: &str) -> bool {
+    inner.strip_prefix(group).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Of the groups directly inside `level`, or for `None` of those that are
+/// inside no other: the one that `group` is, or is inside of.
+pub fn child<'a>(group: &'a str, level: Option<&str>) -> Option<&'a str> {
+    let below = match level {
+        Some(level) => group.strip_prefix(level)?.strip_prefix('/')?,
+        None => group,
+    };
+    let name = below.split('/').next()?;
+    Some(&group[..group.len() - below.len() + name.len()])
+}
+
+/// Where a node is once the group `from` has become `to`, if the node was in
+/// `inner`, which is `from` or a group inside it. With `to` as `None` the
+/// group is no more: what was in it is in no group, and the groups that
+/// were inside it are inside no other.
+pub fn replant(inner: &str, from: &str, to: Option<&str>) -> Option<String> {
+    let rest = &inner[from.len()..];
+    match to {
+        Some(to) => Some(format!("{to}{rest}")),
+        None => rest.strip_prefix('/').map(str::to_owned),
+    }
 }
 
 impl Card {
@@ -117,7 +163,7 @@ impl Card {
     pub fn key(&self) -> String {
         match &self.kind {
             Kind::Node { runtime, node } => format!("{runtime}/{}", node.name),
-            Kind::Group { name, .. } => group_key(name),
+            Kind::Group { path, .. } => group_key(path),
             Kind::Entry { group } => group_keys(group)[1].clone(),
             Kind::Exit { group } => group_keys(group)[2].clone(),
         }
@@ -127,7 +173,7 @@ impl Card {
     pub fn name(&self) -> &str {
         match &self.kind {
             Kind::Node { node, .. } => &node.name,
-            Kind::Group { name, .. } => name,
+            Kind::Group { path, .. } => called(path),
             Kind::Entry { .. } => "Group Input",
             Kind::Exit { .. } => "Group Output",
         }
@@ -194,26 +240,32 @@ impl Card {
 }
 
 /// Which group each node is in, by `runtime/node`. A node has room for one.
+/// A group that is inside another is written with the outer one first:
+/// `outer/inner`. A group is there for as long as a node says it is in it.
 pub type Groups = BTreeMap<String, String>;
 
 /// The cards to draw of a machine whose nodes are grouped so.
 ///
 /// Outside every group, with `inside` as `None`: a card for each node that is
-/// in no group, and one for each group. Inside a group: a card for each of
-/// its nodes, and the two that stand for the outside.
+/// in no group, and one for each group that is inside no other. Inside a
+/// group: a card for each node that is in just that group, one for each
+/// group directly inside it, and the two that stand for the outside.
 ///
-/// A group shows the ports of its nodes that are connected to nothing, or to
-/// something outside it. What is connected only within the group is its own affair.
+/// A group shows the ports of its nodes, and of the nodes in the groups
+/// inside it, that are connected to nothing or to something outside it.
+/// What is connected only within the group is its own affair.
 pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -> Vec<Card> {
     let nodes = || {
         let runtimes = inventories.iter();
         runtimes.flat_map(|inventory| inventory.nodes.iter().map(move |node| (inventory.runtime.as_str(), node)))
     };
     let group_of = |runtime: &str, node: &str| groups.get(&format!("{runtime}/{node}")).map(String::as_str);
+    // Whether a node is in a group, or in a group inside it.
+    let is_in = |of: Option<&str>, group: &str| of.is_some_and(|of| within(of, group));
     // The nodes of a group, in order of name: so its pins are, in whatever order the runtimes are listed.
     let members = |group: &str| -> Vec<(&str, &NodeInfo)> {
         let mut members: Vec<_> =
-            nodes().filter(|(runtime, node)| group_of(runtime, &node.name) == Some(group)).collect();
+            nodes().filter(|(runtime, node)| is_in(group_of(runtime, &node.name), group)).collect();
         members.sort_by_key(|(runtime, node)| (*runtime, &node.name));
         members
     };
@@ -235,14 +287,14 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
         for (runtime, node) in members(group) {
             let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
             for input in &node.inputs {
-                let from_outside = input.sources.iter().any(|source| sent_from(&source.output) != Some(group));
+                let from_outside = input.sources.iter().any(|source| !is_in(sent_from(&source.output), group));
                 if input.sources.is_empty() || from_outside {
                     left.push(pin(Port::Input(input.clone())));
                 }
             }
             for output in &node.outputs {
                 let heard = heard_in.get(output.service.as_str());
-                if heard.is_none_or(|heard| heard.iter().any(|by| *by != Some(group))) {
+                if heard.is_none_or(|heard| heard.iter().any(|by| !is_in(*by, group))) {
                     right.push(pin(Port::Output(output.clone())));
                 }
             }
@@ -250,24 +302,25 @@ pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -
         (left, right)
     };
 
-    let Some(group) = inside else {
-        let alone = nodes().filter(|(runtime, node)| group_of(runtime, &node.name).is_none());
-        let mut cards: Vec<Card> = alone.map(|(runtime, node)| Card::of(runtime, node)).collect();
-        let named: BTreeSet<&str> = nodes().filter_map(|(runtime, node)| group_of(runtime, &node.name)).collect();
-        for name in named {
-            let members = members(name).into_iter().map(|(runtime, node)| (runtime.to_owned(), node.clone())).collect();
-            let (left, right) = shown(name);
-            cards.push(Card { kind: Kind::Group { name: name.to_owned(), members }, left, right });
-        }
-        return cards;
-    };
-    let mut cards: Vec<Card> = members(group).into_iter().map(|(runtime, node)| Card::of(runtime, node)).collect();
-    let (heard, sent) = shown(group);
-    if !heard.is_empty() {
-        cards.push(Card { kind: Kind::Entry { group: group.to_owned() }, left: Vec::new(), right: heard });
+    // What is drawn here: the nodes that are in just this group, and a card for each group directly inside it.
+    let here = nodes().filter(|(runtime, node)| group_of(runtime, &node.name) == inside);
+    let mut cards: Vec<Card> = here.map(|(runtime, node)| Card::of(runtime, node)).collect();
+    let inner: BTreeSet<&str> =
+        nodes().filter_map(|(runtime, node)| child(group_of(runtime, &node.name)?, inside)).collect();
+    for path in inner {
+        let members = members(path).into_iter().map(|(runtime, node)| (runtime.to_owned(), node.clone())).collect();
+        let (left, right) = shown(path);
+        cards.push(Card { kind: Kind::Group { path: path.to_owned(), members }, left, right });
     }
-    if !sent.is_empty() {
-        cards.push(Card { kind: Kind::Exit { group: group.to_owned() }, left: sent, right: Vec::new() });
+    // Inside a group, what it hears from outside and what it sends there has a card each.
+    if let Some(group) = inside {
+        let (heard, sent) = shown(group);
+        if !heard.is_empty() {
+            cards.push(Card { kind: Kind::Entry { group: group.to_owned() }, left: Vec::new(), right: heard });
+        }
+        if !sent.is_empty() {
+            cards.push(Card { kind: Kind::Exit { group: group.to_owned() }, left: sent, right: Vec::new() });
+        }
     }
     cards
 }

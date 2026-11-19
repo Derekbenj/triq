@@ -58,11 +58,31 @@ fn nodes_are_grouped_and_a_group_is_looked_into_and_taken_apart_with_blenders_ke
     harness.run_steps(4);
     assert_eq!(cards(&harness), sorted([imu.clone(), smoother.clone(), viewer.clone()]));
 
-    // Select the sensor and the filter, with Shift held, and press Ctrl+G: they are a group, drawn as one card.
-    for card in ["imu", "smoother"] {
-        let name = header(&harness, card);
-        shift_click(&mut harness, name);
-    }
+    // Select the sensor and the filter, with Shift held. That was a mistake: a click beside the
+    // cards with the command key held lets go of them all at once, and then Ctrl+G has nothing to group.
+    let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
+    let select = |harness: &mut Bench<'_>| {
+        for card in ["imu", "smoother"] {
+            let name = header(harness, card);
+            shift_click(harness, name);
+        }
+    };
+    select(&mut harness);
+    click_holding(&mut harness, empty, Modifiers::COMMAND);
+    key(&mut harness, Modifiers::CTRL, Key::G);
+    assert_eq!(harness.state().groups(), &Groups::new());
+
+    // With that key held, a click on one of the cards lets go of that one alone.
+    select(&mut harness);
+    let sensor = header(&harness, "imu");
+    click_holding(&mut harness, sensor, Modifiers::COMMAND);
+    key(&mut harness, Modifiers::CTRL, Key::G);
+    assert_eq!(harness.state().groups(), &groups([(&smoother, "group1")]));
+    key(&mut harness, Modifiers::CTRL | Modifiers::ALT, Key::G);
+    assert_eq!(harness.state().groups(), &Groups::new());
+
+    // Selected again, Ctrl+G makes a group of them, drawn as one card.
+    select(&mut harness);
     key(&mut harness, Modifiers::CTRL, Key::G);
     assert_eq!(harness.state().groups(), &groups([(&imu, "group1"), (&smoother, "group1")]));
     assert_eq!(cards(&harness), sorted(["/group1".to_owned(), viewer.clone()]));
@@ -89,16 +109,38 @@ fn nodes_are_grouped_and_a_group_is_looked_into_and_taken_apart_with_blenders_ke
     harness.key_press(Key::Tab);
     harness.run_steps(4);
     assert_eq!(harness.state().inside(), Some("sensing"));
-    assert_eq!(cards(&harness), sorted(["/sensing/out".to_owned(), imu.clone(), smoother.clone()]));
+    let inside = sorted(["//out/sensing".to_owned(), imu.clone(), smoother.clone()]);
+    assert_eq!(cards(&harness), inside);
     assert!(shows(&harness, "Group Output") && shows(&harness, "inside sensing") && shows(&harness, "Exit Group"));
     picture(&mut harness, "group-inside.png");
 
-    // Inside, click the filter and press P: it is moved out of the group. The sensor is what is left in it.
+    // A group can be inside another. In here, click the filter and press Ctrl+G: it is a group
+    // of its own, inside the first, and is drawn as one card beside the sensor.
+    let filter = header(&harness, "smoother");
+    click(&mut harness, filter, PointerButton::Primary);
+    key(&mut harness, Modifiers::CTRL, Key::G);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "sensing"), (&smoother, "sensing/group1")]));
+    assert_eq!(cards(&harness), sorted(["//out/sensing".to_owned(), "/sensing/group1".to_owned(), imu.clone()]));
+    // Tab steps into the group that is selected, which is the new one, and shows where the graph is.
+    harness.key_press(Key::Tab);
+    harness.run_steps(4);
+    assert_eq!(harness.state().inside(), Some("sensing/group1"));
+    assert!(shows(&harness, "inside sensing/group1") && shows(&harness, "Group Input"));
+    // In there, P moves the filter one group out: into the group around this one, not out of every
+    // group. With nothing left in it the inner group is no more, and the graph shows the one around it.
+    let filter = header(&harness, "smoother");
+    click(&mut harness, filter, PointerButton::Primary);
+    key(&mut harness, Modifiers::NONE, Key::P);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "sensing"), (&smoother, "sensing")]));
+    assert_eq!(harness.state().inside(), Some("sensing"));
+    assert_eq!(cards(&harness), inside);
+
+    // P once more moves the filter out of this group too. The sensor is what is left in it.
     let filter = header(&harness, "smoother");
     click(&mut harness, filter, PointerButton::Primary);
     key(&mut harness, Modifiers::NONE, Key::P);
     assert_eq!(harness.state().groups(), &groups([(&imu, "sensing")]));
-    assert_eq!(cards(&harness), sorted(["/sensing/out".to_owned(), imu.clone()]));
+    assert_eq!(cards(&harness), sorted(["//out/sensing".to_owned(), imu.clone()]));
 
     // Ctrl+Tab leaves the group. From outside it is one card again, beside the filter and the viewer.
     key(&mut harness, Modifiers::CTRL, Key::Tab);
@@ -112,6 +154,21 @@ fn nodes_are_grouped_and_a_group_is_looked_into_and_taken_apart_with_blenders_ke
     harness.get_all_by_label("Exit Group").next().expect("the way out, above the graph").click();
     harness.run_steps(4);
     assert_eq!(harness.state().inside(), None);
+
+    // A group goes into a group as a node does: select the group and the filter, and press Ctrl+G.
+    for card in ["sensing", "smoother"] {
+        let name = header(&harness, card);
+        shift_click(&mut harness, name);
+    }
+    key(&mut harness, Modifiers::CTRL, Key::G);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "group1/sensing"), (&smoother, "group1")]));
+    assert_eq!(cards(&harness), sorted(["/group1".to_owned(), viewer.clone()]));
+    assert!(shows(&harness, "a group of 2 nodes"));
+    // Ctrl+Alt+G takes the new group apart. What was in it is where the group was: the filter
+    // in no group, and the group that was inside it inside no other.
+    key(&mut harness, Modifiers::CTRL | Modifiers::ALT, Key::G);
+    assert_eq!(harness.state().groups(), &groups([(&imu, "sensing")]));
+    assert_eq!(cards(&harness), sorted(["/sensing".to_owned(), smoother.clone(), viewer.clone()]));
 
     // In the program itself, Tab is taken out of what was typed before a frame makes anything
     // of it, while the pointer is over the graph: it does not move on to the next button.

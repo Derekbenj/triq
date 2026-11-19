@@ -36,7 +36,7 @@ pub(super) struct Viewer<'a> {
     pub frame: Option<TSTransform>,
     /// How far the graph has moved in the window since the last frame. The view moves along.
     pub carried: egui::Vec2,
-    /// The cards that Shift has selected, by what they are called.
+    /// The nodes and groups whose cards Shift has selected, by what the cards are called.
     pub selected: &'a [String],
     /// Whether the graph shows the inside of a group.
     pub inside: bool,
@@ -121,11 +121,21 @@ impl Viewer<'_> {
         };
     }
 
-    /// The nodes a menu on a card is about: every node that is selected, if
-    /// this card is one of them, and else this one alone.
+    /// The cards a menu on a card is about: every card that is selected, if
+    /// this one is among them, and else this one alone.
     fn chosen(&self, key: String) -> Vec<String> {
-        let nodes = self.selected.iter().filter(|key| !key.starts_with('/'));
-        if self.selected.contains(&key) { nodes.cloned().collect() } else { vec![key] }
+        if self.selected.contains(&key) { self.selected.to_vec() } else { vec![key] }
+    }
+
+    /// What the menu of a node or a group offers for putting cards in a
+    /// group, and inside a group for moving them one group out again.
+    fn grouping(&self, ui: &mut Ui, card: &Card) -> Option<Wish> {
+        let make = ui.button("Make Group").on_hover_text("Ctrl+G does the same for the cards that are selected");
+        let made = make.clicked().then(|| Wish::Group(self.chosen(card.key())));
+        let about =
+            "Into the group that this one is inside of, or into none. P does the same for the cards that are selected";
+        let out = self.inside && ui.button("Move out of the group").on_hover_text(about).clicked();
+        if out { Some(Wish::Separate(self.chosen(card.key()))) } else { made }
     }
 }
 
@@ -271,7 +281,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
                         }
                     }
                 }
-                Kind::Group { name, members } => {
+                Kind::Group { path, members } => {
                     self.name(ui, card);
                     ui.weak(if members.len() == 1 { "1 node".to_owned() } else { format!("{} nodes", members.len()) });
                     // A node in it that does not run shows on the outside.
@@ -287,7 +297,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
                     }
                     let about = "Edit Group: show the nodes inside it. Tab does the same, and so does a double click";
                     if ui.small_button("Edit").on_hover_text(about).clicked() {
-                        *self.wish = Some(Wish::Enter(name.clone()));
+                        *self.wish = Some(Wish::Enter(path.clone()));
                     }
                 }
                 Kind::Entry { .. } | Kind::Exit { .. } => self.name(ui, card),
@@ -311,7 +321,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let card = &snarl[node];
         let selected = match (&*self.focus, &card.kind) {
             (Focus::Node { key, .. }, Kind::Node { .. }) => *key == card.key(),
-            (Focus::Group { name, .. }, Kind::Group { name: group, .. }) => name == group,
+            (Focus::Group { name, .. }, Kind::Group { path, .. }) => name == path,
             _ => false,
         };
         let frame = default.stroke(Stroke::new(if selected { 3.5 } else { 1.8 }, self.color(card))).corner_radius(9);
@@ -405,11 +415,11 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let card = &snarl[node];
         match &card.kind {
             Kind::Node { node, .. } => *self.focus = Focus::node(card.key(), &node.params),
-            Kind::Group { name, .. } => {
+            Kind::Group { path, .. } => {
                 if self.double {
-                    *self.wish = Some(Wish::Enter(name.clone()));
+                    *self.wish = Some(Wish::Enter(path.clone()));
                 }
-                self.focus.group(name);
+                self.focus.group(path);
             }
             Kind::Entry { group } | Kind::Exit { group } => self.focus.group(group),
         }
@@ -434,22 +444,19 @@ impl SnarlViewer<Card> for Viewer<'_> {
                     ui.close();
                 }
                 ui.separator();
-                if self.inside {
-                    let out = ui
-                        .button("Move out of the group")
-                        .on_hover_text("P does the same for the cards that are selected");
-                    out.clicked().then(|| Wish::Separate(self.chosen(card.key())))
-                } else {
-                    let make =
-                        ui.button("Make Group").on_hover_text("Ctrl+G does the same for the cards that are selected");
-                    make.clicked().then(|| Wish::Group(self.chosen(card.key())))
-                }
+                self.grouping(ui, card)
             }
-            Kind::Group { name, .. } => {
-                let edit =
-                    ui.button("Edit Group").on_hover_text("Show the nodes inside it. Tab does the same").clicked();
-                let apart = ui.button("Ungroup").on_hover_text("Ctrl+Alt+G does the same").clicked();
-                if edit { Some(Wish::Enter(name.clone())) } else { apart.then(|| Wish::Ungroup(name.clone())) }
+            Kind::Group { path, .. } => {
+                let edit = ui.button("Edit Group").on_hover_text("Show what is inside it. Tab does the same").clicked();
+                let about = "Take the group apart. What was in it is where the group was. Ctrl+Alt+G does the same";
+                let apart = ui.button("Ungroup").on_hover_text(about).clicked();
+                ui.separator();
+                let grouped = self.grouping(ui, card);
+                if edit {
+                    Some(Wish::Enter(path.clone()))
+                } else {
+                    apart.then(|| Wish::Ungroup(path.clone())).or(grouped)
+                }
             }
             Kind::Entry { .. } | Kind::Exit { .. } => None,
         };

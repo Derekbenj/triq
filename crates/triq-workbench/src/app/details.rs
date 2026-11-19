@@ -4,7 +4,7 @@
 use super::{Asking, Rates, Wish, awaits};
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::Request;
-use crate::graph::Groups;
+use crate::graph::{self, Groups};
 use eframe::egui::{self, Ui};
 use serde_json::Value;
 use triq::{FactoryInfo, Inventory, NodeInfo, NodeState, Placement, PoolInfo, PortSpec};
@@ -186,51 +186,59 @@ pub(super) fn node_details(
     }
 }
 
-/// What is known of a group: its name, which can be changed, and its nodes,
-/// each `runtime/node`. Returns the node that was clicked, to see its details.
+/// What is known of a group: what it is called, which can be changed, and
+/// every node in it, each `runtime/node` with the group it is in. `shown` is
+/// whether the graph shows the inside of this group. Returns the node that
+/// was clicked, to see its details.
 pub(super) fn group_details(
     ui: &mut Ui,
-    name: &str,
+    group: &str,
     renamed: &mut String,
-    nodes: &[&String],
+    nodes: &[(&String, &String)],
     mark: Option<Mark>,
-    inside: bool,
+    shown: bool,
     wish: &mut Option<Wish>,
 ) -> Option<String> {
-    ui.heading(name);
-    ui.weak(match nodes.len() {
-        1 => "a group of 1 node".to_owned(),
-        several => format!("a group of {several} nodes"),
-    });
+    ui.heading(graph::called(group));
+    let size =
+        if nodes.len() == 1 { "a group of 1 node".to_owned() } else { format!("a group of {} nodes", nodes.len()) };
+    ui.weak(graph::parent(group).map_or(size.clone(), |outer| format!("{size}, inside {outer}")));
     if let Some(mark) = mark {
         ui.weak(format!("{}, when the draft is applied", awaits(mark)));
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        let about = if inside { "Show the whole machine again" } else { "Show the nodes inside it" };
-        if ui.button(if inside { "Exit Group" } else { "Edit Group" }).on_hover_text(about).clicked() {
-            *wish = Some(if inside { Wish::Leave } else { Wish::Enter(name.to_owned()) });
+        let about = if shown { "Show what is around the group again" } else { "Show what is inside it" };
+        if ui.button(if shown { "Exit Group" } else { "Edit Group" }).on_hover_text(about).clicked() {
+            *wish = Some(if shown { Wish::Leave } else { Wish::Enter(group.to_owned()) });
         }
-        if ui.button("Ungroup").on_hover_text("Take every node out of the group. The nodes stay as they are").clicked()
-        {
-            *wish = Some(Wish::Ungroup(name.to_owned()));
+        let about = "Take the group apart. What was in it is where the group was, and runs as before";
+        if ui.button("Ungroup").on_hover_text(about).clicked() {
+            *wish = Some(Wish::Ungroup(group.to_owned()));
         }
     });
     ui.separator();
     let label = ui.label("Name");
     ui.horizontal(|ui| {
         ui.text_edit_singleline(renamed).labelled_by(label.id);
-        if ui.add_enabled(!renamed.trim().is_empty() && renamed != name, egui::Button::new("Rename")).clicked() {
-            *wish = Some(Wish::Rename(name.to_owned(), renamed.clone()));
+        let changed = !renamed.trim().is_empty() && renamed != graph::called(group);
+        if ui.add_enabled(changed, egui::Button::new("Rename")).clicked() {
+            *wish = Some(Wish::Rename(group.to_owned(), renamed.clone()));
         }
     });
     ui.separator();
     ui.strong("Nodes");
     let mut clicked = None;
-    for node in nodes {
-        if ui.selectable_label(false, node.as_str()).clicked() {
-            clicked = Some((*node).clone());
-        }
+    for (node, of) in nodes {
+        ui.horizontal(|ui| {
+            if ui.selectable_label(false, node.as_str()).clicked() {
+                clicked = Some((*node).clone());
+            }
+            // A node of a group inside this one says which.
+            if let Some(inner) = of.strip_prefix(group).and_then(|rest| rest.strip_prefix('/')) {
+                ui.weak(format!("in {inner}"));
+            }
+        });
     }
     clicked
 }

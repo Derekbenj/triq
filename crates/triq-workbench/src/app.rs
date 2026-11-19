@@ -114,9 +114,10 @@ struct Contents {
     grouping: Groups,
     rates: Arc<Rates>,
     snarl: Snarl<Card>,
-    /// The group whose inside the graph shows. `None` for the whole machine.
+    /// The group whose inside the graph shows, as `outer/inner` if it is
+    /// inside another. `None` for the whole machine.
     inside: Option<String>,
-    /// The cards that Shift has selected in the graph, by what they are called.
+    /// The nodes and groups whose cards Shift has selected in the graph, by what the cards are called.
     selected: Vec<String>,
     /// Where every card is, and where the cards of programs that are not running were.
     places: Places,
@@ -141,7 +142,8 @@ enum Focus {
         key: String,
         settings: String,
     },
-    /// A group, with its name as the user is editing it.
+    /// A group, by where it is among the groups, as `outer/inner`, with
+    /// what it is called there as the user is editing it.
     Group {
         name: String,
         renamed: String,
@@ -159,7 +161,7 @@ impl Focus {
     /// they are, with its name as the user is editing it.
     fn group(&mut self, group: &str) {
         if !matches!(self, Self::Group { name, .. } if name == group) {
-            *self = Self::Group { name: group.to_owned(), renamed: group.to_owned() };
+            *self = Self::Group { name: group.to_owned(), renamed: graph::called(group).to_owned() };
         }
     }
 }
@@ -169,13 +171,13 @@ impl Focus {
 enum Wish {
     /// Show the inside of a group.
     Enter(String),
-    /// Show the whole machine again.
+    /// Show what is around the group that is shown: one group out.
     Leave,
-    /// Put these nodes, each `runtime/node`, together in a new group.
+    /// Put these cards, of nodes and of groups, together in a new group.
     Group(Vec<String>),
-    /// Take every node out of a group.
+    /// Take a group apart: what was in it is where the group was.
     Ungroup(String),
-    /// Take these nodes out of the group they are in.
+    /// Move these cards out of the group that is shown, into the one around it.
     Separate(Vec<String>),
     /// Call a group by another name.
     Rename(String, String),
@@ -481,17 +483,17 @@ impl Contents {
             None => (self.real.clone(), self.groups.clone(), Marks::default()),
         };
         let mut cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
-        // A group that has no node left has no inside to show.
-        if self.inside.is_some() && cards.is_empty() {
-            (self.inside, self.fit) = (None, true);
-            cards = graph::cards(&self.inventories, &self.grouping, None);
+        // A group that has no node left has no inside to show: the graph shows the group around it.
+        while let Some(empty) = self.inside.take_if(|_| cards.is_empty()) {
+            (self.inside, self.fit) = (graph::parent(&empty).map(str::to_owned), true);
+            cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
         }
         graph::show(&mut self.snarl, cards, &mut self.places, now());
         self.colors.update(self.real.iter().map(|inventory| inventory.runtime.as_str()));
         // What the details were about may be gone.
         let gone = match &self.focus {
             Focus::Node { key, .. } => node(&self.inventories, key).is_none(),
-            Focus::Group { name, .. } => !self.grouping.values().any(|group| group == name),
+            Focus::Group { name, .. } => !self.grouping.values().any(|group| graph::within(group, name)),
             Focus::Nothing | Focus::Form(_) => false,
         };
         if gone {
@@ -562,12 +564,13 @@ impl Contents {
                 ui.weak("Right-click a node to pause or remove it.");
                 ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
                 ui.weak(
-                    "Hold Shift and click nodes, or drag across them, to select several. Ctrl+G makes a group of \
-                     them, which is drawn as one node.",
+                    "Hold Shift and click nodes, or drag across them, to select several. With the command key held, \
+                     a click beside the nodes lets go of them all.",
                 );
                 ui.weak(
-                    "Tab, or a double click, shows the nodes inside a group, and Tab leaves it again. Inside, P moves \
-                     the selected nodes out. Ctrl+Alt+G takes the group apart.",
+                    "Ctrl+G makes a group of what is selected, which is drawn as one node. Tab, or a double click, \
+                     shows what is inside a group, and Tab leaves it again. Inside, P moves what is selected one \
+                     group out. Ctrl+Alt+G takes a group apart.",
                 );
             }
             Focus::Node { key, settings } => {
@@ -576,10 +579,9 @@ impl Contents {
                 }
             }
             Focus::Group { name, renamed } => {
-                let nodes: Vec<&String> =
-                    grouping.iter().filter(|(_, group)| *group == name).map(|(node, _)| node).collect();
-                let (mark, inside) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
-                turn_to = details::group_details(ui, name, renamed, &nodes, mark, inside, wish);
+                let nodes: Vec<_> = grouping.iter().filter(|(_, of)| graph::within(of, name)).collect();
+                let (mark, shown) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
+                turn_to = details::group_details(ui, name, renamed, &nodes, mark, shown, wish);
             }
             Focus::Form(form) => {
                 if form.show(ui, &mut asking, &inventories) {
@@ -677,15 +679,8 @@ impl Contents {
             self.wish = Some(wish);
         }
         // With a card selected, only what wires join to it keeps its colour. A node that is
-        // inside a group is the card of its group, while the whole machine is shown.
-        let lit = match &self.focus {
-            Focus::Node { key, .. } => {
-                let group = self.grouping.get(key).filter(|_| self.inside.is_none());
-                Some(group.map_or(key.clone(), |group| graph::group_key(group)))
-            }
-            Focus::Group { name, .. } => Some(graph::group_key(name)),
-            Focus::Nothing | Focus::Form(_) => None,
-        };
+        // inside a group is the card of that group, where the graph shows the group from outside.
+        let lit = self.card(self.inside.as_deref());
         let lit = lit.map(|card| graph::joined(&self.snarl, &card)).filter(|lit| !lit.is_empty());
         let double = ui.input(|input| input.pointer.button_double_clicked(egui::PointerButton::Primary));
         let mut viewer = Viewer {
@@ -710,14 +705,16 @@ impl Contents {
         let name = egui::Id::unique("triq-graph");
         SnarlWidget::new().id(name).style(style).show(&mut self.snarl, &mut viewer, ui);
         let selected = egui_snarl::ui::get_selected_nodes(name, ui.ctx());
-        self.selected = selected.into_iter().filter_map(|id| self.snarl.get_node(id)).map(Card::key).collect();
+        let cards = selected.into_iter().filter_map(|id| self.snarl.get_node(id)).map(Card::key);
+        // The two cards that stand for the outside of a group are nothing to put in a group or move.
+        self.selected = cards.filter(|card| !card.starts_with("//")).collect();
     }
 
     /// What the keys ask for while the pointer is over the graph. They are
-    /// Blender's: Ctrl+G makes a group of the nodes that are selected, Tab
-    /// shows the inside of the group that is selected and leaves it again,
-    /// as Ctrl+Tab does, P moves the selected nodes out of the group, and
-    /// Ctrl+Alt+G takes the selected group apart.
+    /// Blender's: Ctrl+G makes a group of the cards that are selected, Tab
+    /// shows the inside of the group that is selected, or else leaves the
+    /// group that is shown, as Ctrl+Tab does, P moves the selected cards one
+    /// group out, and Ctrl+Alt+G takes the selected group apart.
     fn typed(&mut self, ui: &Ui, canvas: Rect) -> Option<Wish> {
         let tabbed = std::mem::take(&mut self.tabbed);
         if !ui.rect_contains_pointer(canvas) || ui.ctx().text_edit_focused() {
@@ -726,100 +723,153 @@ impl Contents {
         let pressed = |modifiers, key| ui.input_mut(|input| input.consume_key(modifiers, key));
         // On a Mac, either of the two keys that other machines have one of.
         let with_ctrl = |more, key| pressed(Modifiers::CTRL | more, key) || pressed(Modifiers::COMMAND | more, key);
-        // The group that is selected is the one the details are about. The nodes that are
-        // selected are those that Shift selected, or else the one the details are about.
-        let (group, node) = match &self.focus {
-            Focus::Group { name, .. } => (Some(name.clone()), None),
-            Focus::Node { key, .. } => (None, Some(key.clone())),
-            Focus::Nothing | Focus::Form(_) => (None, None),
+        let (shown, inside) = (self.inside.as_deref(), self.inside.is_some());
+        // The group that is selected is the one the details are about. Tab steps into it if its card is on the graph.
+        let group = match &self.focus {
+            Focus::Group { name, .. } => Some(name.clone()),
+            _ => None,
         };
-        let mut nodes: Vec<String> = self.selected.iter().filter(|card| !card.starts_with('/')).cloned().collect();
-        if nodes.is_empty() {
-            nodes.extend(node);
+        let enter = group.clone().filter(|group| graph::parent(group) == shown);
+        // The cards that are selected are those that Shift selected, or else the one the details are about.
+        let mut cards = self.selected.clone();
+        if cards.is_empty() {
+            cards.extend(self.card(shown).filter(|card| self.snarl.nodes().any(|drawn| drawn.key() == *card)));
         }
-        let inside = self.inside.is_some();
         // The keys that ask for more are looked for first: Ctrl+Alt+G is also Ctrl+G.
         if with_ctrl(Modifiers::ALT, Key::G) {
             group.map(Wish::Ungroup)
         } else if with_ctrl(Modifiers::NONE, Key::G) {
-            (!inside && !nodes.is_empty()).then_some(Wish::Group(nodes))
+            (!cards.is_empty()).then_some(Wish::Group(cards))
         } else if with_ctrl(Modifiers::NONE, Key::Tab) {
             inside.then_some(Wish::Leave)
         } else if tabbed || pressed(Modifiers::NONE, Key::Tab) {
-            if inside { Some(Wish::Leave) } else { group.map(Wish::Enter) }
+            enter.map(Wish::Enter).or(inside.then_some(Wish::Leave))
         } else if inside && pressed(Modifiers::NONE, Key::P) {
-            (!nodes.is_empty()).then_some(Wish::Separate(nodes))
+            (!cards.is_empty()).then_some(Wish::Separate(cards))
         } else {
             None
         }
     }
 
+    /// The card that shows what the details are about, where the graph shows
+    /// the inside of `shown`: the card of a node or a group, or that of the
+    /// group there which it is inside of. `None` if it is not in there.
+    fn card(&self, shown: Option<&str>) -> Option<String> {
+        match &self.focus {
+            Focus::Node { key, .. } => match self.grouping.get(key).map(String::as_str) {
+                group if group == shown => Some(key.clone()),
+                group => graph::child(group?, shown).map(graph::group_key),
+            },
+            Focus::Group { name, .. } => graph::child(name, shown).map(graph::group_key),
+            Focus::Nothing | Focus::Form(_) => None,
+        }
+    }
+
     /// Do what was asked for.
     fn grant(&mut self, wish: Wish) {
+        // Each node that is to be in another group than it is in, with that group.
+        let mut moves = Vec::new();
         match wish {
             Wish::Enter(group) => (self.inside, self.fit) = (Some(group), true),
             Wish::Leave => {
-                // Outside again, the group that was left is the one that is selected.
+                // One group out, the group that was left is the one that is selected.
                 if let Some(group) = self.inside.take() {
+                    self.inside = graph::parent(&group).map(str::to_owned);
                     self.focus.group(&group);
                 }
                 self.fit = true;
             }
-            Wish::Group(nodes) => {
-                let taken = |name: &String| self.grouping.values().any(|group| group == name);
-                let Some(name) = (1..).map(|number| format!("group{number}")).find(|name| !taken(name)) else { return };
-                // The card of the group goes where its nodes are: in the middle of them.
+            Wish::Group(cards) => {
+                // The new group is inside the group that is shown, if one is.
+                let group = self.free((1..).map(|number| format!("group{number}")), self.inside.as_deref());
+                // Its card goes where its cards are: in the middle of them.
                 let at: Vec<[f32; 2]> =
-                    nodes.iter().filter_map(|node| self.places.get(node)).map(|place| place.at).collect();
+                    cards.iter().filter_map(|card| self.places.get(card)).map(|place| place.at).collect();
                 if !at.is_empty() {
                     let middle = [0, 1].map(|axis| at.iter().map(|at| at[axis]).sum::<f32>() / at.len() as f32);
-                    self.places.insert(graph::group_key(&name), Place { at: middle, seen: now() });
+                    self.places.insert(graph::group_key(&group), Place { at: middle, seen: now() });
                 }
-                self.regroup(nodes, Some(&name));
-                self.focus.group(&name);
+                cards.iter().for_each(|card| moves.extend(self.moved(card, Some(&group))));
+                self.focus.group(&group);
             }
             Wish::Ungroup(group) => {
-                let nodes = self.grouping.iter().filter(|(_, of)| **of == group).map(|(node, _)| node.clone());
-                self.regroup(nodes.collect(), None);
+                // What was in the group is where the group was: its nodes, and the groups inside it.
+                let out = graph::parent(&group);
+                let nodes = self.grouping.iter().filter(|(_, of)| **of == group);
+                moves.extend(nodes.map(|(node, _)| (node.clone(), out.map(str::to_owned))));
+                let inner = self.grouping.values().filter_map(|of| graph::child(of, Some(&group)));
+                let inner: std::collections::BTreeSet<&str> = inner.collect();
+                inner.into_iter().for_each(|inner| moves.extend(self.moved(&graph::group_key(inner), out)));
             }
-            Wish::Separate(nodes) => self.regroup(nodes, None),
+            Wish::Separate(cards) => {
+                // One group out: into the group that the shown one is inside of, or into none.
+                let Some(shown) = &self.inside else { return };
+                cards.iter().for_each(|card| moves.extend(self.moved(card, graph::parent(shown))));
+            }
             Wish::Rename(group, name) => self.rename(&group, &name),
         }
-    }
-
-    /// Put nodes in a group, or with `None` take them out of the one they are
-    /// in: at once, or while drafting into the draft.
-    fn regroup(&mut self, nodes: Vec<String>, group: Option<&str>) {
-        for node in nodes {
+        // At once, or while drafting into the draft.
+        for (node, group) in moves {
             match (&mut self.draft, group) {
-                (Some(draft), _) => draft.group(node, group.map(str::to_owned), &self.groups),
-                (None, Some(group)) => _ = self.groups.insert(node, group.to_owned()),
+                (Some(draft), group) => draft.group(node, group, &self.groups),
+                (None, Some(group)) => _ = self.groups.insert(node, group),
                 (None, None) => _ = self.groups.remove(&node),
             }
         }
     }
 
-    /// Call a group by another name, unless another group has it. What a
-    /// group is called is not something a draft holds back.
+    /// The nodes that a card stands for, each with the group it is in once
+    /// the card is moved into `group`, or with `None` out of every group. A
+    /// card that is a group keeps what it is called, unless a group of that
+    /// name is there already.
+    fn moved(&self, card: &str, group: Option<&str>) -> Vec<(String, Option<String>)> {
+        let Some(inner) = card.strip_prefix('/') else {
+            return vec![(card.to_owned(), group.map(str::to_owned))];
+        };
+        let name = graph::called(inner);
+        let to =
+            self.free(std::iter::once(name.to_owned()).chain((2..).map(|number| format!("{name}{number}"))), group);
+        let nodes = self.grouping.iter().filter(|(_, of)| graph::within(of, inner));
+        nodes.map(|(node, of)| (node.clone(), graph::replant(of, inner, Some(&to)))).collect()
+    }
+
+    /// The first of some names that no group inside `group` has, or with
+    /// `None` no group that is inside no other: the new group, by where it is.
+    fn free(&self, mut names: impl Iterator<Item = String>, group: Option<&str>) -> String {
+        let taken = |path: &String| self.grouping.values().any(|of| graph::within(of, path));
+        let free = names.by_ref().map(|name| graph::join(group, &name)).find(|path| !taken(path));
+        free.unwrap_or_default()
+    }
+
+    /// Call a group by another name, unless a group beside it has that name.
+    /// What a group is called is not something a draft holds back.
     fn rename(&mut self, group: &str, name: &str) {
         let name = name.trim().replace('/', "");
-        if name.is_empty() || self.grouping.values().any(|taken| *taken == name) {
+        let to = graph::join(graph::parent(group), &name);
+        if name.is_empty() || self.grouping.values().any(|taken| graph::within(taken, &to)) {
             return;
         }
-        self.groups.values_mut().filter(|of| *of == group).for_each(|of| of.clone_from(&name));
-        if let Some(draft) = &mut self.draft {
-            draft.rename(group, &name);
+        let renamed = |of: &str| graph::replant(of, group, Some(&to)).unwrap_or_default();
+        for of in self.groups.values_mut().filter(|of| graph::within(of, group)) {
+            *of = renamed(of);
         }
-        // Its cards go by the new name, and are where they were.
-        for (was, called) in graph::group_keys(group).into_iter().zip(graph::group_keys(&name)) {
-            if let Some(place) = self.places.remove(&was) {
-                self.places.insert(called, place);
+        if let Some(draft) = &mut self.draft {
+            draft.rename(group, &to);
+        }
+        // Its cards, and those of the groups inside it, go by the new name and are where they were.
+        let places: Vec<(String, Place)> = self.places.iter().map(|(card, place)| (card.clone(), *place)).collect();
+        for (card, place) in places {
+            for kind in ["//in/", "//out/", "/"] {
+                if let Some(of) = card.strip_prefix(kind).filter(|of| graph::within(of, group)) {
+                    self.places.insert(format!("{kind}{}", renamed(of)), place);
+                    break;
+                }
             }
         }
-        if self.inside.as_deref() == Some(group) {
-            self.inside = Some(name.clone());
+        if let Some(shown) = self.inside.as_mut().filter(|shown| graph::within(shown, group)) {
+            *shown = renamed(shown);
         }
-        self.focus = Focus::Group { name: name.clone(), renamed: name };
+        self.focus = Focus::Group { name: to, renamed: name };
     }
 
     fn charts(&mut self, ui: &mut Ui) {

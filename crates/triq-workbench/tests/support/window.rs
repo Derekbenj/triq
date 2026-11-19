@@ -123,9 +123,13 @@ pub fn drag_by_way_of<State>(harness: &mut Harness<'_, State>, places: &[egui::P
 
 /// Click with Shift held, as selects one more card in the graph.
 pub fn shift_click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2) {
+    click_holding(harness, at, egui::Modifiers::SHIFT);
+}
+
+/// Click with some of the keys held that change what a click does.
+pub fn click_holding<State>(harness: &mut Harness<'_, State>, at: egui::Pos2, shift: egui::Modifiers) {
     harness.hover_at(at);
     harness.run_steps(2);
-    let shift = egui::Modifiers::SHIFT;
     let button =
         |pressed| egui::Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: shift };
     for event in [egui::Event::ModifiersChanged(shift), button(true), button(false)] {

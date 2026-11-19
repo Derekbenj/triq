@@ -323,10 +323,12 @@ while the pointer is over the graph.
 | To | Do this |
 | --- | --- |
 | select several cards | hold Shift and click them, or hold Shift and drag across them |
-| make a group of the selected nodes | `Ctrl+G`, or right-click a card and choose `Make Group` |
-| see the nodes inside a group | select its card and press `Tab`, double-click the card, or press `Edit` on it |
-| leave the group | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
-| move the selected nodes out of the group, from inside | `P`, or right-click a card |
+| let go of all that is selected | hold the command key (Ctrl on Linux and Windows) and click beside the cards |
+| let go of one card | hold the command key and click it |
+| make a group of the selected cards | `Ctrl+G`, or right-click a card and choose `Make Group` |
+| see what is inside a group | select its card and press `Tab`, double-click the card, or press `Edit` on it |
+| go one group out | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
+| move the selected cards one group out, from inside | `P`, or right-click a card |
 | take a group apart | select its card and press `Ctrl+Alt+G`, or right-click it and choose `Ungroup` |
 
 - The card of a group shows the ports of its nodes that are connected to nothing, or to something
@@ -336,7 +338,13 @@ while the pointer is over the graph.
   outside comes from `Group Input`, and what it sends there goes to `Group Output`.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.
   Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
-- A node is in one group at most, and groups do not hold groups.
+- A group can be inside a group. The card of a group is selected and grouped like a node's, and
+  `Ctrl+G` inside a group makes the new group there. Above the graph it says where you are, such
+  as `inside sensing/filters`.
+- Everything goes one group at a time. `Tab` and `Ctrl+Tab` leave to the group around the one that
+  is shown. `P` moves the selected cards into that group, and out of every group only if there is
+  none around. `Ctrl+Alt+G` takes one group apart: what was in it is where the group was.
+- A node is directly in one group at most. A group is there for as long as a node is in it.
 - Groups are how the workbench draws the machine. No runtime knows of them, and a node in a group
   runs exactly as before. They are kept by the names of the nodes, like the places of cards.
 - While drafting, grouping is held back with the rest: the graph shows the groups as drafted, and

@@ -52,8 +52,8 @@ fn a_group_is_drawn_as_one_card_with_the_ports_that_lead_outside_it() -> triq::R
     let cards = graph::cards(&scene.inventories(), &sensing, None);
     assert_eq!(keys(&cards), sorted([format!("{desk}/viewer"), "/sensing".to_owned()]));
     let group = called(&cards, "/sensing");
-    let Kind::Group { name, members } = &group.kind else { panic!("the card of a group") };
-    assert_eq!((name.as_str(), members.len(), group.runtime()), ("sensing", 2, Some(robot.as_str())));
+    let Kind::Group { path, members } = &group.kind else { panic!("the card of a group") };
+    assert_eq!((path.as_str(), members.len(), group.runtime()), ("sensing", 2, Some(robot.as_str())));
     // The wire from the sensor to the filter is the group's own affair: only what leads outside is a pin.
     assert_eq!(written(group), [vec![], vec!["smoother.smooth: Pose".to_owned()]]);
     assert_eq!(group.output(0), format!("{robot}/smoother/smooth"));
@@ -108,9 +108,9 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
     assert_eq!(
         keys(&cards),
-        sorted(["/filtering/in".to_owned(), "/filtering/out".to_owned(), format!("{robot}/smoother")])
+        sorted(["//in/filtering".to_owned(), "//out/filtering".to_owned(), format!("{robot}/smoother")])
     );
-    let (entry, exit) = (called(&cards, "/filtering/in"), called(&cards, "/filtering/out"));
+    let (entry, exit) = (called(&cards, "//in/filtering"), called(&cards, "//out/filtering"));
     assert_eq!((entry.name(), exit.name()), ("Group Input", "Group Output"));
     assert_eq!(written(entry), [vec![], vec!["smoother.raw: Pose".to_owned()]]);
     assert_eq!(written(exit), [vec!["smoother.smooth: Pose".to_owned()], vec![]]);
@@ -119,7 +119,7 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     // The filter's card is where it was outside, with the two others to its left and to its right.
     let inside = |key: &str| place(&snarl, key).expect("a card inside the group");
     assert_eq!(inside(&format!("{robot}/smoother")), outside);
-    assert!(inside("/filtering/in").x < outside.x && outside.x < inside("/filtering/out").x);
+    assert!(inside("//in/filtering").x < outside.x && outside.x < inside("//out/filtering").x);
 
     // Outside again, the group is one card where its node was wired: the sensor feeds it, and it the viewer.
     let cards = graph::cards(&scene.inventories(), &filtering, None);
@@ -138,7 +138,59 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     ]);
     let cards = graph::cards(&scene.inventories(), &all, Some("all"));
     // Only the viewer's input for images leads outside: it waits for an output that does not exist.
-    assert!(cards.iter().all(|card| card.key() != "/all/out"));
-    assert_eq!(written(called(&cards, "/all/in"))[1], ["viewer.image: u8[]"]);
+    assert!(cards.iter().all(|card| card.key() != "//out/all"));
+    assert_eq!(written(called(&cards, "//in/all"))[1], ["viewer.image: u8[]"]);
+    Ok(())
+}
+
+#[test]
+fn a_group_can_be_inside_another() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    let inventories = scene.inventories();
+    // The filter is a group of its own, inside the group that also holds the sensor. A node says
+    // which group it is in, and if that is inside another, the outer one first.
+    let nested = groups([(format!("{robot}/imu"), "sensing"), (format!("{robot}/smoother"), "sensing/filters")]);
+
+    // From outside every group it is all one card. The filter's output is the port that leads out.
+    let cards = graph::cards(&inventories, &nested, None);
+    assert_eq!(keys(&cards), sorted([format!("{desk}/viewer"), "/sensing".to_owned()]));
+    let outer = called(&cards, "/sensing");
+    let Kind::Group { path, members } = &outer.kind else { panic!("the card of a group") };
+    assert_eq!((path.as_str(), outer.name(), members.len()), ("sensing", "sensing", 2));
+    assert_eq!(written(outer), [vec![], vec!["smoother.smooth: Pose".to_owned()]]);
+
+    // Inside the outer group: the sensor, the inner group as one card, and the card for the outside.
+    let cards = graph::cards(&inventories, &nested, Some("sensing"));
+    assert_eq!(
+        keys(&cards),
+        sorted(["//out/sensing".to_owned(), "/sensing/filters".to_owned(), format!("{robot}/imu")])
+    );
+    let inner = called(&cards, "/sensing/filters");
+    assert_eq!(inner.name(), "filters");
+    assert_eq!(written(inner), [vec!["smoother.raw: Pose".to_owned()], vec!["smoother.smooth: Pose".to_owned()]]);
+    let mut snarl = Snarl::new();
+    graph::show(&mut snarl, cards, &mut Places::new(), 0);
+    assert_eq!(wires(&snarl), ["filters smooth -> Group Output smooth", "imu pose -> filters raw"]);
+
+    // Inside the inner group: the filter, between the two cards for what is outside it.
+    let cards = graph::cards(&inventories, &nested, Some("sensing/filters"));
+    let expected = ["//in/sensing/filters".to_owned(), "//out/sensing/filters".to_owned(), format!("{robot}/smoother")];
+    assert_eq!(keys(&cards), sorted(expected));
+
+    // What the workbench works out of such paths.
+    assert_eq!([graph::parent("sensing/filters"), graph::parent("sensing")], [Some("sensing"), None]);
+    assert_eq!([graph::called("sensing/filters"), graph::called("sensing")], ["filters", "sensing"]);
+    assert!(graph::within("sensing/filters", "sensing") && graph::within("sensing", "sensing"));
+    assert!(!graph::within("sensing", "sensing/filters") && !graph::within("sensings", "sensing"));
+    // Of the groups directly inside one, the one that a group is, or is inside of.
+    assert_eq!(graph::child("sensing/filters/fine", Some("sensing")), Some("sensing/filters"));
+    assert_eq!(graph::child("sensing/filters", None), Some("sensing"));
+    assert_eq!(graph::child("sensing", Some("sensing")), None);
+    // Where a node is when the group it is in, or a group around that, is moved: one group out, or out of every group.
+    let moved = |slot, to| graph::replant(slot, "sensing/filters", to);
+    assert_eq!(moved("sensing/filters/fine", Some("filters")), Some("filters/fine".to_owned()));
+    assert_eq!(moved("sensing/filters", Some("filters")), Some("filters".to_owned()));
+    assert_eq!([moved("sensing/filters/fine", None), moved("sensing/filters", None)], [Some("fine".to_owned()), None]);
     Ok(())
 }

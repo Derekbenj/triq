@@ -14,7 +14,7 @@
 //! runtime: groups are how the workbench draws the machine. But while
 //! drafting they are held back with the rest, and made when the draft is applied.
 use crate::feed::Request;
-use crate::graph::{Groups, group_key};
+use crate::graph::{Groups, group_key, parent, replant, within};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use triq::{Direction, FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, OutputInfo, Placement, SourceInfo};
@@ -24,6 +24,7 @@ pub struct Draft {
     /// In the order they were written down. No two are about the same thing.
     changes: Vec<Request>,
     /// The group that a node is to be in, by `runtime/node`: `None` for none.
+    /// A group inside another is written `outer/inner`, as in [`Groups`].
     groups: BTreeMap<String, Option<String>>,
 }
 
@@ -187,10 +188,12 @@ impl Draft {
         self.groups.remove(node);
     }
 
-    /// Call a group by another name, wherever a node is to be put in it.
-    pub fn rename(&mut self, group: &str, name: &str) {
-        for drafted in self.groups.values_mut().flatten().filter(|drafted| *drafted == group) {
-            *drafted = name.to_owned();
+    /// A group has become another, by a new name or in another place:
+    /// wherever a node is to be put in it, or in a group inside it, it is
+    /// to be put in that.
+    pub fn rename(&mut self, group: &str, to: &str) {
+        for drafted in self.groups.values_mut().filter(|drafted| drafted.as_ref().is_some_and(|of| within(of, group))) {
+            *drafted = drafted.as_ref().and_then(|of| replant(of, group, Some(to)));
         }
     }
 
@@ -199,13 +202,15 @@ impl Draft {
     pub fn marks(&self, real: &[Inventory], groups: &Groups) -> Marks {
         let mut marks = Marks::default();
         for (node, group) in self.regrouped(groups) {
-            // A group that no node is in yet is new. One that gains or loses a node is changed.
-            let new = |group: &String| !groups.values().any(|real| real == group);
-            if let Some(group) = &group {
-                marks.cards.insert(group_key(group), if new(group) { Mark::New } else { Mark::Changed });
-            }
-            if let Some(left) = groups.get(&node) {
-                marks.cards.entry(group_key(left)).or_insert(Mark::Changed);
+            // Every group that gains or loses the node is marked: the one it leaves, the one it
+            // joins, and the groups those are inside of. A group that no node is in yet is new.
+            let (leaves, joins) = (groups.get(&node).map(String::as_str), group.as_deref());
+            let holds = |of: Option<&str>, group: &str| of.is_some_and(|of| within(of, group));
+            let around = |of| std::iter::successors(of, |group: &&str| parent(group));
+            for group in around(leaves).chain(around(joins)).filter(|group| holds(leaves, group) != holds(joins, group))
+            {
+                let new = !groups.values().any(|real| within(real, group));
+                marks.cards.insert(group_key(group), if new { Mark::New } else { Mark::Changed });
             }
             marks.cards.insert(node, Mark::Changed);
         }
