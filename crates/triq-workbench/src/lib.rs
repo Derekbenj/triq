@@ -7,6 +7,7 @@
 mod app;
 pub mod charts;
 pub mod colors;
+pub mod draft;
 pub mod feed;
 pub mod graph;
 pub mod history;

@@ -12,16 +12,24 @@
 //! with what the runtimes last reported, and everything the user does becomes
 //! a request to a runtime. A wire appears when its owner says it exists.
 //!
+//! Unless the user is drafting. Then what they do is held back as a draft
+//! (see `draft.rs`), the windows show the machine as it would be, and the
+//! requests are made together when the draft is applied. What is only
+//! drafted is drawn grey, with a glow around it.
+//!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
 //! the wires that leave it. When a card is clicked, every card that no wire
 //! joins to it goes grey, until a click beside the cards.
 use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
+use crate::draft::{Draft, Mark, Marks};
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card, Place, Places};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
-use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
+use egui_snarl::ui::{
+    NodeLayout, PinInfo, PinPlacement, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle,
+};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tabs, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
@@ -83,8 +91,14 @@ impl Window {
 /// What the windows show.
 struct Contents {
     feed: Feed,
-    /// What the runtimes last reported, as it stood when this frame began:
-    /// every window shows the same reading of the machine.
+    /// What the runtimes last reported, as it stood when this frame began.
+    real: Arc<Vec<Inventory>>,
+    /// The changes that are held back, while the user is drafting.
+    draft: Option<Draft>,
+    /// What the draft does to each card and wire.
+    marks: Marks,
+    /// The machine as every window shows it this frame: as the runtimes
+    /// reported it, or while drafting as it would be with the draft's changes made.
     inventories: Arc<Vec<Inventory>>,
     rates: Arc<Rates>,
     snarl: Snarl<Card>,
@@ -124,6 +138,9 @@ impl Workbench {
     pub fn new(feed: Feed) -> Self {
         let contents = Contents {
             feed,
+            real: Arc::default(),
+            draft: None,
+            marks: Marks::default(),
             inventories: Arc::default(),
             rates: Arc::default(),
             snarl: Snarl::new(),
@@ -155,12 +172,19 @@ impl Workbench {
 
     /// Ask for a connection, as dragging a wire from an output pin to an input pin does.
     pub fn wire(&mut self, from: OutPinId, to: InPinId) {
-        wire(&self.contents.feed, &self.contents.snarl, from, to);
+        let Contents { feed, draft, real, snarl, .. } = &mut self.contents;
+        wire(&mut Asking { feed, draft: draft.as_mut(), real }, snarl, from, to);
     }
 
     /// Ask for a connection to be removed.
     pub fn unwire(&mut self, from: OutPinId, to: InPinId) {
-        unwire(&self.contents.feed, &self.contents.snarl, from, to);
+        let Contents { feed, draft, real, snarl, .. } = &mut self.contents;
+        unwire(&mut Asking { feed, draft: draft.as_mut(), real }, snarl, from, to);
+    }
+
+    /// The changes that are held back while drafting, in the order they will be asked for.
+    pub fn drafted(&self) -> Vec<Request> {
+        self.contents.draft.as_ref().map_or(Vec::new(), |draft| draft.changes(&self.contents.real))
     }
 
     /// How the windows and the charts are arranged, what is on the charts,
@@ -333,10 +357,20 @@ impl Behavior<Window> for Shown<'_> {
 impl Contents {
     /// Take what the runtimes last reported, and bring the drawing in line with it.
     fn refresh(&mut self) {
-        (self.inventories, self.rates) = (self.feed.inventories(), self.feed.rates());
+        (self.real, self.rates) = (self.feed.inventories(), self.feed.rates());
+        // Changes that were applied and could not be made are a draft again.
+        let unmade = self.feed.unmade();
+        if !unmade.is_empty() {
+            let draft = self.draft.get_or_insert_default();
+            unmade.into_iter().for_each(|change| draft.record(change, &self.real));
+        }
+        (self.inventories, self.marks) = match &self.draft {
+            Some(draft) => (Arc::new(draft.over(&self.real)), draft.marks(&self.real)),
+            None => (self.real.clone(), Marks::default()),
+        };
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
         graph::sync_with(&mut self.snarl, &self.inventories, &mut self.places, now);
-        self.colors.update(self.inventories.iter().map(|inventory| inventory.runtime.as_str()));
+        self.colors.update(self.real.iter().map(|inventory| inventory.runtime.as_str()));
         if let Focus::Node { key, .. } = &self.focus
             && !self.snarl.nodes().any(|card| card.key() == *key)
         {
@@ -390,8 +424,14 @@ impl Contents {
 
     fn details(&mut self, ui: &mut Ui) {
         let (inventories, rates) = (self.inventories.clone(), self.rates.clone());
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match &mut self.focus {
+        let Contents { feed, draft, real, marks, focus, snarl, .. } = self;
+        let mut asking = Asking { feed, draft: draft.as_mut(), real };
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match focus {
             Focus::Nothing => {
+                if let Some(draft) = &mut asking.draft {
+                    held_back(ui, draft, asking.real);
+                    ui.separator();
+                }
                 ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
                 ui.weak(
                     "Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.",
@@ -400,16 +440,16 @@ impl Contents {
                 ui.weak("A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.");
             }
             Focus::Node { key, settings } => {
-                let card = self.snarl.nodes().find(|card| card.key() == *key);
+                let card = snarl.nodes().find(|card| card.key() == *key);
                 let home =
                     inventories.iter().find(|inventory| card.is_some_and(|card| card.runtime == inventory.runtime));
                 if let (Some(card), Some(home)) = (card, home) {
-                    node_details(ui, &self.feed, card, home, settings, &rates);
+                    node_details(ui, &mut asking, marks, card, home, settings, &rates);
                 }
             }
             Focus::Form(form) => {
-                if form.show(ui, &self.feed, &inventories) {
-                    self.focus = Focus::Nothing;
+                if form.show(ui, &mut asking, &inventories) {
+                    *focus = Focus::Nothing;
                 }
             }
         });
@@ -426,9 +466,39 @@ impl Contents {
                     self.fit = true;
                 }
                 self.fit |= ui.small_button("Fit").on_hover_text("Bring every node into view").clicked();
+                ui.separator();
+                self.drafting(ui);
             });
         });
         egui::CentralPanel::default().show(ui, |ui| self.canvas(ui));
+    }
+
+    /// The button that begins a draft; or, while there is one, how much it
+    /// holds, and the buttons that apply and discard it.
+    fn drafting(&mut self, ui: &mut Ui) {
+        let Some(draft) = &self.draft else {
+            let about = "Hold back what is changed in the graph and the details, to make the changes together";
+            if ui.small_button("Draft").on_hover_text(about).clicked() {
+                self.draft = Some(Draft::default());
+            }
+            return;
+        };
+        let changes = draft.changes(&self.real);
+        let held = ui.label(format!("Draft: {}", counted(changes.len())));
+        if !changes.is_empty() {
+            held.on_hover_ui(|ui| changes.iter().for_each(|change| _ = ui.label(change.to_string())));
+        }
+        let about = "Ask the runtimes for the changes, in the order they were made here";
+        if ui.small_button("Apply draft").on_hover_text(about).clicked() {
+            self.feed.apply(changes);
+            self.draft = None;
+        } else if ui
+            .small_button("Discard draft")
+            .on_hover_text("Forget the changes. The machine stays as it is")
+            .clicked()
+        {
+            self.draft = None;
+        }
     }
 
     fn canvas(&mut self, ui: &mut Ui) {
@@ -452,15 +522,16 @@ impl Contents {
         self.fit &= frame.is_none();
         // The graph's window may have been moved or resized. What was in the middle of it still is.
         let carried = self.canvas.replace(canvas).map_or(egui::Vec2::ZERO, |before| canvas.center() - before.center());
-        let (feed, colors, dark) = (&self.feed, &self.colors, ui.visuals().dark_mode);
+        let (colors, dark) = (&self.colors, ui.visuals().dark_mode);
         let (inventories, rates) = (&inventories[..], &*rates);
         // With a card selected, only what wires join to it keeps its colour.
         let lit = match &self.focus {
             Focus::Node { key, .. } => Some(graph::joined(&self.snarl, key)).filter(|lit| !lit.is_empty()),
             _ => None,
         };
-        let focus = &mut self.focus;
-        let mut viewer = Viewer { feed, colors, dark, focus, lit, inventories, rates, frame, carried };
+        let asking = Asking { feed: &self.feed, draft: self.draft.as_mut(), real: &self.real };
+        let (focus, marks) = (&mut self.focus, &self.marks);
+        let mut viewer = Viewer { asking, marks, colors, dark, focus, lit, inventories, rates, frame, carried };
         // Text that could be selected would swallow the press that moves, selects or opens the menu of a card.
         ui.style_mut().interaction.selectable_labels = false;
         SnarlWidget::new().id_salt("triq-graph").style(style).show(&mut self.snarl, &mut viewer, ui);
@@ -510,7 +581,7 @@ impl Form {
     }
 
     /// Returns true when the form is done with, created or cancelled.
-    fn show(&mut self, ui: &mut Ui, feed: &Feed, inventories: &[Inventory]) -> bool {
+    fn show(&mut self, ui: &mut Ui, asking: &mut Asking<'_>, inventories: &[Inventory]) -> bool {
         let offered = inventories.iter().find(|inventory| inventory.runtime == self.runtime).and_then(|inventory| {
             let factory = inventory.factories.iter().find(|factory| factory.kind == self.kind)?;
             Some((inventory, factory))
@@ -556,7 +627,7 @@ impl Form {
             {
                 let placement = self.pool.as_deref().map_or(Placement::Dedicated, Placement::pool);
                 let (runtime, kind, name) = (self.runtime.clone(), self.kind.clone(), self.name.clone());
-                feed.ask(Request::Spawn { runtime, kind, name, placement, params });
+                asking.ask(Request::Spawn { runtime, kind, name, placement, params });
                 done = true;
             }
             done |= ui.button("Cancel").clicked();
@@ -565,10 +636,21 @@ impl Form {
     }
 }
 
-/// `home` is what the node's runtime last reported.
-fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, settings: &mut String, rates: &Rates) {
+/// `home` is what the node's runtime last reported, or while drafting that with the draft's changes made.
+fn node_details(
+    ui: &mut Ui,
+    asking: &mut Asking<'_>,
+    marks: &Marks,
+    card: &Card,
+    home: &Inventory,
+    settings: &mut String,
+    rates: &Rates,
+) {
     let node = &card.node;
     ui.heading(&node.name);
+    if let Some(mark) = marks.card(&card.key()) {
+        ui.weak(format!("{}, when the draft is applied", awaits(mark)));
+    }
     ui.add_space(8.0);
     egui::Grid::new("facts").num_columns(2).show(ui, |ui| {
         let mut fact = |name: &str, value: String| {
@@ -589,7 +671,7 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, setting
             fact("Errors", format!("{}, last: {error}", node.errors));
         }
     });
-    ui.horizontal(|ui| actions(ui, feed, card));
+    ui.horizontal(|ui| actions(ui, asking, card));
 
     if !node.params.is_null() {
         ui.separator();
@@ -598,7 +680,7 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, setting
         match serde_json::from_str::<Value>(settings) {
             Ok(params) => {
                 if ui.button("Apply").clicked() {
-                    feed.ask(Request::SetParams { runtime: card.runtime.clone(), node: node.name.clone(), params });
+                    asking.ask(Request::SetParams { runtime: card.runtime.clone(), node: node.name.clone(), params });
                 }
             }
             Err(error) => _ = ui.colored_label(ui.visuals().error_fg_color, format!("Not valid JSON: {error}")),
@@ -615,7 +697,9 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, setting
             ui.weak("not connected");
         }
         for source in &input.sources {
+            let drafted = marks.wire(&source.output, &card.input(index));
             let link = match (&source.problem, source.connected) {
+                _ if drafted == Some(Mark::New) => "to be connected, when the draft is applied".to_owned(),
                 (Some(problem), _) => problem.clone(),
                 (None, true) => format!(
                     "{} received, {} lost, {} µs latency, {} µs longest gap",
@@ -626,8 +710,10 @@ fn node_details(ui: &mut Ui, feed: &Feed, card: &Card, home: &Inventory, setting
             ui.weak(format!("from {}", source.output));
             ui.horizontal(|ui| {
                 ui.weak(link);
-                if ui.small_button("Disconnect").clicked() {
-                    feed.ask(Request::Disconnect { from: source.output.clone(), to: card.input(index) });
+                if drafted == Some(Mark::Going) {
+                    ui.weak("to be disconnected");
+                } else if ui.small_button("Disconnect").clicked() {
+                    asking.ask(Request::Disconnect { from: source.output.clone(), to: card.input(index) });
                 }
             });
         }
@@ -660,19 +746,71 @@ fn toggle(card: &Card) -> Option<(&'static str, Request)> {
 }
 
 /// The buttons that act on a node. True if one was pressed.
-fn actions(ui: &mut Ui, feed: &Feed, card: &Card) -> bool {
+fn actions(ui: &mut Ui, asking: &mut Asking<'_>, card: &Card) -> bool {
     let mut pressed = false;
     if let Some((word, request)) = toggle(card)
         && ui.button(word).clicked()
     {
-        feed.ask(request);
+        asking.ask(request);
         pressed = true;
     }
     if ui.button("Remove").clicked() {
-        feed.ask(Request::Remove { runtime: card.runtime.clone(), node: card.node.name.clone() });
+        asking.ask(Request::Remove { runtime: card.runtime.clone(), node: card.node.name.clone() });
         pressed = true;
     }
     pressed
+}
+
+/// Where what the user asks for goes: to the runtimes, or, while drafting, into the draft.
+struct Asking<'a> {
+    feed: &'a Feed,
+    draft: Option<&'a mut Draft>,
+    /// What the runtimes last reported.
+    real: &'a [Inventory],
+}
+
+impl Asking<'_> {
+    fn ask(&mut self, request: Request) {
+        match &mut self.draft {
+            Some(draft) => draft.record(request, self.real),
+            None => self.feed.ask(request),
+        }
+    }
+}
+
+/// The changes a draft holds, in the order they will be asked for. Each can be taken back.
+fn held_back(ui: &mut Ui, draft: &mut Draft, real: &[Inventory]) {
+    ui.heading("Draft");
+    let changes = draft.changes(real);
+    if changes.is_empty() {
+        ui.weak("What is changed in the graph and here is held back, until the draft is applied.");
+    }
+    for (number, change) in changes.iter().enumerate() {
+        ui.horizontal_wrapped(|ui| {
+            if ui.small_button("×").on_hover_text("Take this change back").clicked() {
+                draft.take_back(change);
+            }
+            ui.label(format!("{}. {change}", number + 1));
+        });
+    }
+}
+
+/// How many changes, in words.
+fn counted(changes: usize) -> String {
+    match changes {
+        0 => "no changes".to_owned(),
+        1 => "1 change".to_owned(),
+        several => format!("{several} changes"),
+    }
+}
+
+/// What is to happen to something that a draft marks.
+fn awaits(mark: Mark) -> &'static str {
+    match mark {
+        Mark::New => "to be created",
+        Mark::Changed => "to be changed",
+        Mark::Going => "to be removed",
+    }
 }
 
 /// How far the view can be zoomed out: far enough to see a large machine whole.
@@ -686,11 +824,11 @@ fn framing(snarl: &Snarl<Card>, canvas: Rect) -> TSTransform {
     TSTransform::new(canvas.center().to_vec2() - cards.center().to_vec2() * scale, scale)
 }
 
-fn wire(feed: &Feed, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
+fn wire(asking: &mut Asking<'_>, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
     let (source, sink) = (&snarl[from.node], &snarl[to.node]);
     let (output, input) = (&source.node.outputs[from.output].port, &sink.node.inputs[to.input].port);
     if !graph::compatible(output, input) {
-        feed.report(format!(
+        asking.feed.report(format!(
             "{} and {} carry different messages: {} and {}",
             source.output(from.output),
             sink.input(to.input),
@@ -699,17 +837,19 @@ fn wire(feed: &Feed, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
         ));
         return;
     }
-    feed.ask(Request::Connect { from: source.output(from.output).to_owned(), to: sink.input(to.input) });
+    asking.ask(Request::Connect { from: source.output(from.output).to_owned(), to: sink.input(to.input) });
 }
 
-fn unwire(feed: &Feed, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
+fn unwire(asking: &mut Asking<'_>, snarl: &Snarl<Card>, from: OutPinId, to: InPinId) {
     let (source, sink) = (&snarl[from.node], &snarl[to.node]);
-    feed.ask(Request::Disconnect { from: source.output(from.output).to_owned(), to: sink.input(to.input) });
+    asking.ask(Request::Disconnect { from: source.output(from.output).to_owned(), to: sink.input(to.input) });
 }
 
 /// How the graph widget asks what to draw and reports what the user did.
 struct Viewer<'a> {
-    feed: &'a Feed,
+    asking: Asking<'a>,
+    /// What the draft does to each card and wire.
+    marks: &'a Marks,
     colors: &'a Colors,
     /// Whether the window is drawn light on dark.
     dark: bool,
@@ -731,15 +871,55 @@ impl Viewer<'_> {
         self.lit.as_ref().is_some_and(|lit| !lit.contains(&card.key()))
     }
 
-    /// The colour of a card's runtime, or grey for a card that is greyed.
-    fn color(&self, card: &Card) -> Color32 {
-        if self.dimmed(card) { grey(self.dark) } else { self.colors.of(&card.runtime, self.dark) }
+    /// What the draft does to a card.
+    fn mark(&self, card: &Card) -> Option<Mark> {
+        self.marks.card(&card.key())
     }
 
-    /// A pin, and any wire that leaves it, in the colour of the node's runtime.
-    fn pin(&self, card: &Card) -> PinInfo {
-        PinInfo::circle().with_fill(self.color(card)).with_wire_color(self.color(card))
+    /// The colour of a card's runtime. A card that is only drafted is no
+    /// runtime's yet, and a card that is greyed is grey.
+    fn color(&self, card: &Card) -> Color32 {
+        match self.mark(card) {
+            Some(Mark::New) => drafted(self.dark),
+            _ if self.dimmed(card) => grey(self.dark),
+            _ => self.colors.of(&card.runtime, self.dark),
+        }
     }
+
+    /// A pin, and any wire that leaves it, in the colour of the node's
+    /// runtime. `port` is what the pin is called, `runtime/node/port`: a wire
+    /// that the draft draws or cuts has a glow around the pins at its ends.
+    fn pin(&self, card: &Card, port: &str) -> Pin {
+        let pin = PinInfo::circle().with_fill(self.color(card)).with_wire_color(self.color(card));
+        Pin { pin, glows: self.marks.port(port).then(|| glow(self.dark)) }
+    }
+}
+
+/// A pin as it is drawn, with a glow around it or without.
+struct Pin {
+    pin: PinInfo,
+    glows: Option<egui::Shadow>,
+}
+
+impl SnarlPin for Pin {
+    fn draw(self, snarl: &SnarlStyle, style: &egui::Style, rect: Rect, painter: &egui::Painter) -> PinWireInfo {
+        if let Some(glow) = self.glows {
+            painter.add(glow.as_shape(rect, egui::CornerRadius::same(u8::MAX)));
+        }
+        self.pin.draw(snarl, style, rect, painter)
+    }
+}
+
+/// The grey of what is only drafted: brighter than the grey of a card that
+/// is greyed, and with a glow around it.
+fn drafted(dark: bool) -> Color32 {
+    Color32::from_gray(if dark { 215 } else { 60 })
+}
+
+/// The glow around a card that the draft creates, changes or removes, and
+/// around the pins of a wire that it draws or cuts.
+fn glow(dark: bool) -> egui::Shadow {
+    egui::Shadow { offset: [0, 0], blur: 12, spread: 4, color: drafted(dark).gamma_multiply(0.7) }
 }
 
 /// The grey of a card that no wire joins to the one that is selected.
@@ -828,20 +1008,28 @@ impl SnarlViewer<Card> for Viewer<'_> {
             } else {
                 ui.strong(&card.node.name)
             };
-            match &card.node.state {
-                NodeState::Running => ui.weak("running"),
-                NodeState::Paused => ui.colored_label(ui.visuals().warn_fg_color, "paused"),
-                NodeState::Stopped(_) => ui.colored_label(ui.visuals().error_fg_color, "stopped"),
-            };
-            if let Some((word, request)) = toggle(card)
-                && sign(ui, word, card.node.state == NodeState::Paused).clicked()
-            {
-                self.feed.ask(request);
+            // A node that does not exist yet neither runs nor can be paused.
+            let mark = self.mark(card);
+            if mark != Some(Mark::New) {
+                match &card.node.state {
+                    NodeState::Running => ui.weak("running"),
+                    NodeState::Paused => ui.colored_label(ui.visuals().warn_fg_color, "paused"),
+                    NodeState::Stopped(_) => ui.colored_label(ui.visuals().error_fg_color, "stopped"),
+                };
+                if let Some((word, request)) = toggle(card)
+                    && sign(ui, word, card.node.state == NodeState::Paused).clicked()
+                {
+                    self.asking.ask(request);
+                }
+            }
+            if let Some(mark) = mark {
+                ui.label(awaits(mark));
             }
         });
     }
 
-    /// The outline of a card is the colour of its runtime, heavier when the card is selected.
+    /// The outline of a card is the colour of its runtime, heavier when the card
+    /// is selected. A card that the draft creates, changes or removes has a glow around it.
     fn node_frame(
         &mut self,
         default: egui::Frame,
@@ -852,7 +1040,8 @@ impl SnarlViewer<Card> for Viewer<'_> {
     ) -> egui::Frame {
         let card = &snarl[node];
         let selected = matches!(&*self.focus, Focus::Node { key, .. } if *key == card.key());
-        default.stroke(Stroke::new(if selected { 3.5 } else { 1.8 }, self.color(card))).corner_radius(9)
+        let frame = default.stroke(Stroke::new(if selected { 3.5 } else { 1.8 }, self.color(card))).corner_radius(9);
+        if self.mark(card).is_some() { frame.shadow(glow(self.dark)) } else { frame }
     }
 
     /// The header is tinted with it.
@@ -884,9 +1073,16 @@ impl SnarlViewer<Card> for Viewer<'_> {
         style.visuals.override_text_color = Some(grey(self.dark));
     }
 
-    /// A wire is greyed with the cards at its ends.
-    fn connected_wire_color(&mut self, from: OutPinId, _: InPinId, snarl: &Snarl<Card>, sender: Color32) -> Color32 {
-        if self.dimmed(&snarl[from.node]) { grey(self.dark) } else { sender }
+    /// A wire that is only drafted is grey as what is drafted is, and one
+    /// that the draft cuts is faint. Any other is greyed with the cards at its ends.
+    fn connected_wire_color(&mut self, from: OutPinId, to: InPinId, snarl: &Snarl<Card>, sender: Color32) -> Color32 {
+        let (source, sink) = (&snarl[from.node], &snarl[to.node]);
+        match self.marks.wire(source.output(from.output), &sink.input(to.input)) {
+            Some(Mark::New) => drafted(self.dark),
+            Some(_) => sender.gamma_multiply(0.3),
+            None if self.dimmed(source) => grey(self.dark),
+            None => sender,
+        }
     }
 
     fn inputs(&mut self, card: &Card) -> usize {
@@ -911,7 +1107,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
         } else {
             aside(ui, "waiting".to_owned()).on_hover_text(format!("waiting for {}", waiting.join(", ")));
         }
-        self.pin(card)
+        self.pin(card, &card.input(pin.id.input))
     }
 
     fn show_output(&mut self, pin: &OutPin, ui: &mut Ui, snarl: &mut Snarl<Card>) -> impl SnarlPin + 'static {
@@ -919,7 +1115,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let output = &card.node.outputs[pin.id.output];
         ui.label(port(&output.port)).on_hover_text(format!("{} sent to {} inputs", output.sent, output.subscribers));
         aside(ui, rate(self.rates, &output.service));
-        self.pin(card)
+        self.pin(card, &output.service)
     }
 
     /// A wire being dragged only snaps to an input it could be connected to.
@@ -930,19 +1126,19 @@ impl SnarlViewer<Card> for Viewer<'_> {
     }
 
     fn connect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Card>) {
-        wire(self.feed, snarl, from.id, to.id);
+        wire(&mut self.asking, snarl, from.id, to.id);
     }
 
     fn disconnect(&mut self, from: &OutPin, to: &InPin, snarl: &mut Snarl<Card>) {
-        unwire(self.feed, snarl, from.id, to.id);
+        unwire(&mut self.asking, snarl, from.id, to.id);
     }
 
     fn drop_inputs(&mut self, pin: &InPin, snarl: &mut Snarl<Card>) {
-        pin.remotes.iter().for_each(|from| unwire(self.feed, snarl, *from, pin.id));
+        pin.remotes.iter().for_each(|from| unwire(&mut self.asking, snarl, *from, pin.id));
     }
 
     fn drop_outputs(&mut self, pin: &OutPin, snarl: &mut Snarl<Card>) {
-        pin.remotes.iter().for_each(|to| unwire(self.feed, snarl, pin.id, *to));
+        pin.remotes.iter().for_each(|to| unwire(&mut self.asking, snarl, pin.id, *to));
     }
 
     fn node_clicked(&mut self, node: NodeId, snarl: &Snarl<Card>) {
@@ -962,7 +1158,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
     }
 
     fn show_node_menu(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], ui: &mut Ui, snarl: &mut Snarl<Card>) {
-        if actions(ui, self.feed, &snarl[node]) {
+        if actions(ui, &mut self.asking, &snarl[node]) {
             ui.close();
         }
     }

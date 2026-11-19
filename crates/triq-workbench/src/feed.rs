@@ -5,7 +5,9 @@
 //! of the counters to another it works out how fast data is flowing, and it
 //! keeps what each connection did as history. Another thread carries out what
 //! the user asked for, one request at a time, so a slow runtime never freezes
-//! the window. A third reads the topics whose messages the user looks into.
+//! the window. Requests that belong together are carried out in their order,
+//! as far as the runtimes go along with them. A third thread reads the topics
+//! whose messages the user looks into.
 use crate::graph;
 use crate::history::History;
 use crate::signals::{Signals, ended};
@@ -66,8 +68,8 @@ pub enum Request {
 
 pub struct Feed {
     shared: Arc<Shared>,
-    /// `None` only while the feed is being dropped.
-    requests: Option<mpsc::Sender<Request>>,
+    /// Requests, each time those that belong together. `None` only while the feed is being dropped.
+    requests: Option<mpsc::Sender<Vec<Request>>>,
     /// The thread that watches the machine, and the one that carries out requests.
     threads: Vec<JoinHandle<()>>,
     signals: Signals,
@@ -80,6 +82,8 @@ struct Shared {
     history: Mutex<History>,
     /// The most recent request that failed, and why.
     problem: Mutex<Option<String>>,
+    /// Of requests that belonged together, the one that failed and those after it.
+    unmade: Mutex<Vec<Request>>,
     stop: AtomicBool,
 }
 
@@ -91,6 +95,7 @@ impl Feed {
             rates: Mutex::default(),
             history: Mutex::default(),
             problem: Mutex::default(),
+            unmade: Mutex::default(),
             stop: AtomicBool::new(false),
         });
         let redraw = Arc::new(redraw);
@@ -127,15 +132,24 @@ impl Feed {
                 }
             }
         })?;
-        let (requests, queue) = mpsc::channel::<Request>();
+        let (requests, queue) = mpsc::channel::<Vec<Request>>();
         let asking = thread::Builder::new().name("workbench-requests".into()).spawn({
             let shared = shared.clone();
             move || {
-                for request in queue {
-                    if let Err(error) = request.carry_out() {
-                        *shared.problem.lock().unwrap() = Some(format!("Could not {request}: {error}"));
-                        redraw();
+                for together in queue {
+                    let refused = together.iter().enumerate().find_map(|(made, request)| {
+                        let error = request.carry_out().err()?;
+                        Some((made, format!("Could not {request}: {error}")))
+                    });
+                    let Some((made, mut problem)) = refused else { continue };
+                    // Of several, the one that was refused and those after it go back to whoever asked.
+                    if together.len() > 1 {
+                        problem +=
+                            &format!(". {made} of the {} changes were made, the others are held back", together.len());
+                        shared.unmade.lock().unwrap().extend_from_slice(&together[made..]);
                     }
+                    *shared.problem.lock().unwrap() = Some(problem);
+                    redraw();
                 }
             }
         })?;
@@ -165,9 +179,21 @@ impl Feed {
 
     /// Carry out a request in the background. Its effect shows in a later inventory.
     pub fn ask(&self, request: Request) {
-        if let Some(requests) = &self.requests {
-            let _ = requests.send(request);
+        self.apply(vec![request]);
+    }
+
+    /// Carry out several requests in the background, in this order. If a
+    /// runtime refuses one of them, that one and those after it are not
+    /// made: [`Feed::unmade`] hands them back.
+    pub fn apply(&self, requests: Vec<Request>) {
+        if let Some(queue) = &self.requests {
+            let _ = queue.send(requests);
         }
+    }
+
+    /// The requests of [`Feed::apply`] that were not made, handed back once.
+    pub fn unmade(&self) -> Vec<Request> {
+        std::mem::take(&mut self.shared.unmade.lock().unwrap())
     }
 
     /// Show the user a problem that did not come from a runtime.

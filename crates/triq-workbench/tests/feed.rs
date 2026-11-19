@@ -121,3 +121,45 @@ fn nothing_of_the_feed_runs_once_it_is_dropped() -> triq::Result {
     assert_eq!(Arc::strong_count(&kept), 1, "its threads have ended, and let go of what they held");
     Ok(())
 }
+
+#[test]
+fn requests_that_are_applied_together_stop_at_the_first_that_is_refused() -> triq::Result {
+    let feed = Feed::start(|| {})?;
+    let Scene { robot, desk, imu: _imu, viewer: _viewer } = Scene::new()?;
+    let (robot, desk) = (robot.name().to_owned(), desk.name().to_owned());
+    assert!(wait_for(|| node(&feed, &desk, "viewer").is_some()));
+    let heard = |feed: &Feed| {
+        let viewer = node(feed, &desk, "viewer").expect("the viewer");
+        viewer.inputs[0].sources.iter().map(|source| source.output.clone()).collect::<Vec<_>>()
+    };
+    let (pose, smooth) = (format!("{robot}/imu/pose"), format!("{robot}/smoother/smooth"));
+    let viewer = format!("{desk}/viewer/pose");
+
+    // Three changes, to be made in this order. The runtime refuses the second: it has no such node.
+    let changes = vec![
+        Request::Connect { from: pose.clone(), to: viewer.clone() },
+        Request::Pause { runtime: robot.clone(), node: "nobody".to_owned() },
+        Request::Disconnect { from: smooth.clone(), to: viewer.clone() },
+    ];
+    feed.apply(changes.clone());
+    assert!(wait_for(|| feed.problem().is_some()));
+    let problem = feed.problem().unwrap();
+    assert!(problem.contains("pause") && problem.contains("1 of the 3"), "{problem}");
+    // The first was made. The second and the third were not, and are handed back, once.
+    assert!(wait_for(|| heard(&feed) == [smooth.clone(), pose.clone()]), "{:?}", heard(&feed));
+    assert_eq!(feed.unmade(), changes[1..]);
+    assert_eq!(feed.unmade(), []);
+    feed.dismiss();
+
+    // When every one of them is made, nothing comes back.
+    let cut = |from: &String| Request::Disconnect { from: from.clone(), to: viewer.clone() };
+    feed.apply(vec![cut(&pose), cut(&smooth)]);
+    assert!(wait_for(|| heard(&feed).is_empty()));
+    assert_eq!((feed.problem(), feed.unmade()), (None, Vec::new()));
+
+    // A request that was asked by itself is not handed back when it is refused: it is only reported.
+    feed.ask(changes[1].clone());
+    assert!(wait_for(|| feed.problem().is_some()));
+    assert_eq!(feed.unmade(), []);
+    Ok(())
+}
