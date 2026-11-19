@@ -15,8 +15,18 @@
 //! ```
 //!
 //! Stop and restart `left`, spawn `ticks` again, and `right` carries on by itself.
+//!
+//! A station also offers the three as one kind, `chain`: a counter, a
+//! doubler and a logger, wired one to the next, and drawn as one by a tool
+//! that draws groups.
+//!
+//! ```text
+//! cargo run --bin triq -- spawn left chain first
+//! ```
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::time::Duration;
+use triq::Group;
 use triq::prelude::*;
 
 #[derive(Ports)]
@@ -112,7 +122,14 @@ fn main() -> triq::Result {
     rt.register::<Counter>("counter")?;
     rt.register::<Doubler>("doubler")?;
     rt.register::<Logger>("logger")?;
-    eprintln!("{name}: offering counter, doubler and logger. Try `triq list`.");
+    let chain = Group::new()
+        .spawn("counter", "ticks", Placement::Dedicated, json!({ "period_ms": 500 }))
+        .spawn("doubler", "twice", Placement::pool("work"), json!(null))
+        .spawn("logger", "log", Placement::Dedicated, json!(null))
+        .connect("ticks/output", "twice/input")
+        .connect("twice/output", "log/input");
+    rt.register_group("chain", chain)?;
+    eprintln!("{name}: offering counter, doubler and logger, and the three as a chain. Try `triq list`.");
     rt.wait();
     Ok(())
 }

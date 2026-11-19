@@ -38,7 +38,7 @@ fn a_third_program_wires_two_others_and_the_wiring_survives_a_crash() {
         wait_for(|| inventory(&left).is_some() && inventory(&right).is_some()),
         "both programs announce themselves"
     );
-    assert_eq!(inventory(&left).unwrap().factories.len(), 3);
+    assert_eq!(inventory(&left).unwrap().factories.len(), 4);
     assert_ne!(inventory(&left).unwrap().pid, inventory(&right).unwrap().pid);
 
     // Spawn a source in one program and a chain of two nodes in the other, then wire across.
@@ -79,6 +79,20 @@ fn a_third_program_wires_two_others_and_the_wiring_survives_a_crash() {
 
     triq(&["set", &format!("{left}/ticks"), r#"{"period_ms":50}"#]).unwrap();
     assert_eq!(node(&left, "ticks").unwrap().params["period_ms"], 50);
+
+    // A node is put in a group, and taken out of it again.
+    triq(&["group", &format!("{left}/ticks"), "sources/slow"]).unwrap();
+    assert_eq!(node(&left, "ticks").unwrap().group, "sources/slow");
+    assert!(triq(&["list"]).unwrap().contains("in group sources/slow"));
+    triq(&["group", &format!("{left}/ticks")]).unwrap();
+    assert_eq!(node(&left, "ticks").unwrap().group, "");
+    // The program offers its three kinds of node as one more kind: wired together, and in a group.
+    assert!(
+        triq(&["list"]).unwrap().contains("factory chain: a group of ticks (counter), twice (doubler), log (logger)")
+    );
+    triq(&["spawn", &right, "chain", "first"]).unwrap();
+    assert_eq!(node(&right, "first.twice").unwrap().group, "first");
+    assert!(wait_for(|| received(&right, "first.log") > 0), "data flows through the group");
     triq(&["remove", &format!("{right}/log")]).unwrap();
     assert!(node(&right, "log").is_none());
     triq(&["shutdown", &right]).unwrap();

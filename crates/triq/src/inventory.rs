@@ -48,6 +48,77 @@ pub struct FactoryInfo {
     pub local: bool,
     /// Whatever else the application wants to show, such as the devices it sees.
     pub info: Value,
+    /// For a kind that creates a group: its nodes and the wires between them.
+    /// `None` for a kind of node, and from a runtime too old to offer groups.
+    #[serde(default)]
+    pub group: Option<Group>,
+}
+
+/// Several nodes that are created together and wired to each other: what a
+/// runtime offers as one kind with
+/// [`Runtime::register_group`](crate::Runtime::register_group). It is
+/// written as the calls that would make it by hand are:
+///
+/// ```
+/// use serde_json::json;
+/// use triq::{Group, Placement};
+///
+/// let stack = Group::new()
+///     .spawn("estimator", "estimator", Placement::Dedicated, json!(null))
+///     .spawn("controller", "controller", Placement::pool("control"), json!({ "gain": 2.0 }))
+///     .connect("estimator/state", "controller/state");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Group {
+    pub nodes: Vec<Member>,
+    /// Each from an output to an input, both `node/port` by the names the
+    /// nodes have in the group. The output may also be one that is not of
+    /// the group: `runtime/node/port`.
+    pub wires: Vec<(String, String)>,
+}
+
+/// One node of a [`Group`]: what [`Runtime::spawn_kind`](crate::Runtime::spawn_kind) is given to create it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Member {
+    pub kind: String,
+    /// What the node is called in the group. In a group that was created
+    /// under the name `drone`, the node `estimator` is `drone.estimator`.
+    pub name: String,
+    pub placement: Placement,
+    pub params: Value,
+}
+
+impl Group {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a node, of a kind the runtime has registered.
+    pub fn spawn(mut self, kind: &str, name: &str, placement: Placement, params: Value) -> Self {
+        self.nodes.push(Member { kind: kind.into(), name: name.into(), placement, params });
+        self
+    }
+
+    /// Add a wire from an output to an input of a node of the group.
+    pub fn connect(mut self, from: &str, to: &str) -> Self {
+        self.wires.push((from.into(), to.into()));
+        self
+    }
+
+    /// The wires of a group that was created under the name `name`, by what
+    /// its nodes are called then: `name.node/port`. An output that is not
+    /// of the group is as it was written.
+    pub fn wired(&self, name: &str) -> Vec<(String, String)> {
+        let port = |port: &String| if port.split('/').count() == 3 { port.clone() } else { format!("{name}.{port}") };
+        self.wires.iter().map(|(from, to)| (port(from), port(to))).collect()
+    }
+}
+
+impl Member {
+    /// What the node is called in a group that was created under the name `group`.
+    pub fn named(&self, group: &str) -> String {
+        format!("{group}.{}", self.name)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -55,6 +126,11 @@ pub struct NodeInfo {
     pub name: String,
     /// The factory it came from; empty for nodes created directly.
     pub kind: String,
+    /// The group it is in, as `outer/inner` for a group inside another: see
+    /// [`Runtime::set_group`](crate::Runtime::set_group). Empty for a node
+    /// that is in none, and from a runtime too old to say.
+    #[serde(default)]
+    pub group: String,
     /// `None` when the application runs the node itself.
     pub placement: Option<Placement>,
     pub state: NodeState,

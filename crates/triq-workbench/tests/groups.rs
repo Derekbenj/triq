@@ -44,6 +44,23 @@ fn groups<const N: usize>(members: [(String, &str); N]) -> Groups {
 }
 
 #[test]
+fn which_group_a_node_is_in_is_what_its_runtime_reports() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    assert_eq!(graph::groups(&scene.inventories()), Groups::new());
+
+    // Each program says which group its nodes are in. A node that is in none is not listed.
+    scene.robot.set_group("imu", "sensing")?;
+    scene.desk.set_group("viewer", "sensing/looking")?;
+    let reported = graph::groups(&scene.inventories());
+    assert_eq!(reported, groups([(format!("{robot}/imu"), "sensing"), (format!("{desk}/viewer"), "sensing/looking")]));
+    // That is what is drawn: the group as one card, beside the filter.
+    let cards = graph::cards(&scene.inventories(), &reported, None);
+    assert_eq!(keys(&cards), sorted([format!("{robot}/smoother"), "/sensing".to_owned()]));
+    Ok(())
+}
+
+#[test]
 fn a_group_is_drawn_as_one_card_with_the_ports_that_lead_outside_it() -> triq::Result {
     let scene = Scene::new()?;
     let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());

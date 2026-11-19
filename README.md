@@ -171,6 +171,56 @@ also the name of its iceoryx2 service, so iceoryx2's own tools list it.
   comes back, even after a crash, data flows again without anything being reconnected.
 - iceoryx2 refuses a connection whose message types differ.
 
+## Groups of nodes
+
+A node has room for the name of one group. Its runtime keeps the name and
+reports it, and does nothing else with it. The name is for a tool that draws
+the machine: the workbench draws the nodes of a group as one card.
+
+```rust
+rt.set_group("imu", "sensing")?;          // another program asks the same of a `Remote`
+rt.set_group("filter", "sensing/fine")?;  // a group inside that one: the outer one first
+rt.set_group("imu", "")?;                 // in no group again
+```
+
+A group is there for as long as a node says it is in it. A node that is
+removed takes its group with it, and so does a program that stops: when it
+runs again, its nodes are in the groups it puts them in, and in no others.
+
+A runtime can also offer a whole group as one kind: several nodes of kinds it
+has registered, wired to each other. It is written as the calls that would
+make it by hand are:
+
+```rust
+rt.register::<Estimator>("estimator")?;
+rt.register::<Controller>("controller")?;
+let stack = Group::new()
+    .spawn("estimator", "estimator", Placement::Dedicated, json!(null))
+    .spawn("controller", "controller", Placement::pool("control"), json!({ "gain": 2.0 }))
+    .connect("estimator/state", "controller/state")
+    .connect("robot/imu/pose", "estimator/pose");   // an output that is not of the group
+rt.register_group("flight_stack", stack)?;
+```
+
+Any program may then ask for one, as it asks for a node. Asked for under the
+name `drone`, it is the nodes `drone.estimator` and `drone.controller`, in
+the group `drone`, with those settings, on those threads, and wired:
+
+```rust
+robot.spawn("flight_stack", "drone", Placement::Dedicated, json!(null))?;
+```
+
+- The placement and the settings in the request are not used: each node has
+  the ones its group gives it.
+- A group is made whole or not at all. If one of its nodes cannot be created
+  or one of its wires cannot be drawn, the nodes that were made are removed again.
+- A mistake in a group is refused when the group is registered, not when one
+  is first asked for: a kind that is not registered, two nodes of one name, a
+  wire to a port that is not there, or a wire between ports of different messages.
+- The nodes of a group may be of kinds the application runs itself (see
+  [Programs with their own main loop](#programs-with-their-own-main-loop)).
+  A group cannot hold another group as one of its kinds.
+
 ## From another program
 
 ```rust
@@ -203,6 +253,7 @@ triq list                 # or `triq watch` to keep it on screen
 triq spawn robot filter filter_2 --pool dsp --params '{"alpha":0.5}'
 triq connect robot/imu/pose robot/filter_2/raw
 triq set robot/filter_2 '{"alpha":0.1}'
+triq group robot/filter_2 sensing   # put it in a group; without a name, in none
 triq fields robot/imu/pose          # the numbers inside what an output sends
 triq pause | resume | remove robot/filter_2
 ```
@@ -272,7 +323,8 @@ In `Runtimes`, `Graph` and `Details`:
   or by way of other nodes. Every other card goes grey, with its wires. A click beside the cards
   brings the colours back.
 - Click a kind in `Runtimes` to create a node: name, thread or pool, settings. The form stays after
-  `Create`, under the next name that is free, for another node of the kind.
+  `Create`, under the next name that is free, for another node of the kind. A kind that is a group
+  of nodes asks only for a name, and says which nodes it creates.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
@@ -297,8 +349,9 @@ In `Runtimes`, `Graph` and `Details`:
 `Details` is asked of a runtime: it is held back, and the windows show the machine as it would be.
 
 - Everything can be drafted: wires drawn and cut, settings, pausing and resuming, removing a node,
-  and creating one. A node that is to be created is drawn with the ports its factory says it will
-  have, and can be wired like any other.
+  creating one, and which group a node is in. A node that is to be created is drawn with the ports
+  its factory says it will have, and can be wired like any other. So are the nodes of a group that
+  is to be created.
 - What is only drafted is grey, with a glow around it: a new node, and a new wire with the pins at
   its ends. A wire that is to be cut is faint, and has the same glow along it. A card that is to
   be changed or removed keeps its colour, has the glow, and says what is to happen to it.
@@ -344,7 +397,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   outside comes from `Group Input`, and what it sends there goes to `Group Output`. A port that is
   connected to nothing is on neither; it is a pin of its node, to be wired inside the group. Step
   out, and the card of the group offers it, to be wired from outside.
-- A node that is created while the graph shows the inside of a group is in that group.
+- What is created while the graph shows the inside of a group is in that group: a node, or a
+  group of a kind that its runtime offers, which is then a group inside the one that is shown.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.
   Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
 - A group can be inside a group. The card of a group is selected and grouped like a node's, and
@@ -354,10 +408,18 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   is shown. `P` moves the selected cards into that group, and out of every group only if there is
   none around. `Cmd+Option+G` takes one group apart: what was in it is where the group was.
 - A node is directly in one group at most. A group is there for as long as a node is in it.
-- Groups are how the workbench draws the machine. No runtime knows of them, and a node in a group
-  runs exactly as before. They are kept by the names of the nodes, like the places of cards.
+- Which group a node is in is kept by the node's runtime, not by the workbench (see
+  [Groups of nodes](#groups-of-nodes)). The workbench asks the runtime to put the node in the
+  group, and draws what the runtime reports. So a group is the same in every workbench that is
+  open, and is still there when the workbench is closed and opened again. A node that is removed
+  takes its place in the group with it, and a program that is started again puts its nodes in
+  the groups it chooses. A node in a group runs exactly as before.
+- A program that was built with a triq from before there were groups cannot be asked: its nodes
+  stay where they are, and the row along the top says so. Build it with this triq, and they can.
+- A group's name is plain, like a node's: letters, digits, `-`, `_` and `.`. Anything else in a
+  name that is typed becomes `_`.
 - While drafting, grouping is held back with the rest: the graph shows the groups as drafted, and
-  they are made when the draft is applied.
+  the runtimes are asked when the draft is applied.
 
 ### Charts
 
@@ -420,7 +482,7 @@ per runtime), `history.rs` (what connections and outputs did, as plain data),
 `signals.rs` (the numbers inside messages), `charts.rs` (the charts),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 3,980 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 4,340 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
@@ -668,15 +730,16 @@ of a message.
 | `message.rs` | 220 | message types, headers, the stamp on every sample |
 | `fields.rs` | 132 | the numbers a message lists, and reading one from bytes |
 | `port.rs`, `port/output.rs`, `port/input.rs` | 744 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
-| `node.rs` | 277 | the `Node` trait, `Trigger`, `Placement` |
+| `node.rs` | 279 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 220 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 682 | `Runtime`: spawn, factories, connect, inventory |
-| `runtime/local.rs` | 175 | factories whose nodes the application runs |
-| `control.rs`, `remote.rs` | 503 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 308 | report types, the error type, iceoryx2 type names |
+| `runtime.rs` | 691 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime/local.rs` | 176 | factories whose nodes the application runs |
+| `runtime/group.rs` | 122 | which group a node is in, and kinds that create a group of nodes |
+| `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 386 | report types, the error type, iceoryx2 type names |
 
-About 3,300 lines including comments, plus the derive macros (108) and the command-line tool (178).
+About 3,560 lines including comments, plus the derive macros (108) and the command-line tool (190).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

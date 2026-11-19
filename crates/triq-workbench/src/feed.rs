@@ -8,13 +8,16 @@
 //! the window. Requests that belong together are carried out in their order,
 //! as far as the runtimes go along with them. A third thread reads the topics
 //! whose messages the user looks into.
+//!
+//! What was asked for shows a moment later, in what the runtimes report
+//! next. [`Feed::settled`] says whether that moment has passed.
 use crate::graph;
 use crate::history::History;
 use crate::signals::{Signals, ended};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -56,6 +59,12 @@ pub enum Request {
         node: String,
         params: Value,
     },
+    /// Put a node in a group, as `outer/inner` for one inside another; or, with an empty name, in none.
+    SetGroup {
+        runtime: String,
+        node: String,
+        group: String,
+    },
     Pause {
         runtime: String,
         node: String,
@@ -84,6 +93,11 @@ struct Shared {
     problem: Mutex<Option<String>>,
     /// Of requests that belonged together, the one that failed and those after it.
     unmade: Mutex<Vec<Request>>,
+    /// How many times something was asked for, how many of those were seen to, and how
+    /// many had been seen to when the reading that `inventories` holds was begun.
+    asked: AtomicU64,
+    seen_to: AtomicU64,
+    shown: AtomicU64,
     stop: AtomicBool,
 }
 
@@ -96,6 +110,9 @@ impl Feed {
             history: Mutex::default(),
             problem: Mutex::default(),
             unmade: Mutex::default(),
+            asked: AtomicU64::new(0),
+            seen_to: AtomicU64::new(0),
+            shown: AtomicU64::new(0),
             stop: AtomicBool::new(false),
         });
         let redraw = Arc::new(redraw);
@@ -108,6 +125,8 @@ impl Feed {
                 // When history last took a reading, and when the next regular one is due.
                 let (mut recorded, mut due) = (None::<Instant>, Instant::now());
                 while !shared.stop.load(Ordering::Acquire) {
+                    // Whatever was seen to before the machine is read shows in the reading.
+                    let seen_to = shared.seen_to.load(Ordering::Acquire);
                     if let Ok(found) = triq::discover() {
                         let found = Arc::new(found);
                         // Changes can be announced in quick succession, and two
@@ -121,6 +140,7 @@ impl Feed {
                             rated = (Instant::now(), found.clone());
                         }
                         *shared.inventories.lock().unwrap() = found;
+                        shared.shown.store(seen_to, Ordering::Release);
                         redraw();
                     }
                     // Sleep until a runtime announces a change or the next reading is due.
@@ -141,6 +161,7 @@ impl Feed {
                         let error = request.carry_out().err()?;
                         Some((made, format!("Could not {request}: {error}")))
                     });
+                    shared.seen_to.fetch_add(1, Ordering::AcqRel);
                     let Some((made, mut problem)) = refused else { continue };
                     // Of several, the one that was refused and those after it go back to whoever asked.
                     if together.len() > 1 {
@@ -187,8 +208,17 @@ impl Feed {
     /// made: [`Feed::unmade`] hands them back.
     pub fn apply(&self, requests: Vec<Request>) {
         if let Some(queue) = &self.requests {
+            self.shared.asked.fetch_add(1, Ordering::AcqRel);
             let _ = queue.send(requests);
         }
+    }
+
+    /// Whether everything that was asked for shows in what [`Feed::inventories`]
+    /// reports from now on: it was carried out or refused, and the machine was
+    /// read after that. Until then, something that was just asked for may look
+    /// as if it were not there. Ask this before the inventories, not after.
+    pub fn settled(&self) -> bool {
+        self.shared.shown.load(Ordering::Acquire) == self.shared.asked.load(Ordering::Acquire)
     }
 
     /// The requests of [`Feed::apply`] that were not made, handed back once.
@@ -231,6 +261,7 @@ impl Request {
             Self::Connect { from, to } => triq::connect(from, to),
             Self::Disconnect { from, to } => triq::disconnect(from, to),
             Self::SetParams { runtime, node, params } => Remote::open(runtime)?.set_params(node, params.clone()),
+            Self::SetGroup { runtime, node, group } => Remote::open(runtime)?.set_group(node, group),
             Self::Pause { runtime, node } => Remote::open(runtime)?.pause(node),
             Self::Resume { runtime, node } => Remote::open(runtime)?.resume(node),
         }
@@ -240,11 +271,15 @@ impl Request {
 impl fmt::Display for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Spawn { runtime, kind, name, .. } => write!(f, "create {kind} node {name} in {runtime}"),
+            Self::Spawn { runtime, kind, name, .. } => write!(f, "create {kind} {name} in {runtime}"),
             Self::Remove { runtime, node } => write!(f, "remove {runtime}/{node}"),
             Self::Connect { from, to } => write!(f, "connect {from} to {to}"),
             Self::Disconnect { from, to } => write!(f, "disconnect {from} from {to}"),
             Self::SetParams { runtime, node, .. } => write!(f, "change the settings of {runtime}/{node}"),
+            Self::SetGroup { runtime, node, group } if group.is_empty() => {
+                write!(f, "take {runtime}/{node} out of its group")
+            }
+            Self::SetGroup { runtime, node, group } => write!(f, "put {runtime}/{node} in group {group}"),
             Self::Pause { runtime, node } => write!(f, "pause {runtime}/{node}"),
             Self::Resume { runtime, node } => write!(f, "resume {runtime}/{node}"),
         }

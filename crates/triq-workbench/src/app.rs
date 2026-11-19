@@ -6,8 +6,8 @@
 //! opened again from the row along the top. `egui_tiles` does the arranging.
 //!
 //! How the windows and the charts are arranged, what is on the charts, where
-//! the cards are, which nodes are grouped and which colours were chosen is
-//! kept from one run to the next.
+//! the cards are and which colours were chosen is kept from one run to the
+//! next.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -19,9 +19,10 @@
 //!
 //! Nodes can be put together in groups, as in Blender: a group is drawn as
 //! one card, and the graph can show the inside of one instead of the whole
-//! machine (see `graph.rs`). Groups are how the workbench draws the machine,
-//! and no runtime knows of them. How the graph itself is drawn and handled is
-//! in `app/cards.rs`, and the details window in `app/details.rs`.
+//! machine (see `graph.rs`). Which group a node is in is its runtime's to
+//! say, like everything else about it: the workbench asks, and draws what is
+//! reported. How the graph itself is drawn and handled is in `app/cards.rs`,
+//! and the details window in `app/details.rs`.
 mod cards;
 mod details;
 
@@ -65,9 +66,6 @@ struct Kept {
     /// The colours that were chosen for runtimes, by name.
     #[serde(default)]
     colors: BTreeMap<String, Color32>,
-    /// Which group each node is in.
-    #[serde(default)]
-    groups: Groups,
 }
 
 /// One of the windows within the window.
@@ -101,7 +99,7 @@ struct Contents {
     feed: Feed,
     /// What the runtimes last reported, as it stood when this frame began.
     real: Arc<Vec<Inventory>>,
-    /// Which group each node is in.
+    /// Which group each node is in, by that.
     groups: Groups,
     /// The changes that are held back, while the user is drafting.
     draft: Option<Draft>,
@@ -278,25 +276,22 @@ impl Workbench {
     }
 
     /// How the windows and the charts are arranged, what is on the charts,
-    /// where the cards are, which nodes are grouped and which colours were
-    /// chosen, to be handed to [`Workbench::arrange`] by the next run.
+    /// where the cards are and which colours were chosen, to be handed to
+    /// [`Workbench::arrange`] by the next run.
     pub fn layout(&self) -> String {
-        let Contents { charts, places, colors, groups, .. } = &self.contents;
+        let Contents { charts, places, colors, .. } = &self.contents;
         let (cards, colors) = (graph::remembered(places), colors.chosen());
-        let kept = serde_json::json!({
-            "windows": self.windows, "charts": charts, "cards": cards, "colors": colors, "groups": groups
-        });
+        let kept = serde_json::json!({ "windows": self.windows, "charts": charts, "cards": cards, "colors": colors });
         kept.to_string()
     }
 
     /// Be as [`Workbench::layout`] said the workbench was. A number on a chart,
     /// a card in the graph and a runtime are known by what they are called:
-    /// the number is drawn, the card is where it was and in the group it was
-    /// in, and the runtime has its colour, when something of those names is
-    /// running, and they wait until then. What cannot be read as a layout
-    /// changes nothing.
+    /// the number is drawn, the card is where it was, and the runtime has its
+    /// colour, when something of those names is running, and they wait until
+    /// then. What cannot be read as a layout changes nothing.
     pub fn arrange(&mut self, layout: &str) {
-        let Ok(Kept { windows, charts, cards, colors, groups }) = serde_json::from_str(layout) else { return };
+        let Ok(Kept { windows, charts, cards, colors }) = serde_json::from_str(layout) else { return };
         // Whatever wrote it, a workbench has its four windows and a chart.
         if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) && charts.has_a_chart() {
             (self.windows, self.contents.charts) = (windows, charts);
@@ -306,8 +301,7 @@ impl Workbench {
                     drawn.pos = egui::pos2(*x, *y);
                 }
             }
-            (self.contents.places, self.contents.groups) = (cards, groups);
-            self.contents.colors = Colors::default();
+            (self.contents.places, self.contents.colors) = (cards, Colors::default());
             for (runtime, color) in colors {
                 self.contents.colors.choose(&runtime, Some(color));
             }
@@ -479,24 +473,26 @@ impl Behavior<Window> for Shown<'_> {
 impl Contents {
     /// Take what the runtimes last reported, and bring the drawing in line with it.
     fn refresh(&mut self) {
+        // Whether what was asked for shows in what is taken next. A group that was just asked
+        // for is reported a moment later, and until then it is not given up as gone.
+        let settled = self.feed.settled();
         (self.real, self.rates) = (self.feed.inventories(), self.feed.rates());
+        self.groups = graph::groups(&self.real);
         // Changes that were applied and could not be made are a draft again.
         let unmade = self.feed.unmade();
         if !unmade.is_empty() {
             let draft = self.draft.get_or_insert_default();
             unmade.into_iter().for_each(|change| draft.record(change, &self.real));
         }
-        // While drafting, the windows show the machine and its groups as they would be.
-        (self.inventories, self.grouping, self.marks) = match &self.draft {
-            Some(draft) => {
-                let (machine, grouping) = (draft.over(&self.real), draft.grouping(&self.groups));
-                (Arc::new(machine), grouping, draft.marks(&self.real, &self.groups))
-            }
-            None => (self.real.clone(), self.groups.clone(), Marks::default()),
+        // While drafting, the windows show the machine as it would be.
+        (self.inventories, self.marks) = match &self.draft {
+            Some(draft) => (Arc::new(draft.over(&self.real)), draft.marks(&self.real)),
+            None => (self.real.clone(), Marks::default()),
         };
+        self.grouping = graph::groups(&self.inventories);
         let mut cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
         // A group that has no node left has no inside to show: the graph shows the group around it.
-        while let Some(empty) = self.inside.take_if(|_| cards.is_empty()) {
+        while settled && let Some(empty) = self.inside.take_if(|_| cards.is_empty()) {
             (self.inside, self.fit) = (graph::parent(&empty).map(str::to_owned), true);
             cards = graph::cards(&self.inventories, &self.grouping, self.inside.as_deref());
         }
@@ -508,7 +504,7 @@ impl Contents {
             Focus::Group { name, .. } => !self.grouping.values().any(|group| graph::within(group, name)),
             Focus::Nothing | Focus::Form(_) => false,
         };
-        if gone {
+        if gone && settled {
             self.focus = Focus::Nothing;
         }
     }
@@ -541,7 +537,12 @@ impl Contents {
                     ui.weak(format!("pool {}: {} threads{shared}", pool.name, pool.threads));
                 }
                 for factory in &inventory.factories {
-                    if ui.button(format!("New {}", factory.kind)).clicked() {
+                    let mut new = ui.button(format!("New {}", factory.kind));
+                    // A kind may be several nodes that are created together, as a group.
+                    if let Some(group) = &factory.group {
+                        new = new.on_hover_text(format!("A group of {} nodes, wired to each other", group.nodes.len()));
+                    }
+                    if new.clicked() {
                         (self.focus, self.reveal) = (Focus::Form(Form::new(inventory, factory)), true);
                     }
                 }
@@ -570,15 +571,15 @@ impl Contents {
         let [make, into, apart] = [Modifiers::NONE, Modifiers::SHIFT, Modifiers::ALT]
             .map(|more| ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(Modifiers::COMMAND | more, Key::G)));
         let held = ui.ctx().format_modifiers(Modifiers::COMMAND);
-        let Contents { feed, draft, real, groups, grouping, marks, focus, inside, wish, .. } = self;
+        let Contents { feed, draft, real, grouping, marks, focus, inside, wish, .. } = self;
         let mut asking = Asking { feed, draft: draft.as_mut(), real };
-        // A node of a group that was clicked there, to turn to; and a node that the form asked for.
+        // A node of a group that was clicked there, to turn to; and what the form asked for.
         let (mut turn_to, mut created) = (None, None);
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             match focus {
                 Focus::Nothing => {
                     if let Some(draft) = &mut asking.draft {
-                        details::held_back(ui, draft, asking.real, groups);
+                        details::held_back(ui, draft, asking.real);
                         ui.separator();
                     }
                     ui.weak("Click a node to see where it runs, or pick a kind of node among the runtimes to create one.");
@@ -608,7 +609,7 @@ impl Contents {
                 }
                 Focus::Form(form) => match form.show(ui, &mut asking, &inventories) {
                     Filled::Open => {}
-                    Filled::Created(node) => created = Some(node),
+                    Filled::Created { nodes, group } => created = Some((nodes, group)),
                     Filled::Closed => *focus = Focus::Nothing,
                 },
             }
@@ -619,10 +620,11 @@ impl Contents {
         if let Some((key, (_, node))) = turn_to.and_then(|key| Some((key.clone(), node(&inventories, &key)?))) {
             *focus = Focus::node(key, &node.params);
         }
-        // A node is created where the graph is looking: in the group whose inside it shows, or in
-        // none. A node of that name before it may have been in another group, which is not its.
-        if let Some(node) = created {
-            self.regroup(vec![(node, self.inside.clone())]);
+        // What is created is where the graph is looking: in the group whose inside it shows. A
+        // group that its runtime offers as a kind is a group already, and is put there as one.
+        if let (Some((nodes, group)), Some(shown)) = (created, self.inside.clone()) {
+            let into = group.map_or(shown.clone(), |name| graph::join(Some(&shown), &name));
+            self.regroup(nodes.into_iter().map(|node| (node, Some(into.clone()))).collect());
         }
     }
 
@@ -666,15 +668,13 @@ impl Contents {
             }
             return;
         };
-        let (changes, regrouped) = (draft.changes(&self.real), draft.regrouped(&self.groups));
-        let held = ui.label(format!("Draft: {}", counted(changes.len() + regrouped.len())));
+        let changes = draft.changes(&self.real);
+        let held = ui.label(format!("Draft: {}", counted(changes.len())));
         if !changes.is_empty() {
             held.on_hover_ui(|ui| changes.iter().for_each(|change| _ = ui.label(change.to_string())));
         }
         let about = "Ask the runtimes for the changes, in the order they were made here";
         if ui.small_button("Apply draft").on_hover_text(about).clicked() {
-            // Groups are the workbench's own, and are as drafted at once.
-            self.groups = draft.grouping(&self.groups);
             self.feed.apply(changes);
             self.draft = None;
         } else if ui
@@ -862,14 +862,14 @@ impl Contents {
         self.regroup(moves);
     }
 
-    /// Put each of some nodes in a group, or with `None` in none: at once,
-    /// or while drafting into the draft.
+    /// Put each of some nodes, by `runtime/node`, in a group, or with `None`
+    /// in none. Its runtime is asked for that; while drafting, it is held back.
     fn regroup(&mut self, moves: Vec<(String, Option<String>)>) {
+        let mut asking = Asking { feed: &self.feed, draft: self.draft.as_mut(), real: &self.real };
         for (node, group) in moves {
-            match (&mut self.draft, group) {
-                (Some(draft), group) => draft.group(node, group, &self.groups),
-                (None, Some(group)) => _ = self.groups.insert(node, group),
-                (None, None) => _ = self.groups.remove(&node),
+            if let Some((runtime, node)) = node.split_once('/') {
+                let (runtime, node, group) = (runtime.to_owned(), node.to_owned(), group.unwrap_or_default());
+                asking.ask(Request::SetGroup { runtime, node, group });
             }
         }
     }
@@ -901,21 +901,22 @@ impl Contents {
         free.unwrap_or_default()
     }
 
-    /// Call a group by another name, unless a group beside it has that name.
-    /// What a group is called is not something a draft holds back.
+    /// Call a group by another name, unless a group beside it has that name:
+    /// every node in it, and in the groups inside it, is put in the group of
+    /// the new name. The name is plain, as every name that a runtime keeps
+    /// is: what is not a letter, a digit, `-`, `_` or `.` becomes `_`, and
+    /// it does not begin with one.
     fn rename(&mut self, group: &str, name: &str) {
-        let name = name.trim().replace('/', "");
+        let plain = |letter: char| if letter.is_ascii_alphanumeric() || "-_.".contains(letter) { letter } else { '_' };
+        let name: String = name.trim().chars().map(plain).take(32).collect();
+        let name = name.trim_start_matches('_').to_owned();
         let to = graph::join(graph::parent(group), &name);
         if name.is_empty() || self.grouping.values().any(|taken| graph::within(taken, &to)) {
             return;
         }
         let renamed = |of: &str| graph::replant(of, group, Some(&to)).unwrap_or_default();
-        for of in self.groups.values_mut().filter(|of| graph::within(of, group)) {
-            *of = renamed(of);
-        }
-        if let Some(draft) = &mut self.draft {
-            draft.rename(group, &to);
-        }
+        let nodes = self.grouping.iter().filter(|(_, of)| graph::within(of, group));
+        self.regroup(nodes.map(|(node, of)| (node.clone(), Some(renamed(of)))).collect());
         // Its cards, and those of the groups inside it, go by the new name and are where they were.
         let places: Vec<(String, Place)> = self.places.iter().map(|(card, place)| (card.clone(), *place)).collect();
         for (card, place) in places {

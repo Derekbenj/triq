@@ -5,10 +5,10 @@
 mod scene;
 use scene::*;
 use serde_json::json;
-use triq::{Direction, Inventory, NodeInfo, NodeState, Placement};
+use triq::{Direction, Group, Inventory, NodeInfo, NodeState, Placement};
 use triq_workbench::draft::{Draft, Mark};
 use triq_workbench::feed::Request;
-use triq_workbench::graph::Groups;
+use triq_workbench::graph::{Groups, groups};
 
 fn connect(from: &str, to: &str) -> Request {
     Request::Connect { from: from.to_owned(), to: to.to_owned() }
@@ -16,6 +16,10 @@ fn connect(from: &str, to: &str) -> Request {
 
 fn disconnect(from: &str, to: &str) -> Request {
     Request::Disconnect { from: from.to_owned(), to: to.to_owned() }
+}
+
+fn group(runtime: &str, node: &str, group: &str) -> Request {
+    Request::SetGroup { runtime: runtime.to_owned(), node: node.to_owned(), group: group.to_owned() }
 }
 
 fn node<'a>(machine: &'a [Inventory], runtime: &str, name: &str) -> Option<&'a NodeInfo> {
@@ -75,7 +79,7 @@ fn a_draft_holds_what_it_takes_to_get_from_the_machine_to_the_drawing_and_no_mor
     assert_eq!(draft.changes(&real), [disconnect(&smooth, &viewer), connect(&pose, &viewer)]);
 
     // One of the changes is taken back.
-    draft.take_back(&disconnect(&smooth, &viewer));
+    draft.take_back(&disconnect(&smooth, &viewer), &real);
     assert_eq!(draft.changes(&real), [connect(&pose, &viewer)]);
 
     // When the machine comes to be as it was drafted by other means, there is nothing left to do.
@@ -131,7 +135,7 @@ fn the_machine_is_shown_as_it_would_be_with_the_changes_made() -> triq::Result {
     assert!(self::node(&drafted, &robot, "imu").is_some(), "a node that is to go is shown until it has gone");
 
     // What the draft does to each card and wire, for the drawing to tell them apart by.
-    let marks = draft.marks(&real, &Groups::new());
+    let marks = draft.marks(&real);
     let card = |node: &str| marks.card(&format!("{robot}/{node}"));
     assert_eq!(
         [card("second"), card("smoother"), card("imu")],
@@ -187,40 +191,110 @@ fn a_node_that_was_only_drafted_is_taken_back_with_all_that_was_drafted_for_it()
 }
 
 #[test]
-fn which_group_a_node_is_in_is_drafted_with_the_rest() {
-    let real: Groups = [("robot/imu", "sensing"), ("robot/smoother", "sensing")]
-        .map(|(node, group)| (node.to_owned(), group.to_owned()))
-        .into();
+fn which_group_a_node_is_in_is_drafted_with_the_rest() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    scene.robot.set_group("imu", "sensing")?;
+    scene.robot.set_group("smoother", "sensing")?;
+    let real = scene.inventories();
+    let key = |runtime: &str, node: &str| format!("{runtime}/{node}");
+    let grouped = |pairs: &[(String, &str)]| -> Groups {
+        pairs.iter().map(|(node, group)| (node.clone(), (*group).to_owned())).collect()
+    };
     let mut draft = Draft::default();
-    assert_eq!((draft.grouping(&real), draft.regrouped(&real)), (real.clone(), Vec::new()));
+    assert_eq!(
+        groups(&draft.over(&real)),
+        grouped(&[(key(&robot, "imu"), "sensing"), (key(&robot, "smoother"), "sensing")])
+    );
 
     // Two nodes are put in a group that is new, and one is taken out of the group it is in.
-    let put = |draft: &mut Draft, node: &str, group: Option<&str>| {
-        draft.group(node.to_owned(), group.map(str::to_owned), &real)
-    };
-    put(&mut draft, "desk/viewer", Some("looking"));
-    put(&mut draft, "robot/smoother", Some("looking"));
-    put(&mut draft, "robot/imu", None);
-    let drafted = draft.grouping(&real);
-    assert_eq!(drafted.len(), 2);
-    assert_eq!(
-        (drafted.get("desk/viewer"), drafted.get("robot/smoother")),
-        (Some(&"looking".to_owned()), Some(&"looking".to_owned()))
-    );
-    assert_eq!(draft.regrouped(&real).len(), 3);
-    // The groups themselves are as they were.
-    assert_eq!(real.len(), 2);
+    draft.record(group(&desk, "viewer", "looking"), &real);
+    draft.record(group(&robot, "smoother", "looking"), &real);
+    draft.record(group(&robot, "imu", ""), &real);
+    assert_eq!(draft.changes(&real).len(), 3);
+    let drafted = groups(&draft.over(&real));
+    assert_eq!(drafted, grouped(&[(key(&desk, "viewer"), "looking"), (key(&robot, "smoother"), "looking")]));
+    // The machine itself is as it was.
+    assert_eq!(groups(&scene.inventories()).len(), 2);
 
     // The drawing tells them apart: the group that is new, the one that loses its nodes, and the nodes that move.
-    let marks = draft.marks(&[], &real);
+    let marks = draft.marks(&real);
     assert_eq!([marks.card("/looking"), marks.card("/sensing")], [Some(Mark::New), Some(Mark::Changed)]);
-    assert_eq!([marks.card("robot/imu"), marks.card("desk/viewer")], [Some(Mark::Changed), Some(Mark::Changed)]);
+    let card = |runtime: &str, node: &str| marks.card(&key(runtime, node));
+    assert_eq!([card(&robot, "imu"), card(&desk, "viewer")], [Some(Mark::Changed), Some(Mark::Changed)]);
 
-    // A node that is put back where it is leaves nothing to do, and so does one that is left where it is after all.
-    put(&mut draft, "robot/imu", Some("sensing"));
-    draft.leave("desk/viewer");
-    assert_eq!(draft.regrouped(&real), [("robot/smoother".to_owned(), Some("looking".to_owned()))]);
-    // The group is called something else: the node is to be in it under that name.
-    draft.rename("looking", "watching");
-    assert_eq!(draft.grouping(&real).get("robot/smoother"), Some(&"watching".to_owned()));
+    // A node that is put back where it is leaves nothing to do, and a change can be taken back.
+    draft.record(group(&robot, "imu", "sensing"), &real);
+    draft.take_back(&group(&desk, "viewer", "looking"), &real);
+    assert_eq!(draft.changes(&real), [group(&robot, "smoother", "looking")]);
+    // When the machine comes to be as it was drafted by other means, there is nothing left to do.
+    scene.robot.set_group("smoother", "looking")?;
+    assert_eq!(draft.changes(&scene.inventories()), []);
+    Ok(())
+}
+
+#[test]
+fn a_group_that_a_runtime_offers_as_a_kind_is_drafted_whole() -> triq::Result {
+    let scene = Scene::new()?;
+    let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());
+    let pose = format!("{robot}/imu/pose");
+    // Two filters, one after the other, fed by the sensor, which is not of the group.
+    let pair = Group::new()
+        .spawn("filter", "coarse", Placement::Dedicated, json!({ "alpha": 0.9 }))
+        .spawn("filter", "fine", Placement::pool("dsp"), json!({ "alpha": 0.1 }))
+        .connect(&pose, "coarse/raw")
+        .connect("coarse/smooth", "fine/raw");
+    scene.robot.register_group("pair", pair)?;
+    let real = scene.inventories();
+    let spawn = Request::Spawn {
+        runtime: robot.clone(),
+        kind: "pair".to_owned(),
+        name: "p".to_owned(),
+        placement: Placement::Dedicated,
+        params: json!(null),
+    };
+    let mut draft = Draft::default();
+    draft.record(spawn.clone(), &real);
+    assert_eq!(draft.changes(&real), std::slice::from_ref(&spawn), "the whole group is one change");
+
+    // Its nodes are drawn as they will be: named after the group, in it, with their settings, and wired.
+    let drafted = draft.over(&real);
+    let coarse = node(&drafted, &robot, "p.coarse").expect("the first node of the group");
+    let fine = node(&drafted, &robot, "p.fine").expect("the second");
+    assert_eq!(
+        (coarse.kind.as_str(), coarse.group.as_str(), &coarse.params),
+        ("filter", "p", &json!({ "alpha": 0.9 }))
+    );
+    assert_eq!((fine.group.as_str(), &fine.placement), ("p", &Some(Placement::pool("dsp"))));
+    assert_eq!(heard(&drafted, &robot, "p.coarse"), std::slice::from_ref(&pose));
+    assert_eq!(heard(&drafted, &robot, "p.fine"), [format!("{robot}/p.coarse/smooth")]);
+    // The group, its nodes and its wires are all new.
+    let marks = draft.marks(&real);
+    let cards = ["/p".to_owned(), format!("{robot}/p.coarse"), format!("{robot}/p.fine")];
+    assert_eq!(cards.map(|card| marks.card(&card)), [Some(Mark::New); 3]);
+    assert_eq!(marks.wire(&format!("{robot}/p.coarse/smooth"), &format!("{robot}/p.fine/raw")), Some(Mark::New));
+    assert_eq!(marks.wire(&pose, &format!("{robot}/p.coarse/raw")), Some(Mark::New));
+
+    // More is drafted for its nodes: other settings for one, a wire from it, and both inside another group.
+    let fine = || (robot.clone(), "p.fine".to_owned());
+    let (runtime, node) = fine();
+    draft.record(Request::SetParams { runtime, node, params: json!({ "alpha": 0.2 }) }, &real);
+    draft.record(connect(&format!("{robot}/p.fine/smooth"), &format!("{desk}/viewer/pose")), &real);
+    draft.record(group(&robot, "p.coarse", "outer/p"), &real);
+    draft.record(group(&robot, "p.fine", "outer/p"), &real);
+    assert_eq!(draft.changes(&real).len(), 5);
+    let drafted = draft.over(&real);
+    let fine = self::node(&drafted, &robot, "p.fine").expect("the second");
+    assert_eq!((fine.group.as_str(), &fine.params), ("outer/p", &json!({ "alpha": 0.2 })));
+    assert_eq!(draft.marks(&real).card("/outer"), Some(Mark::New));
+
+    // Taken back, the group goes with all that was drafted for its nodes.
+    draft.take_back(&spawn, &real);
+    assert_eq!(draft.changes(&real), []);
+
+    // And when such a group is there, creating it is nothing left to do.
+    draft.record(spawn.clone(), &real);
+    scene.robot.spawn_kind("pair", "p", Placement::Dedicated, json!(null))?;
+    assert_eq!(draft.changes(&scene.inventories()), []);
+    Ok(())
 }

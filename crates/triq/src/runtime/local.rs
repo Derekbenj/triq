@@ -156,6 +156,7 @@ impl Runtime {
             params: shown(&A::default())?,
             info: Mutex::default(),
             local: true,
+            group: None,
             spawn: Box::new({
                 let kind = kind.to_owned();
                 move |inner, name, _placement, params| {

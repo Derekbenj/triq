@@ -62,7 +62,9 @@ mod runtime;
 
 pub use error::{Error, Result};
 pub use fields::{Field, Fields, Layout, Scalar, member};
-pub use inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo};
+pub use inventory::{
+    FactoryInfo, Group, InputInfo, Inventory, Member, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo,
+};
 pub use message::{Headed, Header, MessageType, Payload, Stamp};
 pub use node::{Node, Placement, Trigger};
 pub use port::{Binder, Direction, Input, Loan, Output, PortField, PortOptions, PortSpec, Ports, Sample};

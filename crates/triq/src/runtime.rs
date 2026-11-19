@@ -1,11 +1,12 @@
 //! A runtime: the part of a process that owns nodes and answers for them.
+mod group;
 mod local;
 
 pub use local::{Local, LocalFactory, LocalNode, LocalNodes};
 
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
-use crate::inventory::{FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, shown};
+use crate::inventory::{FactoryInfo, Group, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, shown};
 use crate::message::now_ns;
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
@@ -77,6 +78,8 @@ struct Record {
     /// Distinguishes this node from an earlier one of the same name.
     id: u64,
     kind: String,
+    /// The group the node is in; empty for none.
+    group: String,
     placement: Option<Placement>,
     params: Value,
     inputs: Vec<(PortSpec, Arc<dyn InputPort>)>,
@@ -105,6 +108,8 @@ struct Factory {
     params: Value,
     info: Mutex<Value>,
     local: bool,
+    /// What it creates, if that is a group of nodes.
+    group: Option<Group>,
     spawn: Spawn,
 }
 
@@ -223,6 +228,7 @@ impl Runtime {
             params: shown(&N::Params::default())?,
             info: Mutex::default(),
             local: false,
+            group: None,
             spawn: Box::new({
                 let kind = kind.to_owned();
                 move |inner, name, placement, params| {
@@ -418,6 +424,7 @@ impl Inner {
             let record = Record {
                 id,
                 kind: kind.into(),
+                group: String::new(),
                 placement,
                 params,
                 inputs,
@@ -635,6 +642,7 @@ impl Inner {
                     params: factory.params.clone(),
                     local: factory.local,
                     info: factory.info.lock().unwrap().clone(),
+                    group: factory.group.clone(),
                 })
                 .collect(),
             nodes: nodes.iter().map(|(name, record)| record.info(name)).collect(),
@@ -654,6 +662,7 @@ impl Record {
         NodeInfo {
             name: name.into(),
             kind: self.kind.clone(),
+            group: self.group.clone(),
             placement: self.placement.clone(),
             state,
             params: self.params.clone(),

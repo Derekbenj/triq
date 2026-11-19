@@ -19,6 +19,7 @@ usage:
   triq disconnect <runtime/node/output> <runtime/node/input>
   triq fields <runtime/node/output>           the numbers inside what an output sends
   triq set <runtime/node> <json>              change a node's parameters
+  triq group <runtime/node> [<group>]         put a node in a group, or in none
   triq pause <runtime/node>
   triq resume <runtime/node>
   triq remove <runtime/node>
@@ -52,6 +53,8 @@ fn run(args: &[&str]) -> triq::Result {
         ["disconnect", from, to] => triq::disconnect(from, to)?,
         ["fields", output] => fields(output)?,
         ["set", node, params] => on(node, |remote, node| remote.set_params(node, serde_json::from_str(params)?))?,
+        ["group", node, group] => on(node, |remote, node| remote.set_group(node, group))?,
+        ["group", node] => on(node, |remote, node| remote.set_group(node, ""))?,
         ["pause", node] => on(node, Remote::pause)?,
         ["resume", node] => on(node, Remote::resume)?,
         ["remove", node] => on(node, Remote::remove)?,
@@ -113,6 +116,12 @@ fn describe(inventory: &Inventory) -> String {
         _ = writeln!(text, "  pool {}: {} threads{kind}", pool.name, pool.threads);
     }
     for factory in &inventory.factories {
+        // A kind that creates a group lists its nodes, each with its own kind.
+        if let Some(group) = &factory.group {
+            let nodes: Vec<String> = group.nodes.iter().map(|node| format!("{} ({})", node.name, node.kind)).collect();
+            _ = writeln!(text, "  factory {}: a group of {}", factory.kind, nodes.join(", "));
+            continue;
+        }
         let ports: Vec<String> = factory.ports.iter().map(port).collect();
         let local = if factory.local { ", run by the application" } else { "" };
         _ = writeln!(text, "  factory {}: {}; params {}{local}", factory.kind, ports.join(", "), factory.params);
@@ -136,6 +145,9 @@ fn describe_node(node: &NodeInfo) -> String {
     };
     let kind = if node.kind.is_empty() { String::new() } else { format!("{}, ", node.kind) };
     let mut text = format!("  node {}: {kind}{placement}, {state}, {} runs", node.name, node.runs);
+    if !node.group.is_empty() {
+        _ = write!(text, ", in group {}", node.group);
+    }
     if let Some(error) = &node.last_error {
         _ = write!(text, ", {} errors, last: {error}", node.errors);
     }

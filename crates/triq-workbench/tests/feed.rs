@@ -69,6 +69,11 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
     feed.ask(Request::SetParams { runtime, node: name, params: json!({ "alpha": 0.75 }) });
     assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().params == json!({ "alpha": 0.75 })));
 
+    // Which group a node is in is its runtime's to say, too.
+    let (runtime, name) = on("extra");
+    feed.ask(Request::SetGroup { runtime, node: name, group: "filters/fine".to_owned() });
+    assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().group == "filters/fine"));
+
     let (runtime, name) = on("extra");
     feed.ask(Request::Pause { runtime, node: name });
     assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().state == NodeState::Paused));
@@ -114,6 +119,10 @@ fn nothing_of_the_feed_runs_once_it_is_dropped() -> triq::Result {
         move || _ = &kept
     })?;
     assert!(Arc::strong_count(&kept) > 1);
+    // It has read the machine once. That first reading opens every runtime there is, which on a
+    // busy machine can take longer than a thread is waited for.
+    let Scene { robot, desk: _desk, imu: _imu, viewer: _viewer } = Scene::new()?;
+    assert!(wait_for(|| node(&feed, robot.name(), "smoother").is_some()));
 
     // When the workbench closes, its program ends at once, and a thread that is still in the
     // middle of something leaves that on the machine. So dropping the feed waits for them.
@@ -161,5 +170,35 @@ fn requests_that_are_applied_together_stop_at_the_first_that_is_refused() -> tri
     feed.ask(changes[1].clone());
     assert!(wait_for(|| feed.problem().is_some()));
     assert_eq!(feed.unmade(), []);
+    Ok(())
+}
+
+#[test]
+fn the_feed_says_when_what_was_asked_for_shows_in_what_it_reports() -> triq::Result {
+    let feed = Feed::start(|| {})?;
+    let Scene { robot, desk: _desk, imu: _imu, viewer: _viewer } = Scene::new()?;
+    let robot = robot.name().to_owned();
+    assert!(wait_for(|| node(&feed, &robot, "smoother").is_some()));
+    assert!(feed.settled(), "nothing was asked for");
+
+    // From the moment something is asked for, the machine is not as the feed reports it:
+    // not until the request was carried out, and the machine was read after that.
+    let group = |group: &str| Request::SetGroup {
+        runtime: robot.clone(),
+        node: "smoother".to_owned(),
+        group: group.to_owned(),
+    };
+    for name in ["one", "two", "three"] {
+        feed.ask(group(name));
+        assert!(!feed.settled());
+        assert!(wait_for(|| feed.settled()));
+        assert_eq!(node(&feed, &robot, "smoother").expect("the filter").group, name);
+    }
+
+    // Something that is refused is settled as well, once it was: there is nothing more to wait for.
+    feed.ask(Request::Pause { runtime: robot.clone(), node: "nobody".to_owned() });
+    assert!(!feed.settled());
+    assert!(wait_for(|| feed.settled()));
+    assert!(feed.problem().is_some());
     Ok(())
 }

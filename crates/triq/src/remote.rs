@@ -177,6 +177,12 @@ impl Remote {
         self.done(Request::SetParams { node: node.into(), params })
     }
 
+    /// Put a node in a group, or with an empty name in none. See
+    /// [`Runtime::set_group`](crate::Runtime::set_group).
+    pub fn set_group(&self, node: &str, group: &str) -> Result {
+        self.done(Request::SetGroup { node: node.into(), group: group.into() }).map_err(too_old)
+    }
+
     pub fn pause(&self, node: &str) -> Result {
         self.done(Request::Pause { node: node.into() })
     }
@@ -196,6 +202,18 @@ impl Remote {
 
     fn done(&self, request: Request) -> Result {
         self.opened.caller.ask(&request).map(|_| ())
+    }
+}
+
+/// A runtime that was built with an earlier triq cannot read a request that
+/// came later, and says so in the words of the JSON reader. This says what
+/// that means.
+fn too_old(error: Error) -> Error {
+    match error {
+        Error::Other(reason) if reason.starts_with("unknown variant") => {
+            Error::Mismatch("the runtime was built with an earlier triq, which does not know this request".into())
+        }
+        other => other,
     }
 }
 
@@ -228,5 +246,14 @@ mod tests {
         assert!(!held(None));
         // or with nobody listed as holding it.
         assert!(!held(Some(&ServiceDynamicDetails { nodes: Vec::new() })));
+    }
+
+    #[test]
+    fn a_request_that_an_earlier_triq_does_not_know_is_refused_in_plain_words() {
+        // What a runtime answers that was built before the request existed.
+        let unread = serde_json::from_str::<Request>(r#"{"FromLater":{"node":"x"}}"#).map_err(Error::from).unwrap_err();
+        assert!(matches!(too_old(unread), Error::Mismatch(reason) if reason.contains("earlier triq")));
+        // Any other refusal is passed on as it is.
+        assert_eq!(too_old(Error::Unknown("node".into())), Error::Unknown("node".into()));
     }
 }

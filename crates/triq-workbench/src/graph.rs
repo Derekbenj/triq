@@ -28,6 +28,8 @@ pub struct Card {
 }
 
 /// What a card is the card of.
+// Most cards are a node's, and there are not many cards: boxing the node would save nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     /// One node of one runtime.
@@ -244,6 +246,14 @@ impl Card {
 /// A group that is inside another is written with the outer one first:
 /// `outer/inner`. A group is there for as long as a node says it is in it.
 pub type Groups = BTreeMap<String, String>;
+
+/// Which group each node of a machine is in, by what its runtime reports. A
+/// node that is in none is not listed.
+pub fn groups(inventories: &[Inventory]) -> Groups {
+    let nodes = inventories.iter().flat_map(|inventory| inventory.nodes.iter().map(move |node| (inventory, node)));
+    let grouped = nodes.filter(|(_, node)| !node.group.is_empty());
+    grouped.map(|(inventory, node)| (format!("{}/{}", inventory.runtime, node.name), node.group.clone())).collect()
+}
 
 /// The cards to draw of a machine whose nodes are grouped so.
 ///

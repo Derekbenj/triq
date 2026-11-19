@@ -4,12 +4,13 @@
 use super::{Asking, Rates, Wish, awaits};
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::Request;
-use crate::graph::{self, Groups};
+use crate::graph;
 use eframe::egui::{self, Ui};
 use serde_json::Value;
 use triq::{FactoryInfo, Inventory, NodeInfo, NodeState, Placement, PoolInfo, PortSpec};
 
-/// A node about to be created, as the user is filling it in.
+/// A node about to be created, as the user is filling it in; or a group, of
+/// a kind that its runtime offers as one.
 pub(super) struct Form {
     runtime: String,
     kind: String,
@@ -25,8 +26,10 @@ pub(super) struct Form {
 pub(super) enum Filled {
     /// It is still being filled in.
     Open,
-    /// A node was asked for, `runtime/node`. The form stays, for another of the kind.
-    Created(String),
+    /// Something was asked for: these nodes, each `runtime/node`, which are
+    /// in a group of this name if the kind is a group. The form stays, for
+    /// another of the kind.
+    Created { nodes: Vec<String>, group: Option<String> },
     /// It is done with: closed, or its runtime or factory went away.
     Closed,
 }
@@ -47,9 +50,13 @@ impl Form {
 
     /// The first name of the form `kind1`, `kind2`, ... that is free in that
     /// runtime, and that this form has not asked for a node by: a node that
-    /// was asked for a moment ago may not be reported yet.
+    /// was asked for a moment ago may not be reported yet. The nodes of a
+    /// group that was created by a name are called `name.node`.
     fn free(&self, inventory: &Inventory) -> String {
-        let taken = |name: &String| inventory.nodes.iter().any(|node| node.name == *name) || self.made.contains(name);
+        let named = |node: &NodeInfo, name: &str| {
+            node.name.strip_prefix(name).is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        };
+        let taken = |name: &String| inventory.nodes.iter().any(|node| named(node, name)) || self.made.contains(name);
         (1..).map(|number| format!("{}{number}", self.kind)).find(|name| !taken(name)).unwrap_or_default()
     }
 
@@ -59,13 +66,20 @@ impl Form {
             Some((inventory, factory))
         });
         let Some((inventory, factory)) = offered else { return Filled::Closed };
-        ui.heading(format!("Create a {} node", self.kind));
+        let what = if factory.group.is_some() { "group" } else { "node" };
+        ui.heading(format!("Create a {} {what}", self.kind));
         ui.weak(format!("in {}", self.runtime));
         ui.add_space(8.0);
 
         let name = ui.label("Name");
         ui.text_edit_singleline(&mut self.name).labelled_by(name.id);
-        if factory.local {
+        if let Some(group) = &factory.group {
+            // Where its nodes run and how they are set is the kind's to say.
+            ui.weak("Its nodes are created together, wired to each other, in a group of this name:");
+            for node in &group.nodes {
+                ui.label(format!("{}, a {}", node.name, node.kind));
+            }
+        } else if factory.local {
             ui.weak("The application that offers this kind runs its nodes itself.");
         } else {
             ui.label("Runs on");
@@ -77,8 +91,10 @@ impl Form {
                 }
             });
         }
-        ui.label("Settings");
-        ui.add(egui::TextEdit::multiline(&mut self.settings).code_editor().desired_rows(4));
+        if factory.group.is_none() {
+            ui.label("Settings");
+            ui.add(egui::TextEdit::multiline(&mut self.settings).code_editor().desired_rows(4));
+        }
         let params = serde_json::from_str::<Value>(&self.settings);
         if let Err(error) = &params {
             ui.colored_label(ui.visuals().error_fg_color, format!("Not valid JSON: {error}"));
@@ -97,7 +113,12 @@ impl Form {
             {
                 let placement = self.pool.as_deref().map_or(Placement::Dedicated, Placement::pool);
                 let (runtime, kind, name) = (self.runtime.clone(), self.kind.clone(), self.name.clone());
-                filled = Filled::Created(format!("{runtime}/{name}"));
+                // One node by that name; or the nodes of a group, which are named after it.
+                let nodes = match &factory.group {
+                    Some(group) => group.nodes.iter().map(|node| format!("{runtime}/{}", node.named(&name))).collect(),
+                    None => vec![format!("{runtime}/{name}")],
+                };
+                filled = Filled::Created { nodes, group: factory.group.is_some().then(|| name.clone()) };
                 asking.ask(Request::Spawn { runtime, kind, name: name.clone(), placement, params });
                 // The form stays as it is, for another node of the kind, under the next name that is free.
                 self.made.push(name);
@@ -138,6 +159,9 @@ pub(super) fn node_details(
         fact("Runs on", runs_on(&node.placement, &home.pools));
         if !node.kind.is_empty() {
             fact("Kind", node.kind.clone());
+        }
+        if !node.group.is_empty() {
+            fact("Group", node.group.clone());
         }
         fact("State", state(&node.state));
         if node.placement.is_some() {
@@ -333,31 +357,19 @@ pub(super) fn actions(ui: &mut Ui, asking: &mut Asking<'_>, runtime: &str, node:
 }
 
 /// The changes a draft holds: what is to be asked of the runtimes, in the
-/// order it will be, and which nodes are to change group. Each can be taken back.
-pub(super) fn held_back(ui: &mut Ui, draft: &mut Draft, real: &[Inventory], groups: &Groups) {
+/// order it will be. Each can be taken back.
+pub(super) fn held_back(ui: &mut Ui, draft: &mut Draft, real: &[Inventory]) {
     ui.heading("Draft");
-    let (changes, regrouped) = (draft.changes(real), draft.regrouped(groups));
-    if changes.is_empty() && regrouped.is_empty() {
+    let changes = draft.changes(real);
+    if changes.is_empty() {
         ui.weak("What is changed in the graph and here is held back, until the draft is applied.");
     }
-    let take_back = |ui: &mut Ui| ui.small_button("×").on_hover_text("Take this change back").clicked();
     for (number, change) in changes.iter().enumerate() {
         ui.horizontal_wrapped(|ui| {
-            if take_back(ui) {
-                draft.take_back(change);
+            if ui.small_button("×").on_hover_text("Take this change back").clicked() {
+                draft.take_back(change, real);
             }
             ui.label(format!("{}. {change}", number + 1));
-        });
-    }
-    for (node, group) in &regrouped {
-        ui.horizontal_wrapped(|ui| {
-            if take_back(ui) {
-                draft.leave(node);
-            }
-            ui.label(match group {
-                Some(group) => format!("put {node} in group {group}"),
-                None => format!("take {node} out of its group"),
-            });
         });
     }
 }
