@@ -156,7 +156,7 @@ fn a_card_is_where_it_was_put_when_its_program_runs_again() -> triq::Result {
     };
     let place = |harness: &Bench<'_>| {
         let mut cards = harness.state().graph().nodes_pos();
-        cards.find(|(_, card)| card.runtime == robot && card.node.name == "imu").map(|found| found.0)
+        cards.find(|(_, card)| card.runtime() == Some(robot.as_str()) && card.name() == "imu").map(|found| found.0)
     };
     let (runtime, imu) = start()?;
     let mut harness = open()?;
@@ -209,7 +209,8 @@ fn the_colour_chosen_for_a_runtime_is_its_colour_in_the_next_run_too() -> triq::
     let robot = format!("w{}-painted", std::process::id());
     let runtime = Runtime::new(&robot)?;
     let _imu: ImuPorts = runtime.attach("imu")?;
-    let listed = |harness: &Bench<'_>| harness.state().graph().nodes().any(|card| card.runtime == robot);
+    let listed =
+        |harness: &Bench<'_>| harness.state().graph().nodes().any(|card| card.runtime() == Some(robot.as_str()));
     let mut harness = open()?;
     assert!(until(&mut harness, listed), "its card appears");
 

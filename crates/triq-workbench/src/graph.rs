@@ -1,50 +1,275 @@
-//! From what the runtimes report to what is drawn: one card per node, one wire
-//! per live connection. Nothing here talks to a runtime or to the screen.
+//! From what the runtimes report to what is drawn: cards with pins down
+//! their sides, and wires between the pins. Nothing here talks to a runtime
+//! or to the screen.
+//!
+//! A card is a node, with a pin for each of its ports. Nodes can be put
+//! together in a group, and a group is drawn as one card: its pins are the
+//! ports of its nodes that are connected to nothing, or to something outside
+//! the group. The inside of a group is a drawing of its own: of its nodes,
+//! and of two more cards that stand for the outside. Whatever the group hears
+//! from outside comes from the one, and whatever it sends there goes to the other.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
 use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use triq::{Direction, Inventory, NodeInfo, PortSpec};
+use triq::{Direction, InputInfo, Inventory, NodeInfo, OutputInfo, PortSpec};
 
-/// One node of one runtime, as drawn.
+/// One box on the drawing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Card {
+    pub kind: Kind,
+    /// The pins down its left side, where wires arrive.
+    pub left: Vec<Pin>,
+    /// The pins down its right side, where wires leave.
+    pub right: Vec<Pin>,
+}
+
+/// What a card is the card of.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Kind {
+    /// One node of one runtime.
+    Node { runtime: String, node: NodeInfo },
+    /// The nodes of a group, each with its runtime, drawn as one card.
+    Group { name: String, members: Vec<(String, NodeInfo)> },
+    /// Inside a group: the card that all it hears from outside comes from.
+    Entry { group: String },
+    /// Inside a group: the card that all it sends to the outside goes to.
+    Exit { group: String },
+}
+
+/// A port of a node, as a pin: on the card of its node, on the card of the
+/// group its node is in, or inside that group on a card that stands for the outside.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pin {
     pub runtime: String,
-    pub node: NodeInfo,
+    pub node: String,
+    pub port: Port,
+}
+
+/// What a runtime reports of a port.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Port {
+    Input(InputInfo),
+    Output(OutputInfo),
+}
+
+impl Pin {
+    pub fn spec(&self) -> &PortSpec {
+        match &self.port {
+            Port::Input(input) => &input.port,
+            Port::Output(output) => &output.port,
+        }
+    }
+
+    /// What the port is called: `runtime/node/port`.
+    pub fn name(&self) -> String {
+        format!("{}/{}/{}", self.runtime, self.node, self.spec().name)
+    }
+
+    /// `runtime/node`: the node it is a port of.
+    pub fn owner(&self) -> String {
+        format!("{}/{}", self.runtime, self.node)
+    }
+
+    /// The outputs an input is connected to. An output has none.
+    fn heard(&self) -> impl Iterator<Item = &str> {
+        let sources = match &self.port {
+            Port::Input(input) => &input.sources[..],
+            Port::Output(_) => &[],
+        };
+        sources.iter().map(|source| source.output.as_str())
+    }
+
+    /// Whether a wire runs from this pin to another: from an output to an
+    /// input that is connected to it; or, inside a group, between a port and
+    /// the pin that stands for it on a card for the outside.
+    fn feeds(&self, to: &Pin) -> bool {
+        let name = self.name();
+        name == to.name() || to.heard().any(|output| output == name)
+    }
+}
+
+/// What the card of a group is called across syncs. It begins with a slash,
+/// which no `runtime/node` does.
+pub fn group_key(name: &str) -> String {
+    format!("/{name}")
+}
+
+/// What the three cards of a group are called: its own, and inside it the
+/// two that stand for the outside.
+pub fn group_keys(name: &str) -> [String; 3] {
+    [group_key(name), format!("/{name}/in"), format!("/{name}/out")]
 }
 
 impl Card {
-    /// `runtime/node`: what identifies a card across syncs.
+    /// The card of a node: a pin for each of its ports.
+    pub fn of(runtime: &str, node: &NodeInfo) -> Self {
+        let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
+        Self {
+            kind: Kind::Node { runtime: runtime.to_owned(), node: node.clone() },
+            left: node.inputs.iter().cloned().map(Port::Input).map(pin).collect(),
+            right: node.outputs.iter().cloned().map(Port::Output).map(pin).collect(),
+        }
+    }
+
+    /// What identifies a card across syncs: `runtime/node` for a node.
     pub fn key(&self) -> String {
-        format!("{}/{}", self.runtime, self.node.name)
+        match &self.kind {
+            Kind::Node { runtime, node } => format!("{runtime}/{}", node.name),
+            Kind::Group { name, .. } => group_key(name),
+            Kind::Entry { group } => group_keys(group)[1].clone(),
+            Kind::Exit { group } => group_keys(group)[2].clone(),
+        }
     }
 
-    /// `runtime/node/port` of an output.
-    pub fn output(&self, index: usize) -> &str {
-        &self.node.outputs[index].service
+    /// What is written at the top of the card.
+    pub fn name(&self) -> &str {
+        match &self.kind {
+            Kind::Node { node, .. } => &node.name,
+            Kind::Group { name, .. } => name,
+            Kind::Entry { .. } => "Group Input",
+            Kind::Exit { .. } => "Group Output",
+        }
     }
 
-    /// `runtime/node/port` of an input.
+    /// The node, if this is the card of one.
+    pub fn node(&self) -> Option<&NodeInfo> {
+        match &self.kind {
+            Kind::Node { node, .. } => Some(node),
+            _ => None,
+        }
+    }
+
+    /// The runtime of a node's card; and of a group's, if all its nodes run in one.
+    pub fn runtime(&self) -> Option<&str> {
+        match &self.kind {
+            Kind::Node { runtime, .. } => Some(runtime),
+            Kind::Group { members, .. } => {
+                let (first, _) = members.first()?;
+                members.iter().all(|(runtime, _)| runtime == first).then_some(first)
+            }
+            Kind::Entry { .. } | Kind::Exit { .. } => None,
+        }
+    }
+
+    /// `runtime/node/port` of the port that a pin on the right stands for.
+    pub fn output(&self, index: usize) -> String {
+        self.right[index].name()
+    }
+
+    /// `runtime/node/port` of the port that a pin on the left stands for.
     pub fn input(&self, index: usize) -> String {
-        format!("{}/{}", self.key(), self.node.inputs[index].port.name)
+        self.left[index].name()
     }
 
     /// Outputs an input wants but cannot hear: they do not exist yet, or their program stopped.
     pub fn waiting(&self, index: usize) -> Vec<String> {
-        let sources = self.node.inputs[index].sources.iter();
-        sources.filter(|source| !source.connected).map(|source| source.output.clone()).collect()
+        let Port::Input(input) = &self.left[index].port else { return Vec::new() };
+        input.sources.iter().filter(|source| !source.connected).map(|source| source.output.clone()).collect()
     }
 
-    /// Whether any output of this card is wanted by an input of `other`.
+    /// What is written beside a pin: `port: Type` on the card of its node,
+    /// and `node.port: Type` on a card that shows the ports of several.
+    pub fn written(&self, pin: &Pin) -> String {
+        let spec = pin.spec();
+        match &self.kind {
+            Kind::Node { .. } => format!("{}: {}", spec.name, spec.message),
+            _ => format!("{}.{}: {}", pin.node, spec.name, spec.message),
+        }
+    }
+
+    /// Whether a wire runs from this card to another.
     fn feeds(&self, other: &Card) -> bool {
-        let wanted = other.node.inputs.iter().flat_map(|input| &input.sources);
-        wanted.into_iter().any(|source| self.node.outputs.iter().any(|output| output.service == source.output))
+        other.left.iter().any(|to| self.right.iter().any(|from| from.feeds(to)))
     }
 
-    fn ports(&self) -> impl Iterator<Item = &PortSpec> {
-        self.node.inputs.iter().map(|input| &input.port).chain(self.node.outputs.iter().map(|output| &output.port))
+    /// Whether another card has the same pins: the same ports of the same nodes.
+    fn same_pins(&self, other: &Card) -> bool {
+        fn ports(card: &Card) -> impl Iterator<Item = (&String, &String, &PortSpec)> {
+            card.left.iter().chain(&card.right).map(|pin| (&pin.runtime, &pin.node, pin.spec()))
+        }
+        [self.left.len(), self.right.len()] == [other.left.len(), other.right.len()] && ports(self).eq(ports(other))
     }
+}
+
+/// Which group each node is in, by `runtime/node`. A node has room for one.
+pub type Groups = BTreeMap<String, String>;
+
+/// The cards to draw of a machine whose nodes are grouped so.
+///
+/// Outside every group, with `inside` as `None`: a card for each node that is
+/// in no group, and one for each group. Inside a group: a card for each of
+/// its nodes, and the two that stand for the outside.
+///
+/// A group shows the ports of its nodes that are connected to nothing, or to
+/// something outside it. What is connected only within the group is its own affair.
+pub fn cards(inventories: &[Inventory], groups: &Groups, inside: Option<&str>) -> Vec<Card> {
+    let nodes = || {
+        let runtimes = inventories.iter();
+        runtimes.flat_map(|inventory| inventory.nodes.iter().map(move |node| (inventory.runtime.as_str(), node)))
+    };
+    let group_of = |runtime: &str, node: &str| groups.get(&format!("{runtime}/{node}")).map(String::as_str);
+    // The nodes of a group, in order of name: so its pins are, in whatever order the runtimes are listed.
+    let members = |group: &str| -> Vec<(&str, &NodeInfo)> {
+        let mut members: Vec<_> =
+            nodes().filter(|(runtime, node)| group_of(runtime, &node.name) == Some(group)).collect();
+        members.sort_by_key(|(runtime, node)| (*runtime, &node.name));
+        members
+    };
+    // The group of the node that an output belongs to.
+    let sent_from = |output: &str| {
+        let mut parts = output.split('/');
+        group_of(parts.next()?, parts.next()?)
+    };
+    // For each output, the group of every node that hears it.
+    let mut heard_in: HashMap<&str, Vec<Option<&str>>> = HashMap::new();
+    for (runtime, node) in nodes() {
+        for source in node.inputs.iter().flat_map(|input| &input.sources) {
+            heard_in.entry(&source.output).or_default().push(group_of(runtime, &node.name));
+        }
+    }
+    // The ports a group shows: on the left what it hears, on the right what it sends.
+    let shown = |group: &str| {
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for (runtime, node) in members(group) {
+            let pin = |port| Pin { runtime: runtime.to_owned(), node: node.name.clone(), port };
+            for input in &node.inputs {
+                let from_outside = input.sources.iter().any(|source| sent_from(&source.output) != Some(group));
+                if input.sources.is_empty() || from_outside {
+                    left.push(pin(Port::Input(input.clone())));
+                }
+            }
+            for output in &node.outputs {
+                let heard = heard_in.get(output.service.as_str());
+                if heard.is_none_or(|heard| heard.iter().any(|by| *by != Some(group))) {
+                    right.push(pin(Port::Output(output.clone())));
+                }
+            }
+        }
+        (left, right)
+    };
+
+    let Some(group) = inside else {
+        let alone = nodes().filter(|(runtime, node)| group_of(runtime, &node.name).is_none());
+        let mut cards: Vec<Card> = alone.map(|(runtime, node)| Card::of(runtime, node)).collect();
+        let named: BTreeSet<&str> = nodes().filter_map(|(runtime, node)| group_of(runtime, &node.name)).collect();
+        for name in named {
+            let members = members(name).into_iter().map(|(runtime, node)| (runtime.to_owned(), node.clone())).collect();
+            let (left, right) = shown(name);
+            cards.push(Card { kind: Kind::Group { name: name.to_owned(), members }, left, right });
+        }
+        return cards;
+    };
+    let mut cards: Vec<Card> = members(group).into_iter().map(|(runtime, node)| Card::of(runtime, node)).collect();
+    let (heard, sent) = shown(group);
+    if !heard.is_empty() {
+        cards.push(Card { kind: Kind::Entry { group: group.to_owned() }, left: Vec::new(), right: heard });
+    }
+    if !sent.is_empty() {
+        cards.push(Card { kind: Kind::Exit { group: group.to_owned() }, left: sent, right: Vec::new() });
+    }
+    cards
 }
 
 /// Where a card is on the drawing, and when it was last there, in seconds since 1970.
@@ -54,8 +279,8 @@ pub struct Place {
     pub seen: u64,
 }
 
-/// Where cards are and were, by `runtime/node`. A node is known by what it is
-/// called: when a program runs again, its cards are where they were.
+/// Where cards are and were, by what they are called. A node is known by its
+/// name: when a program runs again, its cards are where they were.
 pub type Places = BTreeMap<String, Place>;
 
 /// How many cards are remembered from one run of the workbench to the next.
@@ -70,45 +295,47 @@ pub fn remembered(places: &Places) -> Places {
     newest.into_iter().take(REMEMBERED).map(|(key, place)| (key.clone(), *place)).collect()
 }
 
-/// Make the drawing match the machine. Cards keep the places the user gave them.
+/// Make the drawing match the machine, a card for every node. Cards keep the places the user gave them.
 pub fn sync(snarl: &mut Snarl<Card>, inventories: &[Inventory]) {
     sync_with(snarl, inventories, &mut Places::new(), 0);
 }
 
-/// Make the drawing match the machine, with a memory of where cards were: a
-/// card that is new to the drawing goes where `places` has it, if it was
-/// there before. `places` is brought up to date with where every card is at
-/// `now`, in seconds since 1970.
+/// Make the drawing match the machine, a card for every node, with a memory
+/// of where cards were: see [`show`].
 pub fn sync_with(snarl: &mut Snarl<Card>, inventories: &[Inventory], places: &mut Places, now: u64) {
+    show(snarl, cards(inventories, &Groups::new(), None), places, now);
+}
+
+/// Make the drawing show these cards, and the wires between them. A card that
+/// is new to the drawing goes where `places` has it, if it was there before.
+/// `places` is brought up to date with where every card is at `now`, in
+/// seconds since 1970.
+pub fn show(snarl: &mut Snarl<Card>, cards: Vec<Card>, places: &mut Places, now: u64) {
     // Where every card is, noted before any of them goes.
     for (place, card) in snarl.nodes_pos() {
         places.insert(card.key(), Place { at: [place.x, place.y], seen: now });
     }
-    let mut reported: BTreeMap<String, Card> = inventories
-        .iter()
-        .flat_map(|inventory| {
-            inventory.nodes.iter().map(|node| Card { runtime: inventory.runtime.clone(), node: node.clone() })
-        })
-        .map(|card| (card.key(), card))
-        .collect();
+    let mut wanted: BTreeMap<String, Card> = cards.into_iter().map(|card| (card.key(), card)).collect();
 
-    // A card goes when its node is gone, or when a different node took its name.
+    // A card goes when what it stands for is gone, or when it no longer has the pins it had:
+    // a different node took its name, or a group came to show other ports.
     let stale: Vec<_> = snarl
         .nodes_ids_data()
-        .filter(|(_, drawn)| reported.get(&drawn.value.key()).is_none_or(|card| !card.ports().eq(drawn.value.ports())))
+        .filter(|(_, drawn)| wanted.get(&drawn.value.key()).is_none_or(|card| !card.same_pins(&drawn.value)))
         .map(|(id, _)| id)
         .collect();
     for id in stale {
         snarl.remove_node(id);
     }
     for (_, drawn) in snarl.nodes_ids_data_mut() {
-        if let Some(card) = reported.remove(&drawn.value.key()) {
+        if let Some(card) = wanted.remove(&drawn.value.key()) {
             drawn.value = card;
         }
     }
 
-    // What is left is new.
-    for card in sources_first(reported.into_values().collect()) {
+    // What is left is new. Cards that were somewhere before go there first, so that the others are laid out around them.
+    let (back, fresh): (Vec<Card>, Vec<Card>) = wanted.into_values().partition(|card| places.contains_key(&card.key()));
+    for card in back.into_iter().chain(sources_first(fresh)) {
         let place = match places.get(&card.key()) {
             Some(Place { at: [x, y], .. }) => pos2(*x, *y),
             None => place(&snarl.nodes_pos().collect::<Vec<_>>(), &card),
@@ -117,28 +344,27 @@ pub fn sync_with(snarl: &mut Snarl<Card>, inventories: &[Inventory], places: &mu
         snarl.insert_node(place, card);
     }
 
-    // One wire per connection whose output is on the drawing.
-    let outputs: HashMap<String, OutPinId> = snarl
-        .nodes_ids_data()
-        .flat_map(|(node, drawn)| {
-            let outputs = drawn.value.node.outputs.iter().enumerate();
-            outputs.map(move |(output, info)| (info.service.clone(), OutPinId { node, output }))
-        })
-        .collect();
-    let wanted: HashSet<(OutPinId, InPinId)> = snarl
-        .nodes_ids_data()
-        .flat_map(|(node, drawn)| {
-            let inputs = drawn.value.node.inputs.iter().enumerate();
-            inputs
-                .flat_map(move |(input, info)| info.sources.iter().map(move |source| (source, InPinId { node, input })))
-        })
-        .filter_map(|(source, to)| Some((*outputs.get(&source.output)?, to)))
-        .collect();
+    // A wire for every connection whose two ends are on the drawing. Inside a group, a wire
+    // also joins each port that leads outside to the pin that stands for it on a card for the outside.
+    let mut leaving: HashMap<String, Vec<OutPinId>> = HashMap::new();
+    for (node, drawn) in snarl.nodes_ids_data() {
+        for (output, pin) in drawn.value.right.iter().enumerate() {
+            leaving.entry(pin.name()).or_default().push(OutPinId { node, output });
+        }
+    }
+    let mut wires: HashSet<(OutPinId, InPinId)> = HashSet::new();
+    for (node, drawn) in snarl.nodes_ids_data() {
+        for (input, pin) in drawn.value.left.iter().enumerate() {
+            let own = pin.name();
+            let from = pin.heard().chain([own.as_str()]).filter_map(|name| leaving.get(name)).flatten();
+            wires.extend(from.map(|from| (*from, InPinId { node, input })));
+        }
+    }
     let drawn: HashSet<(OutPinId, InPinId)> = snarl.wires().collect();
-    for (from, to) in drawn.difference(&wanted) {
+    for (from, to) in drawn.difference(&wires) {
         snarl.disconnect(*from, *to);
     }
-    for (from, to) in wanted.difference(&drawn) {
+    for (from, to) in wires.difference(&drawn) {
         snarl.connect(*from, *to);
     }
 }
@@ -199,10 +425,15 @@ fn sources_first(mut cards: Vec<Card>) -> Vec<Card> {
 }
 
 /// Where a card goes among those already placed: right of every card that
-/// feeds it, below whatever is already there.
+/// feeds it, below whatever is already there. The card that stands for what
+/// comes from outside a group goes left of all it feeds.
 fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
     let feeders = placed.iter().filter(|(_, other)| other.feeds(card));
-    let x = feeders.map(|(place, other)| place.x + size(other).x + GAP.x).fold(LEFT, f32::max);
+    let mut x = feeders.map(|(place, other)| place.x + size(other).x + GAP.x).fold(LEFT, f32::max);
+    if matches!(card.kind, Kind::Entry { .. }) {
+        let fed = placed.iter().filter(|(_, other)| card.feeds(other));
+        x = fed.map(|(place, _)| place.x - size(card).x - GAP.x).fold(f32::INFINITY, f32::min).min(x);
+    }
     let beside = placed.iter().filter(|(place, other)| place.x < x + size(card).x && x < place.x + size(other).x);
     let y = beside.map(|(place, other)| place.y + size(other).y + GAP.y).fold(TOP, f32::max);
     pos2(x, y)
@@ -210,16 +441,14 @@ fn place(placed: &[(Pos2, &Card)], card: &Card) -> Pos2 {
 
 /// Roughly how large a card is drawn; used to lay cards out and to frame the view.
 pub fn size(card: &Card) -> Vec2 {
-    // A letter is about this wide. A port is written `name: Type`, with room for its rate beside it.
+    // A letter is about this wide. Beside what is written by a pin there is room for its rate.
     const LETTER: f32 = 7.5;
-    let written = |port: &PortSpec| LETTER * (port.name.len() + 2 + port.message.to_string().len()) as f32 + ASIDE;
-    let widest = |ports: &mut dyn Iterator<Item = &PortSpec>| ports.map(written).fold(0.0, f32::max);
-    let inputs = widest(&mut card.node.inputs.iter().map(|input| &input.port));
-    let outputs = widest(&mut card.node.outputs.iter().map(|output| &output.port));
+    let widest =
+        |pins: &[Pin]| pins.iter().map(|pin| LETTER * card.written(pin).len() as f32 + ASIDE).fold(0.0, f32::max);
     // The header holds the name, the state and a button.
-    let header = LETTER * (card.node.name.len() + 16) as f32;
-    let rows = card.node.inputs.len().max(card.node.outputs.len());
-    vec2((inputs + outputs + 40.0).max(header), 46.0 + (ROW + 4.0) * rows as f32)
+    let header = LETTER * (card.name().len() + 16) as f32;
+    let rows = card.left.len().max(card.right.len());
+    vec2((widest(&card.left) + widest(&card.right) + 40.0).max(header), 46.0 + (ROW + 4.0) * rows as f32)
 }
 
 /// One reading of a counter of samples.

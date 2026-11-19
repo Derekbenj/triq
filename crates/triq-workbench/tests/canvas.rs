@@ -62,7 +62,7 @@ fn the_graph_is_handled_like_a_user_would() -> triq::Result {
 
     // Drag the card by the text of one of its ports.
     let place = |harness: &Bench<'_>| {
-        harness.state().graph().nodes_pos().find(|(_, card)| card.node.name == "smoother").expect("its card").0
+        harness.state().graph().nodes_pos().find(|(_, card)| card.name() == "smoother").expect("its card").0
     };
     let (port, was) = (seen(&harness, &text(&harness, "raw: Pose")), place(&harness));
     harness.hover_at(port);

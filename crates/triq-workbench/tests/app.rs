@@ -30,7 +30,7 @@ fn press(harness: &mut Bench<'_>, label: &str) {
 /// The wires that end in one of `runtimes`.
 fn wires(harness: &Bench<'_>, runtimes: [&str; 2]) -> usize {
     let graph = harness.state().graph();
-    graph.wires().filter(|(_, to)| runtimes.contains(&graph[to.node].runtime.as_str())).count()
+    graph.wires().filter(|(_, to)| runtimes.contains(&graph[to.node].runtime().unwrap_or_default())).count()
 }
 
 fn node(runtime: &triq::Runtime, name: &str) -> Option<NodeInfo> {
@@ -39,7 +39,7 @@ fn node(runtime: &triq::Runtime, name: &str) -> Option<NodeInfo> {
 
 fn output(snarl: &Snarl<Card>, name: &str) -> OutPinId {
     let found = snarl.nodes_ids_data().find_map(|(node, drawn)| {
-        let output = drawn.value.node.outputs.iter().position(|output| output.service == name)?;
+        let output = (0..drawn.value.right.len()).find(|output| drawn.value.output(*output) == name)?;
         Some(OutPinId { node, output })
     });
     found.unwrap_or_else(|| panic!("no output {name}"))
@@ -47,7 +47,7 @@ fn output(snarl: &Snarl<Card>, name: &str) -> OutPinId {
 
 fn input(snarl: &Snarl<Card>, name: &str) -> InPinId {
     let found = snarl.nodes_ids_data().find_map(|(node, drawn)| {
-        let input = (0..drawn.value.node.inputs.len()).find(|input| drawn.value.input(*input) == name)?;
+        let input = (0..drawn.value.left.len()).find(|input| drawn.value.input(*input) == name)?;
         Some(InPinId { node, input })
     });
     found.unwrap_or_else(|| panic!("no input {name}"))
@@ -134,7 +134,7 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
 
     // The new node was placed before it was wired; tidying moves it right of what feeds it.
     let x = |harness: &Bench<'_>, name: &str| {
-        harness.state().graph().nodes_pos().find(|(_, card)| card.node.name == name).unwrap().0.x
+        harness.state().graph().nodes_pos().find(|(_, card)| card.name() == name).unwrap().0.x
     };
     assert!(x(&harness, "filter1") <= x(&harness, "imu"));
     click(&mut harness, "Tidy");

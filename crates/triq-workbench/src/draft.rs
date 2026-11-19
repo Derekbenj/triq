@@ -9,7 +9,12 @@
 //! more: one change for each thing that differs. A wire that is drawn and
 //! taken away again leaves nothing behind. Nothing here talks to a runtime or
 //! to the screen.
+//!
+//! Which group a node is in is drafted too. That is not asked of any
+//! runtime: groups are how the workbench draws the machine. But while
+//! drafting they are held back with the rest, and made when the draft is applied.
 use crate::feed::Request;
+use crate::graph::{Groups, group_key};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use triq::{Direction, FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, OutputInfo, Placement, SourceInfo};
@@ -18,6 +23,8 @@ use triq::{Direction, FactoryInfo, InputInfo, Inventory, NodeInfo, NodeState, Ou
 pub struct Draft {
     /// In the order they were written down. No two are about the same thing.
     changes: Vec<Request>,
+    /// The group that a node is to be in, by `runtime/node`: `None` for none.
+    groups: BTreeMap<String, Option<String>>,
 }
 
 /// What a draft does to something on the drawing.
@@ -146,9 +153,62 @@ impl Draft {
         drafted
     }
 
-    /// What the draft does to each card and wire, for the drawing to tell them apart by.
-    pub fn marks(&self, real: &[Inventory]) -> Marks {
+    /// Put a node, by `runtime/node`, in a group, or with `None` take it out
+    /// of the group it is in. `real` is which group each node is in: a node
+    /// that is put back where it is leaves nothing to do.
+    pub fn group(&mut self, node: String, group: Option<String>, real: &Groups) {
+        if real.get(&node) == group.as_ref() {
+            self.groups.remove(&node);
+        } else {
+            self.groups.insert(node, group);
+        }
+    }
+
+    /// The nodes that are to change group, each with the group it is to be in.
+    pub fn regrouped(&self, real: &Groups) -> Vec<(String, Option<String>)> {
+        let differs = self.groups.iter().filter(|(node, group)| real.get(*node) != group.as_ref());
+        differs.map(|(node, group)| (node.clone(), group.clone())).collect()
+    }
+
+    /// Which group each node would be in.
+    pub fn grouping(&self, real: &Groups) -> Groups {
+        let mut drafted = real.clone();
+        for (node, group) in self.regrouped(real) {
+            match group {
+                Some(group) => _ = drafted.insert(node, group),
+                None => _ = drafted.remove(&node),
+            }
+        }
+        drafted
+    }
+
+    /// Leave a node in the group it is in, after all.
+    pub fn leave(&mut self, node: &str) {
+        self.groups.remove(node);
+    }
+
+    /// Call a group by another name, wherever a node is to be put in it.
+    pub fn rename(&mut self, group: &str, name: &str) {
+        for drafted in self.groups.values_mut().flatten().filter(|drafted| *drafted == group) {
+            *drafted = name.to_owned();
+        }
+    }
+
+    /// What the draft does to each card and wire, for the drawing to tell
+    /// them apart by. `groups` is which group each node is in.
+    pub fn marks(&self, real: &[Inventory], groups: &Groups) -> Marks {
         let mut marks = Marks::default();
+        for (node, group) in self.regrouped(groups) {
+            // A group that no node is in yet is new. One that gains or loses a node is changed.
+            let new = |group: &String| !groups.values().any(|real| real == group);
+            if let Some(group) = &group {
+                marks.cards.insert(group_key(group), if new(group) { Mark::New } else { Mark::Changed });
+            }
+            if let Some(left) = groups.get(&node) {
+                marks.cards.entry(group_key(left)).or_insert(Mark::Changed);
+            }
+            marks.cards.insert(node, Mark::Changed);
+        }
         for change in self.changes(real) {
             match change {
                 Request::Connect { from, to } => _ = marks.wires.insert((from, to), Mark::New),

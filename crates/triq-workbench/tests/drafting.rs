@@ -25,7 +25,7 @@ fn press(harness: &mut Bench<'_>, label: &str) {
 
 fn output(snarl: &Snarl<Card>, name: &str) -> OutPinId {
     let found = snarl.nodes_ids_data().find_map(|(node, drawn)| {
-        let output = drawn.value.node.outputs.iter().position(|output| output.service == name)?;
+        let output = (0..drawn.value.right.len()).find(|output| drawn.value.output(*output) == name)?;
         Some(OutPinId { node, output })
     });
     found.unwrap_or_else(|| panic!("no output {name}"))
@@ -33,7 +33,7 @@ fn output(snarl: &Snarl<Card>, name: &str) -> OutPinId {
 
 fn input(snarl: &Snarl<Card>, name: &str) -> InPinId {
     let found = snarl.nodes_ids_data().find_map(|(node, drawn)| {
-        let input = (0..drawn.value.node.inputs.len()).find(|input| drawn.value.input(*input) == name)?;
+        let input = (0..drawn.value.left.len()).find(|input| drawn.value.input(*input) == name)?;
         Some(InPinId { node, input })
     });
     found.unwrap_or_else(|| panic!("no input {name}"))

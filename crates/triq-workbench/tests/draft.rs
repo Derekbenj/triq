@@ -8,6 +8,7 @@ use serde_json::json;
 use triq::{Direction, Inventory, NodeInfo, NodeState, Placement};
 use triq_workbench::draft::{Draft, Mark};
 use triq_workbench::feed::Request;
+use triq_workbench::graph::Groups;
 
 fn connect(from: &str, to: &str) -> Request {
     Request::Connect { from: from.to_owned(), to: to.to_owned() }
@@ -130,7 +131,7 @@ fn the_machine_is_shown_as_it_would_be_with_the_changes_made() -> triq::Result {
     assert!(self::node(&drafted, &robot, "imu").is_some(), "a node that is to go is shown until it has gone");
 
     // What the draft does to each card and wire, for the drawing to tell them apart by.
-    let marks = draft.marks(&real);
+    let marks = draft.marks(&real, &Groups::new());
     let card = |node: &str| marks.card(&format!("{robot}/{node}"));
     assert_eq!(
         [card("second"), card("smoother"), card("imu")],
@@ -183,4 +184,43 @@ fn a_node_that_was_only_drafted_is_taken_back_with_all_that_was_drafted_for_it()
     assert_eq!(draft.changes(&real).len(), 2);
     assert!(node(&draft.over(&real), &robot, "third").is_none());
     Ok(())
+}
+
+#[test]
+fn which_group_a_node_is_in_is_drafted_with_the_rest() {
+    let real: Groups = [("robot/imu", "sensing"), ("robot/smoother", "sensing")]
+        .map(|(node, group)| (node.to_owned(), group.to_owned()))
+        .into();
+    let mut draft = Draft::default();
+    assert_eq!((draft.grouping(&real), draft.regrouped(&real)), (real.clone(), Vec::new()));
+
+    // Two nodes are put in a group that is new, and one is taken out of the group it is in.
+    let put = |draft: &mut Draft, node: &str, group: Option<&str>| {
+        draft.group(node.to_owned(), group.map(str::to_owned), &real)
+    };
+    put(&mut draft, "desk/viewer", Some("looking"));
+    put(&mut draft, "robot/smoother", Some("looking"));
+    put(&mut draft, "robot/imu", None);
+    let drafted = draft.grouping(&real);
+    assert_eq!(drafted.len(), 2);
+    assert_eq!(
+        (drafted.get("desk/viewer"), drafted.get("robot/smoother")),
+        (Some(&"looking".to_owned()), Some(&"looking".to_owned()))
+    );
+    assert_eq!(draft.regrouped(&real).len(), 3);
+    // The groups themselves are as they were.
+    assert_eq!(real.len(), 2);
+
+    // The drawing tells them apart: the group that is new, the one that loses its nodes, and the nodes that move.
+    let marks = draft.marks(&[], &real);
+    assert_eq!([marks.card("/looking"), marks.card("/sensing")], [Some(Mark::New), Some(Mark::Changed)]);
+    assert_eq!([marks.card("robot/imu"), marks.card("desk/viewer")], [Some(Mark::Changed), Some(Mark::Changed)]);
+
+    // A node that is put back where it is leaves nothing to do, and so does one that is left where it is after all.
+    put(&mut draft, "robot/imu", Some("sensing"));
+    draft.leave("desk/viewer");
+    assert_eq!(draft.regrouped(&real), [("robot/smoother".to_owned(), Some("looking".to_owned()))]);
+    // The group is called something else: the node is to be in it under that name.
+    draft.rename("looking", "watching");
+    assert_eq!(draft.grouping(&real).get("robot/smoother"), Some(&"watching".to_owned()));
 }

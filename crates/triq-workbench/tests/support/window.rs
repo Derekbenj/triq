@@ -120,3 +120,39 @@ pub fn drag_by_way_of<State>(harness: &mut Harness<'_, State>, places: &[egui::P
     }
     press(harness, places[places.len() - 1], PointerButton::Primary, false);
 }
+
+/// Click with Shift held, as selects one more card in the graph.
+pub fn shift_click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2) {
+    harness.hover_at(at);
+    harness.run_steps(2);
+    let shift = egui::Modifiers::SHIFT;
+    let button =
+        |pressed| egui::Event::PointerButton { pos: at, button: PointerButton::Primary, pressed, modifiers: shift };
+    for event in [egui::Event::ModifiersChanged(shift), button(true), button(false)] {
+        harness.event(event);
+    }
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    harness.run_steps(2);
+}
+
+/// Press a key with the pointer where it is, with some modifiers held.
+pub fn key<State>(harness: &mut Harness<'_, State>, modifiers: egui::Modifiers, key: egui::Key) {
+    harness.key_press_modifiers(modifiers, key);
+    harness.run_steps(4);
+}
+
+/// Two clicks in quick succession. The harness lets a quarter of a second
+/// pass with every frame it draws, which is too slow for that: time stands
+/// still meanwhile.
+pub fn double_click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2) {
+    harness.hover_at(at);
+    harness.run_steps(2);
+    harness.input_mut().time = Some(harness.ctx.input(|input| input.time));
+    for pressed in [true, false, true, false] {
+        let (button, modifiers) = (PointerButton::Primary, egui::Modifiers::NONE);
+        harness.event(egui::Event::PointerButton { pos: at, button, pressed, modifiers });
+    }
+    harness.step();
+    harness.input_mut().time = None;
+    harness.run_steps(3);
+}

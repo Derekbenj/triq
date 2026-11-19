@@ -234,8 +234,9 @@ begin with, the first three are side by side and the charts are under them.
 - The cross beside a name closes the window. The row along the top lists every window; click a
   name there to open or close it. A window that is opened again returns to where it was.
 - The workbench opens as it was when it last closed: the size and place of its window, how the
-  four windows and the charts are arranged, which of them are open, what is on each chart, and
-  where the cards were put in the graph. It saves this from time to time, and when it closes.
+  four windows and the charts are arranged, which of them are open, what is on each chart, where
+  the cards were put in the graph, which nodes are grouped, and the colours that were chosen for
+  runtimes. It saves this from time to time, and when it closes.
 
 ### Arranging panes
 
@@ -259,10 +260,17 @@ where it will land, and it matters how high on the other pane you drop it:
 - Clicking a name on a bar brings its pane to the front.
 - A group that is left with only one pane stops being a group, and its bar disappears.
 
+### The graph
+
 In `Runtimes`, `Graph` and `Details`:
 
 - Every runtime has a colour, shown beside its name in `Runtimes`. A node wears the colour of the
-  runtime it runs in: its card, its pins, and the wires that leave it.
+  runtime it runs in: its card, its pins, and the wires that leave it. Click the colour to choose
+  another with a picker; `auto` beside it gives the runtime a colour of the workbench's choosing
+  again. A chosen colour belongs to the runtime's name, and is kept.
+- Click a node, and it keeps its colour together with everything that wires join to it, directly
+  or by way of other nodes. Every other card goes grey, with its wires. A click beside the cards
+  brings the colours back.
 - Click a kind in `Runtimes` (or right-click the graph) to create a node: name, thread or pool, settings.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
 - Right-click a wire or a pin to disconnect it.
@@ -281,6 +289,60 @@ In `Runtimes`, `Graph` and `Details`:
   does: what a node takes in is on its left, and what it sends is on its right. `Details` adds how
   much was received and lost, the latency of the newest sample, the longest recent gap between two
   samples, and a node's last error.
+
+### Drafting
+
+`Draft`, above the graph, begins a draft. While there is one, nothing you do in the graph or in
+`Details` is asked of a runtime: it is held back, and the windows show the machine as it would be.
+
+- Everything can be drafted: wires drawn and cut, settings, pausing and resuming, removing a node,
+  and creating one. A node that is to be created is drawn with the ports its factory says it will
+  have, and can be wired like any other.
+- What is only drafted is grey, with a glow around it: a new node, a new wire, and the pins at the
+  ends of a wire that is new or to be cut. A wire that is to be cut is faint. A card that is to
+  be changed or removed keeps its colour, has the glow, and says what is to happen to it.
+- A draft holds what it takes to get from the machine to the drawing and no more: one change for
+  each thing that differs. Draw a wire and take it away again twenty times, and there is nothing
+  to do. With nothing selected, `Details` lists the changes in the order they were made; the
+  cross beside one takes it back.
+- `Apply draft` asks the runtimes for the changes, one after another in that order, and ends the
+  draft. If a runtime refuses one, that change and those after it are not made: they are a draft
+  again, and the row along the top says what went wrong. `Discard draft` forgets the changes.
+- To replace a node that is running, start the new one beside it, wire its inputs, and compare the
+  two. Then draft the wires that move from the old one to the new one, and apply.
+
+The changes are made one request after another, not at one instant. If a wire is cut before its
+replacement is drawn, the input hears nothing for the time of one request; in the other order it
+hears both for that long. The order of the draft is the order you made the changes in.
+
+### Groups
+
+Nodes can be put together in a group, which is drawn as one card. The keys are Blender's, and work
+while the pointer is over the graph.
+
+| To | Do this |
+| --- | --- |
+| select several cards | hold Shift and click them, or hold Shift and drag across them |
+| make a group of the selected nodes | `Ctrl+G`, or right-click a card and choose `Make Group` |
+| see the nodes inside a group | select its card and press `Tab`, double-click the card, or press `Edit` on it |
+| leave the group | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
+| move the selected nodes out of the group, from inside | `P`, or right-click a card |
+| take a group apart | select its card and press `Ctrl+Alt+G`, or right-click it and choose `Ungroup` |
+
+- The card of a group shows the ports of its nodes that are connected to nothing, or to something
+  outside the group, each as `node.port`. Wires between the nodes of a group are not shown from
+  outside. A pin of a group is the port of its node: wire it as you would the node's own pin.
+- Inside a group, two more cards stand for the outside, as in Blender: what the group hears from
+  outside comes from `Group Input`, and what it sends there goes to `Group Output`.
+- The card of a group says how many nodes it has, and how many of them are paused or stopped.
+  Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
+- A node is in one group at most, and groups do not hold groups.
+- Groups are how the workbench draws the machine. No runtime knows of them, and a node in a group
+  runs exactly as before. They are kept by the names of the nodes, like the places of cards.
+- While drafting, grouping is held back with the rest: the graph shows the groups as drafted, and
+  they are made when the draft is applied.
+
+### Charts
 
 `Charts` shows what connections and outputs do over time:
 
@@ -335,16 +397,19 @@ readers: it takes one of the places the output has for inputs, and it never make
 An output that does wait for its readers (`reliable_ms`) is not read at all. The history of a
 number is kept from the moment it is put on a chart.
 
-`graph.rs` (the drawing as plain data), `colors.rs` (a colour per runtime),
-`history.rs` (what connections and outputs did, as plain data), `signals.rs`
-(the numbers inside messages), `charts.rs` (the charts), `feed.rs` (the
-background threads) and `app.rs` (the windows) are about 2,560 lines together,
-and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+`graph.rs` (the drawing as plain data: cards, pins, wires and groups),
+`draft.rs` (the changes a draft holds, as plain data), `colors.rs` (a colour
+per runtime), `history.rs` (what connections and outputs did, as plain data),
+`signals.rs` (the numbers inside messages), `charts.rs` (the charts),
+`feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
+(how the graph is drawn and handled) and `app/details.rs` (the details
+window) are about 3,980 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
 matters, and write pictures to `target/tmp`: `windows.png`, `workbench.png`,
-`graph.png`, `charts.png` and `chart-colours.png`.
+`graph.png`, `focus.png`, `draft.png`, `group.png`, `group-inside.png`,
+`charts.png` and `chart-colours.png`.
 
 ## Programs with their own main loop
 

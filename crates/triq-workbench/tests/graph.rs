@@ -52,7 +52,7 @@ fn every_node_becomes_a_card_and_every_live_connection_a_wire() -> triq::Result 
         ])
     );
     // The connection to an output that does not exist has no wire; the card says what it waits for.
-    let viewer = snarl.nodes().find(|card| card.node.name == "viewer").unwrap();
+    let viewer = snarl.nodes().find(|card| card.name() == "viewer").unwrap();
     assert_eq!(viewer.waiting(0), Vec::<String>::new());
     assert_eq!(viewer.waiting(1), [format!("{robot}/camera/image")]);
     Ok(())
@@ -66,7 +66,7 @@ fn syncing_again_follows_the_machine_and_keeps_what_the_user_arranged() -> triq:
     graph::sync(&mut snarl, &scene.inventories());
 
     // The user drags a card somewhere.
-    let (id, _) = snarl.nodes_ids_data().find(|(_, node)| node.value.node.name == "imu").unwrap();
+    let (id, _) = snarl.nodes_ids_data().find(|(_, node)| node.value.name() == "imu").unwrap();
     let chosen = triq_workbench::egui::pos2(777.0, 555.0);
     snarl.get_node_info_mut(id).unwrap().pos = chosen;
 
@@ -79,7 +79,7 @@ fn syncing_again_follows_the_machine_and_keeps_what_the_user_arranged() -> triq:
     graph::sync(&mut snarl, &scene.inventories());
 
     assert_eq!(snarl.get_node_info(id).unwrap().pos, chosen, "a card stays where it was put");
-    assert_eq!(snarl[id].node.outputs[0].sent, 1, "counters are fresh");
+    assert_eq!(snarl[id].node().expect("a node").outputs[0].sent, 1, "counters are fresh");
     assert_eq!(
         wires(&snarl),
         sorted([
@@ -105,7 +105,7 @@ fn new_cards_are_laid_out_left_to_right_without_overlapping() -> triq::Result {
     let scene = Scene::new()?;
     let mut snarl = Snarl::new();
     graph::sync(&mut snarl, &scene.inventories());
-    let position = |name: &str| snarl.nodes_pos().find(|(_, card)| card.node.name == name).unwrap().0;
+    let position = |name: &str| snarl.nodes_pos().find(|(_, card)| card.name() == name).unwrap().0;
     assert!(position("imu").x < position("smoother").x, "a source is left of what it feeds");
     assert!(position("smoother").x < position("viewer").x);
 
@@ -127,7 +127,7 @@ fn new_cards_are_laid_out_left_to_right_without_overlapping() -> triq::Result {
     scene.robot.connect("wide/a_port_with_quite_a_long_name_out", "fed/a_port_with_quite_a_long_name_in")?;
     graph::sync(&mut snarl, &scene.inventories());
     let card = |name: &str| {
-        let (pos, card) = snarl.nodes_pos().find(|(_, card)| card.node.name == name).unwrap();
+        let (pos, card) = snarl.nodes_pos().find(|(_, card)| card.name() == name).unwrap();
         Rect::from_min_size(pos, graph::size(card))
     };
     assert!(card("wide").width() > card("imu").width());
@@ -167,8 +167,7 @@ fn tidying_puts_every_card_right_of_what_feeds_it() -> triq::Result {
     graph::sync(&mut snarl, &scene.inventories());
     scene.robot.connect("smoother/smooth", "late/raw")?;
     graph::sync(&mut snarl, &scene.inventories());
-    let position =
-        |snarl: &Snarl<Card>, name: &str| snarl.nodes_pos().find(|(_, card)| card.node.name == name).unwrap().0;
+    let position = |snarl: &Snarl<Card>, name: &str| snarl.nodes_pos().find(|(_, card)| card.name() == name).unwrap().0;
     assert!(position(&snarl, "late").x < position(&snarl, "smoother").x);
 
     graph::tidy(&mut snarl);
@@ -286,14 +285,13 @@ fn a_card_that_comes_back_is_put_where_it_was() -> triq::Result {
     let scene = Scene::new()?;
     let (mut snarl, mut places) = (Snarl::new(), Places::new());
     graph::sync_with(&mut snarl, &scene.inventories(), &mut places, 100);
-    let position = |snarl: &Snarl<Card>, name: &str| {
-        snarl.nodes_pos().find(|(_, card)| card.node.name == name).map(|found| found.0)
-    };
+    let position =
+        |snarl: &Snarl<Card>, name: &str| snarl.nodes_pos().find(|(_, card)| card.name() == name).map(|found| found.0);
     let laid_out = position(&snarl, "imu").unwrap();
 
     // The user moves the smoother's card.
     let put = pos2(700.0, 420.0);
-    for (_, drawn) in snarl.nodes_ids_data_mut().filter(|(_, drawn)| drawn.value.node.name == "smoother") {
+    for (_, drawn) in snarl.nodes_ids_data_mut().filter(|(_, drawn)| drawn.value.name() == "smoother") {
         drawn.pos = put;
     }
     // The robot's program stops: its cards go, and where they were is remembered.
