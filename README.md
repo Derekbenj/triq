@@ -334,8 +334,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 | move the selected cards one group out, from inside | `P`, or `Move out` in `Details` |
 | take a group apart | select its card and press `Cmd+Option+G`, or `Ungroup` in `Details` |
 
-- The card of a group is outlined in white, or in black on a light background. Its header has
-  the colours of the runtimes its nodes run in, mixed, and a dot for each of them. It is never
+- The card of a group is outlined in white, or in black on a light background. Its header fades
+  through the colours of the runtimes its nodes run in, and has a dot for each of them. It is never
   grey: grey is what a card is that is not wired to the selected one.
 - The card of a group shows the ports of its nodes that are connected to nothing, or to something
   outside the group, each as `node.port`. Wires between the nodes of a group are not shown from

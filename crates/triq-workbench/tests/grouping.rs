@@ -36,6 +36,24 @@ fn create(harness: &mut Bench<'_>) {
     harness.get_by_label("Create").click();
 }
 
+/// How many headers fade from one colour to another: that of a group whose nodes run in more
+/// than one runtime does. Such a header is drawn as a mesh of several colours.
+fn fading(harness: &Bench<'_>) -> usize {
+    fn meshes(shape: &egui::Shape) -> usize {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().map(meshes).sum(),
+            egui::Shape::Mesh(mesh) => {
+                // The shade at the end of a list that goes on fades too, to nothing.
+                let first = mesh.vertices.first().map(|vertex| vertex.color);
+                let solid = mesh.vertices.iter().all(|vertex| vertex.color.is_opaque());
+                usize::from(solid && mesh.vertices.iter().any(|vertex| Some(vertex.color) != first))
+            }
+            _ => 0,
+        }
+    }
+    harness.output().shapes.iter().map(|clipped| meshes(&clipped.shape)).sum()
+}
+
 fn sorted<const N: usize>(mut names: [String; N]) -> Vec<String> {
     names.sort();
     names.to_vec()
@@ -301,6 +319,8 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     key(&mut harness, Modifiers::CTRL | Modifiers::SHIFT, Key::G);
     assert_eq!(harness.state().groups(), &groups([(&imu, "group1"), (&smoother, "group1")]));
     assert_eq!(cards(&harness), sorted(["/group1".to_owned(), viewer.clone()]));
+    // Its nodes run in one runtime, and its header is tinted with that one's colour.
+    assert_eq!(fading(&harness), 0);
     // The viewer is put into it from its details, which list the groups it can be moved into.
     let empty = harness.get_by_label("Fit").rect().left_bottom() + egui::vec2(10.0, 20.0);
     click(&mut harness, empty, PointerButton::Primary);
@@ -312,6 +332,9 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     harness.run_steps(4);
     assert_eq!(harness.state().groups().get(&viewer), Some(&"group1".to_owned()));
     assert_eq!(cards(&harness), ["/group1"]);
+    // Its nodes run in two runtimes now: its header fades from the colour of one to that of the other.
+    assert_eq!(fading(&harness), 1);
+    picture(&mut harness, "group-two-runtimes.png");
 
     // Inside the group, a node is created. It is in the group, and the form stays for another.
     let card = header(&harness, "group1");

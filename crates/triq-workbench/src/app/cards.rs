@@ -3,9 +3,9 @@
 //!
 //! A node wears the colour of the runtime it runs in: its card, its pins and
 //! the wires that leave it. The card of a group is outlined in white, or in
-//! black on a light background. Its header is tinted with the colours of the
-//! runtimes its nodes run in, mixed, with a dot for each, and each of its
-//! pins is the colour of its node. When a card is clicked, every card
+//! black on a light background. Its header fades through the colours of the
+//! runtimes its nodes run in, with a dot for each, and each of its pins is
+//! the colour of its node. When a card is clicked, every card
 //! that no wire joins to it goes grey. What is only drafted is a light grey,
 //! with a glow around it.
 use super::details::{rate, toggle};
@@ -70,17 +70,27 @@ impl Viewer<'_> {
         }
     }
 
-    /// What the header of a card is tinted with: the colour of the card,
-    /// and for a group the colours of the runtimes its nodes run in, mixed.
-    fn tint(&self, card: &Card) -> Color32 {
-        let mixed = match &card.kind {
+    /// The runtimes whose colours the header of a card fades through: for
+    /// a group, those its nodes run in. A group that is greyed, or is only
+    /// drafted, has none of their colours.
+    fn fades<'a>(&self, card: &'a Card) -> BTreeSet<&'a str> {
+        match &card.kind {
             Kind::Group { members, .. } if self.mark(card) != Some(Mark::New) && !self.dimmed(card) => {
-                let runtimes: BTreeSet<&str> = members.iter().map(|(runtime, _)| runtime.as_str()).collect();
-                self.colors.blend(runtimes, self.dark)
+                members.iter().map(|(runtime, _)| runtime.as_str()).collect()
             }
-            _ => None,
-        };
-        mixed.unwrap_or_else(|| self.color(card))
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// How much of its colour the header of a card has. A card that is
+    /// greyed has hardly any, and one that stands for the outside has little.
+    fn strength(&self, card: &Card) -> f32 {
+        match &card.kind {
+            _ if self.dimmed(card) => 0.08,
+            Kind::Node { .. } | Kind::Group { .. } if self.dark => 0.28,
+            Kind::Node { .. } | Kind::Group { .. } => 0.20,
+            Kind::Entry { .. } | Kind::Exit { .. } => 0.12,
+        }
     }
 
     /// A pin, and any wire that leaves it, in the colour of the runtime of
@@ -344,19 +354,17 @@ impl SnarlViewer<Card> for Viewer<'_> {
         snarl: &Snarl<Card>,
     ) -> egui::Frame {
         let card = &snarl[node];
-        // A card that is greyed has hardly any of its colour, and one that stands for the outside has little.
-        let strength = match &card.kind {
-            _ if self.dimmed(card) => 0.08,
-            Kind::Node { .. } | Kind::Group { .. } => {
-                if self.dark {
-                    0.28
-                } else {
-                    0.20
-                }
-            }
-            Kind::Entry { .. } | Kind::Exit { .. } => 0.12,
-        };
-        default.fill(default.fill.lerp_to_gamma(self.tint(card), strength)).corner_radius(9)
+        // Under the colours that the header of a group fades through is the mix of them.
+        let tint = self.colors.blend(self.fades(card), self.dark).unwrap_or_else(|| self.color(card));
+        default.fill(default.fill.lerp_to_gamma(tint, self.strength(card))).corner_radius(9)
+    }
+
+    /// The header of a group fades through the colours of the runtimes its
+    /// nodes run in, from left to right, with as much room for each as for any other.
+    fn header_gradient(&mut self, default: Color32, node: NodeId, snarl: &Snarl<Card>) -> Vec<Color32> {
+        let card = &snarl[node];
+        let tinted = |runtime| default.lerp_to_gamma(self.colors.of(runtime, self.dark), self.strength(card));
+        self.fades(card).into_iter().map(tinted).collect()
     }
 
     fn has_node_style(&mut self, node: NodeId, _: &[InPin], _: &[OutPin], snarl: &Snarl<Card>) -> bool {
