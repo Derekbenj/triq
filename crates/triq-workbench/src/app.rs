@@ -5,8 +5,8 @@
 //! it as a group (see `panes.rs`), closed by the cross beside the name, and
 //! opened again from the row along the top. `egui_tiles` does the arranging.
 //!
-//! How the windows and the charts are arranged, and what is on the charts, is
-//! kept from one run to the next.
+//! How the windows and the charts are arranged, what is on the charts, where
+//! the cards are and which colours were chosen is kept from one run to the next.
 //!
 //! Nothing drawn here is the truth. Every frame the drawing is brought in line
 //! with what the runtimes last reported, and everything the user does becomes
@@ -19,6 +19,7 @@ use crate::charts::{Charts, Recorded};
 use crate::colors::Colors;
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card, Place, Places};
+use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, UiBuilder, WidgetInfo, emath::TSTransform};
 use egui_snarl::ui::{NodeLayout, PinInfo, PinPlacement, SnarlPin, SnarlStyle, SnarlViewer, SnarlWidget, WireStyle};
 use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
@@ -48,6 +49,9 @@ struct Kept {
     /// Where cards were. A layout from before cards were remembered has none.
     #[serde(default)]
     cards: Places,
+    /// The colours that were chosen for runtimes, by name.
+    #[serde(default)]
+    colors: BTreeMap<String, Color32>,
 }
 
 /// One of the windows within the window.
@@ -138,6 +142,17 @@ impl Workbench {
         &self.contents.snarl
     }
 
+    /// Which colour each runtime has.
+    pub fn colors(&self) -> &Colors {
+        &self.contents.colors
+    }
+
+    /// Choose the colour of a runtime, as the picker beside its name does, or
+    /// with `None` give it one of the workbench's choosing again.
+    pub fn paint(&mut self, runtime: &str, color: Option<Color32>) {
+        self.contents.colors.choose(runtime, color);
+    }
+
     /// Ask for a connection, as dragging a wire from an output pin to an input pin does.
     pub fn wire(&mut self, from: OutPinId, to: InPinId) {
         wire(&self.contents.feed, &self.contents.snarl, from, to);
@@ -148,20 +163,22 @@ impl Workbench {
         unwire(&self.contents.feed, &self.contents.snarl, from, to);
     }
 
-    /// How the windows and the charts are arranged, and what is on the
-    /// charts, to be handed to [`Workbench::arrange`] by the next run.
+    /// How the windows and the charts are arranged, what is on the charts,
+    /// where the cards are and which colours were chosen, to be handed to
+    /// [`Workbench::arrange`] by the next run.
     pub fn layout(&self) -> String {
-        let cards = graph::remembered(&self.contents.places);
-        serde_json::json!({ "windows": self.windows, "charts": self.contents.charts, "cards": cards }).to_string()
+        let Contents { charts, places, colors, .. } = &self.contents;
+        let (cards, colors) = (graph::remembered(places), colors.chosen());
+        serde_json::json!({ "windows": self.windows, "charts": charts, "cards": cards, "colors": colors }).to_string()
     }
 
-    /// Be as [`Workbench::layout`] said the workbench was. A number on a chart
-    /// and a card in the graph are known by what they are called: the number
-    /// is drawn, and the card is where it was, when something of those names
-    /// is running, and they wait until then. What cannot be read as a layout
-    /// changes nothing.
+    /// Be as [`Workbench::layout`] said the workbench was. A number on a chart,
+    /// a card in the graph and a runtime are known by what they are called:
+    /// the number is drawn, the card is where it was and the runtime has its
+    /// colour when something of those names is running, and they wait until
+    /// then. What cannot be read as a layout changes nothing.
     pub fn arrange(&mut self, layout: &str) {
-        let Ok(Kept { windows, charts, cards }) = serde_json::from_str(layout) else { return };
+        let Ok(Kept { windows, charts, cards, colors }) = serde_json::from_str(layout) else { return };
         // Whatever wrote it, a workbench has its four windows and a chart.
         if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) && charts.has_a_chart() {
             (self.windows, self.contents.charts) = (windows, charts);
@@ -172,6 +189,10 @@ impl Workbench {
                 }
             }
             self.contents.places = cards;
+            self.contents.colors = Colors::default();
+            for (runtime, color) in colors {
+                self.contents.colors.choose(&runtime, Some(color));
+            }
         }
     }
 
@@ -342,7 +363,7 @@ impl Contents {
             }
             for inventory in inventories.iter() {
                 ui.horizontal(|ui| {
-                    dot(ui, self.colors.of(&inventory.runtime, ui.visuals().dark_mode), &inventory.runtime);
+                    paint(ui, &mut self.colors, &inventory.runtime);
                     ui.strong(&inventory.runtime);
                     ui.weak(format!("process {}", inventory.pid));
                 });
@@ -732,6 +753,24 @@ fn dot(ui: &mut Ui, color: Color32, runtime: &str) {
     response.widget_info(|| WidgetInfo::labeled(Role::Label, true, runtime));
     ui.painter().circle_filled(rect.center(), 5.0, color);
     response.on_hover_text(format!("runs in {runtime}"));
+}
+
+/// The colour of a runtime, as a button that opens a picker: the same that
+/// chooses the colour of a line on a chart. Beside it, once a colour was
+/// chosen, is a button that gives the runtime one of the palette again.
+fn paint(ui: &mut Ui, colors: &mut Colors, runtime: &str) {
+    let mut color = colors.of(runtime, ui.visuals().dark_mode);
+    let well = ui.scope(|ui| {
+        ui.spacing_mut().interact_size = egui::vec2(16.0, 14.0);
+        color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
+    });
+    if well.inner.on_hover_text("Choose the colour of this runtime").changed() {
+        colors.choose(runtime, Some(color));
+    }
+    let chosen = colors.chosen().contains_key(runtime);
+    if chosen && ui.small_button("auto").on_hover_text("Give it a colour of the workbench's choosing again").clicked() {
+        colors.choose(runtime, None);
+    }
 }
 
 /// The small button on a card that pauses its node or starts it again: two bars, or a triangle.

@@ -1,4 +1,5 @@
 //! One colour per runtime, so that a glance at the graph tells which program a node runs in.
+//! A runtime takes a colour of the palette, unless the user chose one for it.
 //! The lines of a chart take their colours from the same palette.
 use eframe::egui::Color32;
 use std::collections::BTreeMap;
@@ -28,6 +29,9 @@ const PALETTE: [(u8, u8, u8); 16] = [
 pub struct Colors {
     /// A place in the palette, by runtime name.
     given: BTreeMap<String, usize>,
+    /// The colours the user chose, by runtime name. A runtime is known by
+    /// what it is called: its colour is kept while its program is not running.
+    chosen: BTreeMap<String, Color32>,
 }
 
 impl Colors {
@@ -45,9 +49,23 @@ impl Colors {
         }
     }
 
-    /// The colour of a runtime.
+    /// The colour of a runtime: the one that was chosen for it, or else one of the palette.
     pub fn of(&self, runtime: &str, dark: bool) -> Color32 {
-        self.given.get(runtime).map_or(Color32::GRAY, |place| shade(*place, dark))
+        let given = || self.given.get(runtime).map_or(Color32::GRAY, |place| shade(*place, dark));
+        self.chosen.get(runtime).copied().unwrap_or_else(given)
+    }
+
+    /// Choose the colour of a runtime, or with `None` give it one of the palette again.
+    pub fn choose(&mut self, runtime: &str, color: Option<Color32>) {
+        match color {
+            Some(color) => _ = self.chosen.insert(runtime.to_owned(), color),
+            None => _ = self.chosen.remove(runtime),
+        }
+    }
+
+    /// The colours that were chosen: what is kept from one run of the workbench to the next.
+    pub fn chosen(&self) -> &BTreeMap<String, Color32> {
+        &self.chosen
     }
 }
 

@@ -1,6 +1,7 @@
 //! One colour per runtime, so that a glance at the graph tells which program a node runs in.
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use triq_workbench::colors::Colors;
+use triq_workbench::egui::Color32;
 
 #[test]
 fn a_runtime_has_a_colour_of_its_own_for_as_long_as_it_runs() {
@@ -42,4 +43,27 @@ fn a_colour_is_darker_on_a_light_background() {
         u32::from(color.r()) + u32::from(color.g()) + u32::from(color.b())
     };
     assert!(brightness(false) < brightness(true), "so that it stands out against white");
+}
+
+#[test]
+fn a_colour_that_was_chosen_for_a_runtime_is_its_colour_until_it_is_given_back() {
+    let mut colors = Colors::default();
+    colors.update(["bevy", "xbox"]);
+    let (given, xbox) = (colors.of("bevy", true), colors.of("xbox", true));
+    let pink = Color32::from_rgb(250, 20, 160);
+    colors.choose("bevy", Some(pink));
+    // It is drawn as it was chosen, on a dark background and on a light one. The others keep theirs.
+    assert_eq!((colors.of("bevy", true), colors.of("bevy", false)), (pink, pink));
+    assert_eq!(colors.of("xbox", true), xbox);
+
+    // It is the runtime's colour by name: also when its program has stopped and runs again.
+    colors.update(["xbox"]);
+    colors.update(["bevy", "xbox"]);
+    assert_eq!(colors.of("bevy", true), pink);
+    assert_eq!(colors.chosen(), &BTreeMap::from([("bevy".to_owned(), pink)]), "what is kept between runs");
+
+    // Given back, the runtime has a colour of the palette again.
+    colors.choose("bevy", None);
+    assert!(colors.chosen().is_empty());
+    assert_eq!(colors.of("bevy", true), given);
 }

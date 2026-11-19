@@ -203,3 +203,47 @@ fn a_card_is_where_it_was_put_when_its_program_runs_again() -> triq::Result {
     assert_eq!(arranged(&harness).iter().flatten().count(), 5, "the four windows and a chart are there");
     Ok(())
 }
+
+#[test]
+fn the_colour_chosen_for_a_runtime_is_its_colour_in_the_next_run_too() -> triq::Result {
+    let robot = format!("w{}-painted", std::process::id());
+    let runtime = Runtime::new(&robot)?;
+    let _imu: ImuPorts = runtime.attach("imu")?;
+    let listed = |harness: &Bench<'_>| harness.state().graph().nodes().any(|card| card.runtime == robot);
+    let mut harness = open()?;
+    assert!(until(&mut harness, listed), "its card appears");
+
+    // The user chooses a colour for it, with the picker beside its name among the runtimes.
+    let pink = egui::Color32::from_rgb(250, 20, 160);
+    harness.state_mut().paint(&robot, Some(pink));
+    harness.run_steps(3);
+    assert_eq!(harness.state().colors().of(&robot, true), pink);
+    // The card wears it. Looking at colours takes a GPU.
+    let dot = |harness: &mut Bench<'_>| {
+        let picture = harness.render().map_err(|reason| eprintln!("no picture: {reason}")).ok()?;
+        // Other programs have a node called `imu` as well. The dot is called by the runtime, and is on its card.
+        let dot = harness.query_all_by_label(&robot).last().expect("a dot");
+        let at = seen(harness, &dot) * harness.ctx.pixels_per_point();
+        Some(picture.get_pixel(at.x as u32, at.y as u32).0)
+    };
+    if let Some(drawn) = dot(&mut harness) {
+        assert_eq!(drawn, pink.to_array());
+    }
+
+    // The next run, told how the last one was: the runtime has the colour that was chosen for it.
+    let layout = harness.state().layout();
+    drop(harness);
+    let mut harness = open()?;
+    harness.state_mut().arrange(&layout);
+    assert!(until(&mut harness, listed));
+    assert_eq!(harness.state().colors().of(&robot, true), pink);
+
+    // Given back, it has a colour of the workbench's choosing again, and nothing is kept of the other.
+    harness.state_mut().paint(&robot, None);
+    assert_ne!(harness.state().colors().of(&robot, true), pink);
+    let mut again = open()?;
+    again.state_mut().arrange(&harness.state().layout());
+    assert!(until(&mut again, listed));
+    assert_ne!(again.state().colors().of(&robot, true), pink);
+    Ok(())
+}
