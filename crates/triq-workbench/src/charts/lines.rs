@@ -149,12 +149,12 @@ pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<
         egui::pos2(egui::lerp(inside.x_range(), across as f32), egui::lerp(inside.bottom()..=inside.top(), up as f32))
     };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
-    // A point is as old as it is far from the right edge, where the present is.
-    let aged = |place: Pos2| (place, (inside.right() - place.x) / inside.width());
     for (line, points) in drawn.iter().zip(&lines) {
-        let placed: Vec<Pos2> = points.iter().map(place).collect();
-        let placed: Vec<(Pos2, f32)> = thinned(&placed).into_iter().map(aged).collect();
-        line.pen.draw(&painter, &placed, dark);
+        let placed = thinned(&points.iter().map(place).collect::<Vec<Pos2>>());
+        // A point is as old as it is far to the left of the newest, in widths of the chart.
+        let newest = placed.last().map_or(inside.right(), |newest| newest.x);
+        let aged: Vec<(Pos2, f32)> = placed.into_iter().map(|at| (at, (newest - at.x) / inside.width())).collect();
+        line.pen.draw(&painter, &aged, dark);
     }
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));

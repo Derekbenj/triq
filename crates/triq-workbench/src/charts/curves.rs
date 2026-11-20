@@ -181,8 +181,9 @@ pub(super) fn draw(
         _ => edged(ui, &lens, curves, (area, foot)),
     }
     for ((curve, path), newest) in curves.iter().zip(&paths).zip(&newest) {
-        // A point is as old as it is far back in the time the chart shows.
-        let aged = |(at, point): &(f64, Point)| (lens.at(*point), ((now - at) / (now - since)) as f32);
+        // A point is as old as it is behind the newest of the path, in the time the chart shows.
+        let latest = path.last().map_or(now, |(at, _)| *at);
+        let aged = |(at, point): &(f64, Point)| (lens.at(*point), ((latest - at) / (now - since)) as f32);
         let placed: Vec<(Pos2, f32)> = path.iter().map(aged).collect();
         curve.pen.draw(&painter, &sparse(&placed), dark);
         if let Some(newest) = newest {
