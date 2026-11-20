@@ -786,6 +786,70 @@ fn a_line_is_told_to_fade_into_the_past() -> triq::Result {
 }
 
 #[test]
+fn the_names_on_a_chart_are_put_in_order_and_hidden_and_so_is_each_line() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (sensor, filtered) =
+        (format!("{}/imu/pose", scene.robot.name()), format!("{}/smoother/raw", scene.robot.name()));
+    // All four numbers of the filter's connection are on the chart.
+    let mut charts = Charts::default();
+    for stat in Stat::ALL {
+        charts.add(1, Trace::Heard { connection: Connection { to: filtered.clone(), from: sensor.clone() }, stat });
+    }
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let mut harness = open(Shown { charts, history, signals: Signals::start()?, now });
+    let [rate, lost, gap, latency] = Stat::ALL.map(|stat| format!("{filtered} {}", stat.name()));
+    let name = |harness: &Window<'_>, line: &str| harness.get_by_label(line).rect().center();
+    // The colours that lines are drawn in, in the order they are drawn: what is drawn later is on top.
+    let inks = |harness: &Window<'_>| -> Vec<String> {
+        let hex = |ink: egui::Color32| format!("#{:02x}{:02x}{:02x}{:02x}", ink.r(), ink.g(), ink.b(), ink.a());
+        pieces(harness, "Chart 1").into_iter().map(|(_, ink)| hex(ink)).collect()
+    };
+    let in_order = |harness: &Window<'_>, order: [&String; 4]| {
+        let names: Vec<&String> = order.to_vec();
+        assert_eq!(lines(harness, &scene).iter().collect::<Vec<_>>(), names);
+        assert_eq!(inks(harness), order.map(|line| colour(harness, line)), "drawn in the order they are named in");
+    };
+    in_order(&harness, [&rate, &lost, &gap, &latency]);
+
+    // Taken by its name and put down on the name of another line of the chart, a line has that
+    // line's place among the names, and the lines are drawn in the order of their names.
+    let (from, onto) = (name(&harness, &rate), name(&harness, &gap));
+    drag(&mut harness, from, onto);
+    in_order(&harness, [&lost, &gap, &rate, &latency]);
+    let (from, onto) = (name(&harness, &latency), name(&harness, &lost));
+    drag(&mut harness, from, onto);
+    in_order(&harness, [&latency, &lost, &gap, &rate]);
+
+    // The eye beside a name hides its line. The line keeps its name on the chart, and the chart
+    // no longer reaches up to it: the rate was all that went as high as 80.
+    let eye = |harness: &Window<'_>, line: &str| {
+        harness.get_by_label(line).parent().expect("the name's row").get_by_label("Hide or show").click();
+    };
+    assert!(shows(&harness, "80.0"));
+    eye(&harness, &rate);
+    harness.run_steps(3);
+    assert_eq!(inks(&harness), [&latency, &lost, &gap].map(|line| colour(&harness, line)));
+    assert!(shows(&harness, &rate) && !shows(&harness, "80.0"));
+    eye(&harness, &rate);
+    harness.run_steps(3);
+    in_order(&harness, [&latency, &lost, &gap, &rate]);
+    assert!(shows(&harness, "80.0"));
+
+    // The names are hidden all at once, to leave the lines the chart. That is kept for the next run.
+    harness.get_by_label("Legend").click();
+    harness.run_steps(3);
+    assert!(lines(&harness, &scene).is_empty() && inks(&harness).len() == 4 && shows(&harness, "Show the last"));
+    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
+    assert!(kept.contains(r#""legend":false"#), "{kept}");
+    harness.get_by_label("Legend").click();
+    harness.run_steps(3);
+    in_order(&harness, [&latency, &lost, &gap, &rate]);
+    Ok(())
+}
+
+#[test]
 fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
     // A line from the oldest moment a chart shows to its newest point: its places, and how old each is.
     let line: Vec<(egui::Pos2, f32)> =

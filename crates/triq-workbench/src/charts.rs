@@ -107,13 +107,21 @@ struct Chart {
     curves: Vec<Curve>,
     #[serde(default)]
     view: View,
+    /// Whether what is drawn on it is named over it.
+    #[serde(default = "Chart::named")]
+    legend: bool,
 }
 
 impl Chart {
     fn new(number: usize, kind: Kind) -> Self {
         // In space a unit is as long along one axis as along another, until the chart is told otherwise.
         let view = View { equal: kind == Kind::Space, ..View::default() };
-        Self { number, kind, seconds: Self::usual(), lines: Vec::new(), curves: Vec::new(), view }
+        Self { number, kind, seconds: Self::usual(), lines: Vec::new(), curves: Vec::new(), view, legend: true }
+    }
+
+    /// A chart names what is drawn on it until it is told not to.
+    fn named() -> bool {
+        true
     }
 
     /// How many seconds of the past a chart shows until it is told otherwise.
@@ -200,6 +208,24 @@ enum Carried {
     /// A line or a curve of a chart, on its way to another: the number of the
     /// chart it is on, and which of that chart's colours it was given.
     Line { chart: usize, shade: usize },
+}
+
+/// A line of the chart of that number that is held over a row of the chart's names, to be put
+/// down there: which of the chart's colours it was given, and whether it was just let go of.
+fn held_over(ui: &Ui, chart: usize, row: egui::Rect) -> Option<(usize, bool)> {
+    ui.ctx().pointer_interact_pos().filter(|pointer| row.contains(*pointer))?;
+    match *egui::DragAndDrop::payload::<Carried>(ui.ctx())? {
+        Carried::Line { chart: from, shade } if from == chart => {
+            Some((shade, ui.input(|input| input.pointer.any_released())))
+        }
+        _ => None,
+    }
+}
+
+/// Show where a line that is held over a row of names will go: above the row or below it.
+fn mark(ui: &Ui, row: egui::Rect, above: bool) {
+    let edge = if above { row.top() } else { row.bottom() };
+    ui.painter().hline(row.x_range(), edge, egui::Stroke::new(2.0, ui.visuals().selection.bg_fill));
 }
 
 /// Draw something that is dragged onto a chart, and can be clicked as well:
@@ -366,7 +392,7 @@ impl Charts {
 
 /// Written over the top of a chart: how much of the past it shows and, for
 /// numbers against each other, how it is looked at. Under that is what is
-/// drawn on it, by name.
+/// drawn on it, by name, unless the chart is told not to name it.
 fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
     // The lines pass behind what is written, and show through what it is written on.
     let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
@@ -383,7 +409,13 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
                     chart.view.held = None;
                 }
             }
+            let about = "Show or hide the names of what is drawn on this chart";
+            ui.toggle_value(&mut chart.legend, "Legend").on_hover_text(about);
         });
+        // A chart with nothing on it says what it takes, whether it names things or not.
+        if !chart.legend && !(chart.lines.is_empty() && chart.curves.is_empty()) {
+            return;
+        }
         match chart.kind {
             Kind::Time => lines::names(ui, chart.number, &mut chart.lines, recorded),
             kind => curves::names(ui, chart.number, kind, &mut chart.curves, recorded),

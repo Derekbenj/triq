@@ -1,6 +1,6 @@
 //! A chart of numbers over time: the lines on it, their names, and how they are drawn.
 use super::pen::{self, Pen};
-use super::{Carried, Kind, Recorded, carried};
+use super::{Carried, Kind, Recorded, carried, held_over, mark};
 use crate::history::{Connection, Stat};
 use eframe::egui::{self, Align, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use serde::{Deserialize, Serialize};
@@ -91,22 +91,29 @@ impl Line {
 
 /// Written over the chart of that number: the colour, name and newest value of
 /// each line. The colour is a button that opens a picker, and the line is taken
-/// by its name to be put down on another chart. Of the two buttons after the
-/// value, the first opens how the line is drawn, and the last takes it off.
+/// by its name to be put down on another chart, or on another row here: it
+/// takes that row's place, and the lines are drawn in the order of their rows,
+/// the last over the others. Of the three buttons after the value, the eye
+/// hides the line, the next opens how it is drawn, and the last takes it off.
 pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
         ui.weak(Kind::Time.hint());
         return;
     }
-    let mut taken_off = None;
+    let order: Vec<usize> = lines.iter().map(|line| line.pen.shade).collect();
+    let (mut taken_off, mut put_down) = (None, None);
     for (number, line) in lines.iter_mut().enumerate() {
         // A row is known by what its line follows, and keeps its picker when the rows above it go.
         let row = ui.push_id(egui::Id::unique(&line.trace), |ui| {
             ui.horizontal(|ui| {
                 line.pen.well(ui);
                 let taken = Carried::Line { chart, shade: line.pen.shade };
-                let name = carried(ui, ui.scope_id().with("name"), taken, |ui| ui.label(line.trace.name()));
-                let name = name.on_hover_text("Drag it onto another chart to move it there");
+                // A line that is hidden is named faintly.
+                let named = |ui: &mut Ui| {
+                    if line.pen.hidden { ui.weak(line.trace.name()) } else { ui.label(line.trace.name()) }
+                };
+                let name = carried(ui, ui.scope_id().with("name"), taken, named);
+                let name = name.on_hover_text("Drag it onto another chart to move it there, or onto another name here");
                 if let Trace::Heard { connection, .. } = &line.trace {
                     name.on_hover_text(format!("from {}", connection.from));
                 }
@@ -115,6 +122,7 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
                     Some(value) => ui.weak(written(value) + line.trace.unit()),
                     None => ui.weak("nothing yet"),
                 };
+                line.pen.eye(ui);
                 pen::more(ui, |ui| line.pen.fading(ui));
                 ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
             })
@@ -122,8 +130,19 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
         if row.inner.inner {
             taken_off = Some(number);
         }
+        // Another line of the chart that is held over the row says where it will go, and goes there.
+        let held = held_over(ui, chart, row.response.rect).filter(|(shade, _)| *shade != line.pen.shade);
+        if let Some((from, let_go)) =
+            held.and_then(|(shade, let_go)| Some((order.iter().position(|given| *given == shade)?, let_go)))
+        {
+            mark(ui, row.response.rect, from > number);
+            put_down = let_go.then_some((from, number));
+        }
     }
-    if let Some(number) = taken_off {
+    if let Some((from, to)) = put_down {
+        let line = lines.remove(from);
+        lines.insert(to, line);
+    } else if let Some(number) = taken_off {
         lines.remove(number);
     }
 }
@@ -139,7 +158,9 @@ pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<
     // Under the lines, a row that says what time the left and right edges are.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     let seconds = until - since;
-    let lines: Vec<Vec<(f64, f64)>> = drawn.iter().map(|line| line.trace.line(recorded, since, until)).collect();
+    // A line that is hidden has no points here: it is not drawn, and the chart does not reach for it.
+    let shown = |line: &Line| if line.pen.hidden { Vec::new() } else { line.trace.line(recorded, since, until) };
+    let lines: Vec<Vec<(f64, f64)>> = drawn.iter().map(shown).collect();
     let Some((low, high)) = extent(lines.iter().flatten().map(|(_, value)| *value)) else { return };
 
     // A line along the very top or bottom is drawn whole, not cut in half by the edge.

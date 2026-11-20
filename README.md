@@ -468,6 +468,12 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   has faded to nothing by the oldest moment the chart shows. Below that it never quite goes, and
   above it is gone sooner: at 100 %, almost at once. Where a line is newest it always has its
   full colour.
+- The eye beside a name hides that line and shows it again. A hidden line keeps its name on the
+  chart, written faintly, and the chart no longer reaches for its values.
+- `Legend`, on each chart, hides all the names at once to leave the lines the room, and shows them
+  again.
+- Drag a line by its name onto another name of the same chart, and it takes that place among the
+  names. Lines are drawn in the order of their names, the last over the others.
 - Drag a line by its name onto another chart to move it there. It keeps a colour that was chosen
   for it, and otherwise takes the first that is free on that chart.
 - Click a number in the list to choose it, and hold Ctrl (Cmd on a Mac) while clicking to choose

@@ -1,8 +1,9 @@
-//! What a line on a chart is drawn with: its colour, and how it fades into the past.
+//! What a line on a chart is drawn with: its colour, how it fades into the past, and whether it
+//! is drawn at all.
 use crate::colors;
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::containers::menu::{MenuButton, MenuConfig};
-use eframe::egui::{self, Color32, Painter, PopupCloseBehavior, Pos2, Stroke, Ui};
+use eframe::egui::{self, Color32, Painter, PopupCloseBehavior, Pos2, Role, Sense, Shape, Stroke, Ui, WidgetInfo};
 use serde::{Deserialize, Serialize};
 
 /// How wide a line is drawn.
@@ -22,6 +23,9 @@ pub(super) struct Pen {
     /// Where it is newest it has its full colour.
     #[serde(default)]
     pub(super) fade: Option<f32>,
+    /// Whether the line is left out of the drawing, with its name still on the chart.
+    #[serde(default)]
+    pub(super) hidden: bool,
 }
 
 impl Pen {
@@ -39,6 +43,29 @@ impl Pen {
         if well.inner.on_hover_text("Choose the colour of this line").changed() {
             self.chosen = Some(color);
         }
+    }
+
+    /// The button beside a name that hides the line or draws it again: an eye, struck through
+    /// while the line is hidden. It is drawn here, as the fonts have no such sign.
+    pub(super) fn eye(&mut self, ui: &mut Ui) {
+        let side = ui.spacing().interact_size.y;
+        let (rect, button) = ui.allocate_exact_size(egui::vec2(side, side), Sense::click());
+        button.widget_info(|| WidgetInfo::selected(Role::Button, true, !self.hidden, "Hide or show"));
+        if button.clicked() {
+            self.hidden = !self.hidden;
+        }
+        let (middle, ink) = (rect.center(), ui.style().interact(&button).fg_stroke.color);
+        ui.painter().add(Shape::ellipse_stroke(middle, egui::vec2(6.0, 3.5), Stroke::new(1.0, ink)));
+        ui.painter().circle_filled(middle, 1.8, ink);
+        if self.hidden {
+            let across = egui::vec2(6.0, -5.0);
+            ui.painter().line_segment([middle - across, middle + across], Stroke::new(1.5, ink));
+        }
+        button.on_hover_text(if self.hidden {
+            "Draw it again"
+        } else {
+            "Hide it: it keeps its name here, and is not drawn"
+        });
     }
 
     /// Whether the line fades into the past, and how soon it is gone: a box to tick, and a slider under it.

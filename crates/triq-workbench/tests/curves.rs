@@ -343,6 +343,28 @@ fn several_curves_share_a_chart_each_with_its_own_numbers() -> triq::Result {
     let mut followed = dots(&harness, "Chart 2");
     followed.sort_by(|a, b| a.x.total_cmp(&b.x));
     assert!((followed[1] - middle).length() < 1.0 && followed[0].x < middle.x - 50.0, "{followed:?}");
+
+    // The eye beside the name of a curve hides it: its name stays, and it is not drawn.
+    let named = |harness: &Window<'_>, curve: &str| {
+        let names = harness.query_all_by_label(curve).map(|name| name.rect());
+        names.into_iter().find(|name| place.contains(name.center())).expect("the curve's name")
+    };
+    let eye = |harness: &Window<'_>, curve: &str| {
+        let name = harness.query_all_by_label(curve).find(|name| place.contains(name.rect().center()));
+        name.expect("the curve").parent().expect("its row").get_by_label("Hide or show").click();
+    };
+    eye(&harness, &filtered);
+    harness.run_steps(3);
+    assert_eq!((dots(&harness, "Chart 2").len(), rows(&harness)), (1, [true, true]));
+    eye(&harness, &filtered);
+    harness.run_steps(3);
+    assert_eq!(dots(&harness, "Chart 2").len(), 2);
+    // Put down on the name of another curve of the chart, a curve has that curve's place among the names.
+    assert!(named(&harness, &sensor).top() < named(&harness, &filtered).top());
+    let (from, onto) = (named(&harness, &sensor).center(), named(&harness, &filtered).center());
+    drag(&mut harness, from, onto);
+    assert!(named(&harness, &filtered).top() < named(&harness, &sensor).top());
+    assert_eq!(rows(&harness), [true, true]);
     Ok(())
 }
 

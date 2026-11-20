@@ -7,7 +7,7 @@
 use super::lines::written;
 use super::pen::{self, Pen};
 use super::view::{Frame, Lens, Point, View};
-use super::{Carried, Kind, Recorded, carried};
+use super::{Carried, Kind, Recorded, carried, held_over, mark};
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
     self, Align, Layout, Painter, PointerButton, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo,
@@ -89,15 +89,18 @@ impl Curve {
 
 /// Written over the chart of that number: a row for each curve. The colour is a button that
 /// opens a picker, and the box beside it says whether the axes name the curve's numbers. The
-/// curve is taken by the name of its topic to be put down on another chart of the kind, and a
-/// box for each axis says which number is along it. Of the two buttons at the end, the first
-/// opens how the curve is drawn, and the last takes it off.
+/// curve is taken by the name of its topic to be put down on another chart of the kind, or on
+/// another row here: it takes that row's place, and the curves are drawn in the order of their
+/// rows, the last over the others. A box for each axis says which number is along it. Of the
+/// three buttons at the end, the eye hides the curve, the next opens how it is drawn, and the
+/// last takes it off.
 pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curve>, recorded: Recorded<'_>) {
     if curves.is_empty() {
         ui.weak(kind.hint());
         return;
     }
-    let (mut taken_off, mut followed) = (None, None);
+    let order: Vec<usize> = curves.iter().map(|curve| curve.pen.shade).collect();
+    let (mut taken_off, mut followed, mut put_down) = (None, None, None);
     for (number, curve) in curves.iter_mut().enumerate() {
         // A row is known by the colour its curve was given: no two on a chart were given the same.
         // On a chart that is too narrow for all of it, it goes on in the next line.
@@ -107,9 +110,14 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
                 ui.checkbox(&mut curve.labelled, "")
                     .on_hover_text("Say on the axes which of its numbers are along them");
                 let taken = Carried::Line { chart, shade: curve.pen.shade };
-                let name = carried(ui, ui.scope_id().with("name"), taken, |ui| ui.label(&curve.topic));
-                name.on_hover_text("Drag it onto another chart of this kind to move it there");
+                // A curve that is hidden is named faintly.
+                let named = |ui: &mut Ui| if curve.pen.hidden { ui.weak(&curve.topic) } else { ui.label(&curve.topic) };
+                let name = carried(ui, ui.scope_id().with("name"), taken, named);
+                name.on_hover_text(
+                    "Drag it onto another chart of this kind to move it there, or onto another name here",
+                );
                 (0..kind.axes()).for_each(|axis| curve.choose(ui, axis, recorded));
+                curve.pen.eye(ui);
                 pen::more(ui, |ui| {
                     ui.checkbox(&mut curve.trail, "Draw its trail")
                         .on_hover_text("The path its point took over the time the chart shows");
@@ -124,12 +132,23 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
         if row.inner.inner {
             taken_off = Some(number);
         }
+        // Another curve of the chart that is held over the row says where it will go, and goes there.
+        let held = held_over(ui, chart, row.response.rect).filter(|(shade, _)| *shade != curve.pen.shade);
+        if let Some((from, let_go)) =
+            held.and_then(|(shade, let_go)| Some((order.iter().position(|given| *given == shade)?, let_go)))
+        {
+            mark(ui, row.response.rect, from > number);
+            put_down = let_go.then_some((from, number));
+        }
     }
     // A chart has one middle: it keeps the point of one curve there at most.
     if let Some(followed) = followed {
         curves.iter_mut().enumerate().for_each(|(number, curve)| curve.follow = number == followed);
     }
-    if let Some(number) = taken_off {
+    if let Some((from, to)) = put_down {
+        let curve = curves.remove(from);
+        curves.insert(to, curve);
+    } else if let Some(number) = taken_off {
         curves.remove(number);
     }
 }
@@ -155,9 +174,13 @@ pub(super) fn draw(
     // Under the curves, a row that says how far the chart reaches.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     let axes = kind.axes();
-    let path = |curve: &Curve| if curve.trail { curve.path(recorded, axes, since, now) } else { Vec::new() };
+    // A curve that is hidden has no points here: it is not drawn, and the chart does not reach for it.
+    let trailing = |curve: &&Curve| curve.trail && !curve.pen.hidden;
+    let path =
+        |curve: &Curve| Some(curve).filter(trailing).map_or(Vec::new(), |curve| curve.path(recorded, axes, since, now));
     let paths: Vec<Vec<(f64, Point)>> = curves.iter().map(path).collect();
-    let newest: Vec<Option<Point>> = curves.iter().map(|curve| curve.newest(recorded, axes)).collect();
+    let newest = |curve: &Curve| curve.newest(recorded, axes).filter(|_| !curve.pen.hidden);
+    let newest: Vec<Option<Point>> = curves.iter().map(newest).collect();
     let followed = curves.iter().zip(&newest).find_map(|(curve, newest)| newest.filter(|_| curve.follow));
     let shown = paths.iter().flatten().map(|(_, point)| *point).chain(newest.iter().flatten().copied());
     let Some(all) = Frame::around(shown, followed) else { return };
