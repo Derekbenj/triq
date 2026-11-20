@@ -109,24 +109,40 @@ pub fn pin(harness: &Bench<'_>, label: &str, after: bool) -> egui::Pos2 {
     nearest.unwrap_or_else(|| panic!("no pin beside {label:?}"))
 }
 
-/// Every line that was drawn in the last frame and is not closed to a shape: the places it
-/// passes through, its colour and how wide it is.
-pub fn strokes<State>(harness: &Harness<'_, State>) -> Vec<(Vec<egui::Pos2>, egui::Color32, f32)> {
-    fn lines(shape: &egui::Shape, found: &mut Vec<(Vec<egui::Pos2>, egui::Color32, f32)>) {
+/// A line that was drawn, and is not closed to a shape.
+pub struct Stroke {
+    /// The places it passes through.
+    pub points: Vec<egui::Pos2>,
+    pub color: egui::Color32,
+    pub width: f32,
+    /// The part of the window it was drawn in: what lies outside is not seen.
+    pub within: egui::Rect,
+}
+
+/// Every line that was drawn in the last frame, and every dot: its middle, how large it is, and
+/// the part of the window it was drawn in.
+pub fn drawn<State>(harness: &Harness<'_, State>) -> (Vec<Stroke>, Vec<(egui::Pos2, f32, egui::Rect)>) {
+    type Dots = Vec<(egui::Pos2, f32, egui::Rect)>;
+    fn shapes(shape: &egui::Shape, within: egui::Rect, lines: &mut Vec<Stroke>, dots: &mut Dots) {
         match shape {
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| lines(shape, found)),
+            egui::Shape::Vec(inner) => inner.iter().for_each(|shape| shapes(shape, within, lines, dots)),
             egui::Shape::Path(path) if !path.closed => {
                 if let egui::epaint::ColorMode::Solid(color) = &path.stroke.color {
-                    found.push((path.points.clone(), *color, path.stroke.width));
+                    lines.push(Stroke { points: path.points.clone(), color: *color, width: path.stroke.width, within });
                 }
             }
-            egui::Shape::LineSegment { points, stroke } => found.push((points.to_vec(), stroke.color, stroke.width)),
+            egui::Shape::LineSegment { points, stroke } => {
+                lines.push(Stroke { points: points.to_vec(), color: stroke.color, width: stroke.width, within });
+            }
+            egui::Shape::Circle(circle) => dots.push((circle.center, circle.radius, within)),
             _ => {}
         }
     }
-    let mut found = Vec::new();
-    harness.output().shapes.iter().for_each(|clipped| lines(&clipped.shape, &mut found));
-    found
+    let (mut lines, mut dots) = (Vec::new(), Vec::new());
+    for clipped in &harness.output().shapes {
+        shapes(&clipped.shape, clipped.clip_rect, &mut lines, &mut dots);
+    }
+    (lines, dots)
 }
 
 /// Where on screen something drawn on the graph is.

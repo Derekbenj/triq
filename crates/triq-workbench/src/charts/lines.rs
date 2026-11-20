@@ -1,6 +1,6 @@
 //! A chart of numbers over time: the lines on it, their names, and how they are drawn.
 use super::pen::{self, Pen};
-use super::{Carried, Recorded, carried};
+use super::{Carried, Kind, Recorded, carried};
 use crate::history::{Connection, Stat};
 use eframe::egui::{self, Align, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use serde::{Deserialize, Serialize};
@@ -95,7 +95,7 @@ impl Line {
 /// value, the first opens how the line is drawn, and the last takes it off.
 pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
-        ui.weak("Drag a number here.");
+        ui.weak(Kind::Time.hint());
         return;
     }
     let mut taken_off = None;

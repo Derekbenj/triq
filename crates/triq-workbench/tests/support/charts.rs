@@ -2,7 +2,7 @@
 //! Included with `#[path]`, after `scene` and `window`.
 #![allow(dead_code)]
 use super::scene::*;
-use super::window::{drag, strokes};
+use super::window::{drag, drawn};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use std::time::Duration;
@@ -23,7 +23,9 @@ pub type Window<'a> = Harness<'a, Shown>;
 
 /// The row of one number of a connection in the list: the thing to drag.
 pub fn number<'a>(harness: &'a Window<'_>, input: &'a str, stat: &'a str) -> Node<'a> {
-    let connection = harness.get_by_label(input).parent().expect("the connection's part of the list");
+    // A chart may be written on with the same name. The list is to the left of the charts.
+    let named = harness.query_all_by_label(input).min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
+    let connection = named.expect("its name in the list").parent().expect("the connection's part of the list");
     connection.get_by_label(stat)
 }
 
@@ -144,13 +146,29 @@ pub fn colour(harness: &Window<'_>, line: &str) -> String {
     names.get_by_role(Role::ColorWell).value().expect("a colour")
 }
 
+/// The lines that a chart draws: for each piece, the places it passes through and its colour.
+pub fn pieces(harness: &Window<'_>, chart: &str) -> Vec<(Vec<egui::Pos2>, egui::Color32)> {
+    let room = room(harness, chart).expand(1.0);
+    let lines = drawn(harness).0.into_iter().filter(|line| line.width == 2.0 && room.contains_rect(line.within));
+    lines.filter(|line| line.points.len() > 1).map(|line| (line.points, line.color)).collect()
+}
+
 /// The pieces that the lines of a chart are drawn in, from left to right: how strong the colour of each is.
 pub fn strengths(harness: &Window<'_>, chart: &str) -> Vec<u8> {
-    let room = room(harness, chart).expand(1.0);
-    let lines = strokes(harness).into_iter().filter(|(points, _, width)| {
-        *width == 2.0 && points.len() > 1 && points.iter().all(|point| room.contains(*point))
-    });
-    let mut pieces: Vec<(f32, u8)> = lines.map(|(points, color, _)| (points[0].x, color.a())).collect();
+    let mut pieces: Vec<(f32, u8)> =
+        pieces(harness, chart).into_iter().map(|(points, color)| (points[0].x, color.a())).collect();
     pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
     pieces.into_iter().map(|(_, strength)| strength).collect()
+}
+
+/// Where a chart draws the newest point of each of its curves: a dot.
+pub fn dots(harness: &Window<'_>, chart: &str) -> Vec<egui::Pos2> {
+    let room = room(harness, chart).expand(1.0);
+    let dots = drawn(harness).1.into_iter().filter(|(_, size, within)| *size == 4.0 && room.contains_rect(*within));
+    dots.map(|(middle, ..)| middle).collect()
+}
+
+/// The present by the clock of the machine: when a message that is sent now is stamped.
+pub fn present() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("a clock").as_secs_f64()
 }

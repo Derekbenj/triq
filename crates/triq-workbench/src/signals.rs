@@ -8,7 +8,7 @@
 //! Reading a topic makes the workbench one more of its readers, so only what
 //! somebody looks at is read: a topic opened in the list, or with a number on
 //! a chart. The past of a number is kept from when it is put on a chart.
-use crate::history::{History, between};
+use crate::history::{History, between, together};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -109,6 +109,18 @@ impl Signals {
         let state = self.shared.state.lock().unwrap();
         let line = state.read.get(topic).and_then(|(_, lines)| lines.get(number));
         line.map_or(Vec::new(), |line| between(line, |point| *point, since, until))
+    }
+}
+
+impl Signals {
+    /// Several numbers of a topic between two times, as a chart draws them against each other:
+    /// for every message that had them all, when it was sent and what they were, oldest first.
+    /// The first number is along x, the second along y and a third along z.
+    pub fn points(&self, topic: &str, numbers: &[&str], since: f64, until: f64) -> Vec<(f64, [f64; 3])> {
+        let state = self.shared.state.lock().unwrap();
+        let Some((_, lines)) = state.read.get(topic) else { return Vec::new() };
+        let lines: Option<Vec<_>> = numbers.iter().map(|number| lines.get(*number)).collect();
+        lines.map_or(Vec::new(), |lines| together(&lines, since, until))
     }
 }
 

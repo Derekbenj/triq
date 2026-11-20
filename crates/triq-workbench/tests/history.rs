@@ -3,7 +3,7 @@
 mod scene;
 use scene::*;
 use std::time::Duration;
-use triq_workbench::history::{Connection, History, Stat};
+use triq_workbench::history::{Connection, History, Stat, together};
 
 const HALF: Duration = Duration::from_millis(500);
 
@@ -234,4 +234,25 @@ fn an_output_gets_a_point_for_how_fast_it_sent() -> triq::Result {
     assert_eq!(history.outputs().collect::<Vec<_>>(), [&sensor, &passed_on]);
     assert_eq!(history.sent(&spare, at - 1.0, at + 1.0), [(at, 0.0)]);
     Ok(())
+}
+
+#[test]
+fn numbers_of_the_same_messages_are_put_together_as_points() {
+    type Line = std::collections::VecDeque<(f64, f64)>;
+    // Three numbers of one topic, each with when its messages were sent. The second was put on a
+    // chart one message later than the first, and one message had no third.
+    let x: Line = [(1.0, 10.0), (2.0, 20.0), (3.0, 30.0), (4.0, 40.0)].into();
+    let y: Line = [(2.0, 0.2), (3.0, 0.3), (4.0, 0.4)].into();
+    let z: Line = [(1.0, 7.0), (2.0, 8.0), (4.0, 9.0)].into();
+
+    // A point for every message that had them all. Two numbers make points on a plane.
+    let flat = together(&[&x, &y], 0.0, 10.0);
+    assert_eq!(flat, [(2.0, [20.0, 0.2, 0.0]), (3.0, [30.0, 0.3, 0.0]), (4.0, [40.0, 0.4, 0.0])]);
+    assert_eq!(together(&[&x, &y, &z], 0.0, 10.0), [(2.0, [20.0, 0.2, 8.0]), (4.0, [40.0, 0.4, 9.0])]);
+    // Only what was sent between two times.
+    assert_eq!(together(&[&x, &y], 2.5, 3.5), [(3.0, [30.0, 0.3, 0.0])]);
+    assert_eq!(together(&[&y, &x], 2.0, 3.0), [(2.0, [0.2, 20.0, 0.0]), (3.0, [0.3, 30.0, 0.0])]);
+    // A number may be along two axes at once.
+    assert_eq!(together(&[&x, &x], 3.5, 9.0), [(4.0, [40.0, 40.0, 0.0])]);
+    assert!(together(&[], 0.0, 10.0).is_empty());
 }

@@ -17,21 +17,31 @@
 //! draws: the lines slide along evenly, however often points arrive. A number
 //! from inside a message is drawn right up to the present. What a runtime
 //! reports is drawn a moment behind it, where the report has arrived.
+//!
+//! A chart is of one kind from when it is made. Besides numbers over time
+//! (`lines.rs`), there are charts of numbers against each other (`curves.rs`):
+//! two numbers of one message, as a point that moves on a plane.
 use crate::history::History;
 use crate::signals::{Signals, Wanted};
+use curves::Curve;
 use eframe::egui::{self, Sense, Ui, UiBuilder};
 use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
 use lines::Line;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use triq_views::panes;
+use view::View;
 
+mod curves;
 mod lines;
 mod list;
 mod pen;
+mod view;
 
+pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
 pub use pen::{color, pieces};
+pub use view::{Frame, Lens, Point};
 
 /// Where the numbers come from: what the runtimes report of their connections
 /// and outputs, and what is read out of the messages themselves.
@@ -46,19 +56,57 @@ pub struct Recorded<'a> {
 const NARROWEST_LIST: f32 = 180.0;
 const NARROWEST_CHARTS: f32 = 260.0;
 
-/// One chart: the number it is called by, how much of the past it shows, and the lines drawn on it.
+/// What a chart draws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+enum Kind {
+    /// Numbers over time, each as a line.
+    #[default]
+    Time,
+    /// Two numbers of one message against each other: a curve on a plane.
+    Plane,
+}
+
+impl Kind {
+    /// How many numbers make a point of a curve.
+    fn axes(self) -> usize {
+        match self {
+            Kind::Time => 1,
+            Kind::Plane => 2,
+        }
+    }
+
+    /// What a chart with nothing on it says it takes.
+    fn hint(self) -> &'static str {
+        match self {
+            Kind::Time => "Drag a number here.",
+            Kind::Plane => "Drag two numbers of one message here: the one along x first, then the one along y.",
+        }
+    }
+}
+
+/// One chart: the number it is called by, what kind it is, how much of the
+/// past it shows, and what is drawn on it.
 #[derive(Serialize, Deserialize)]
 struct Chart {
     number: usize,
+    /// A chart that was kept before there were kinds is of numbers over time.
+    #[serde(default)]
+    kind: Kind,
     /// How many seconds of the past it shows. A chart that was kept before each had its own shows the usual.
     #[serde(default = "Chart::usual")]
     seconds: f64,
+    /// On a chart of numbers over time: its lines.
     lines: Vec<Line>,
+    /// On a chart of numbers against each other: its curves, and how it is looked at.
+    #[serde(default)]
+    curves: Vec<Curve>,
+    #[serde(default)]
+    view: View,
 }
 
 impl Chart {
-    fn new(number: usize) -> Self {
-        Self { number, seconds: Self::usual(), lines: Vec::new() }
+    fn new(number: usize, kind: Kind) -> Self {
+        Self { number, kind, seconds: Self::usual(), lines: Vec::new(), curves: Vec::new(), view: View::default() }
     }
 
     /// How many seconds of the past a chart shows until it is told otherwise.
@@ -70,21 +118,70 @@ impl Chart {
         format!("Chart {}", self.number)
     }
 
-    /// Draw a line on the chart, unless one that follows the same number is
-    /// there already. It takes the first colour that no line on the chart was given.
-    fn put(&mut self, mut line: Line) {
-        if self.lines.iter().any(|drawn| drawn.trace == line.trace) {
-            return;
-        }
-        let free = (0..).find(|shade| self.lines.iter().all(|line| line.pen.shade != *shade));
-        line.pen.shade = free.unwrap_or_default();
-        self.lines.push(line);
+    /// The first colour that nothing on the chart was given.
+    fn free(&self) -> usize {
+        let given = |shade: &usize| {
+            self.lines
+                .iter()
+                .map(|line| &line.pen)
+                .chain(self.curves.iter().map(|curve| &curve.pen))
+                .any(|pen| pen.shade == *shade)
+        };
+        (0..).find(|shade| !given(shade)).unwrap_or_default()
     }
 
-    /// Take off the line that was given that colour.
-    fn take(&mut self, shade: usize) -> Option<Line> {
-        let line = self.lines.iter().position(|line| line.pen.shade == shade)?;
-        Some(self.lines.remove(line))
+    /// Draw a line on the chart, unless one that follows the same number is
+    /// there already. It takes the first colour that is free.
+    fn put(&mut self, mut line: Line) {
+        if !self.lines.iter().any(|drawn| drawn.trace == line.trace) {
+            line.pen.shade = self.free();
+            self.lines.push(line);
+        }
+    }
+
+    /// Draw a curve on the chart, in the first colour that is free.
+    fn trace(&mut self, mut curve: Curve) {
+        curve.pen.shade = self.free();
+        self.curves.push(curve);
+    }
+
+    /// Draw numbers out of the list on the chart, as putting them down on it does.
+    fn take_in(&mut self, numbers: &[Trace]) {
+        for number in numbers {
+            match (self.kind, number) {
+                (Kind::Time, _) => self.put(Line::new(number.clone())),
+                // A number of a message goes along the first axis that a curve of its topic
+                // has free. If none has, it begins a curve, along x.
+                (_, Trace::Inside { topic, number }) => {
+                    let axes = self.kind.axes();
+                    let free = |curve: &mut Curve| curve.axes[..axes].iter().position(|axis| axis.is_none());
+                    let mut of_topic = self.curves.iter_mut().filter(|curve| curve.topic == *topic);
+                    match of_topic.find_map(|curve| Some((free(curve)?, curve))) {
+                        Some((axis, curve)) => curve.axes[axis] = Some(number.clone()),
+                        None => {
+                            let mut curve = Curve::new(topic);
+                            curve.axes[0] = Some(number.clone());
+                            self.trace(curve);
+                        }
+                    }
+                }
+                // What a runtime counts is not inside a message, and has nothing to be drawn against.
+                _ => {}
+            }
+        }
+    }
+
+    /// Take what was given that colour off this chart and draw it on another of its kind.
+    fn hand(&mut self, shade: usize, onto: &mut Chart) {
+        if self.kind != onto.kind {
+            return;
+        }
+        if let Some(line) = self.lines.iter().position(|line| line.pen.shade == shade) {
+            onto.put(self.lines.remove(line));
+        }
+        if let Some(curve) = self.curves.iter().position(|curve| curve.pen.shade == shade) {
+            onto.trace(self.curves.remove(curve));
+        }
     }
 }
 
@@ -93,8 +190,8 @@ impl Chart {
 enum Carried {
     /// Numbers out of the list, in the order they were chosen in.
     Numbers(Vec<Trace>),
-    /// A line of a chart, on its way to another: the number of the chart it
-    /// is on, and which of that chart's colours it was given.
+    /// A line or a curve of a chart, on its way to another: the number of the
+    /// chart it is on, and which of that chart's colours it was given.
     Line { chart: usize, shade: usize },
 }
 
@@ -139,30 +236,37 @@ pub struct Charts {
 
 impl Default for Charts {
     fn default() -> Self {
-        let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1)]);
+        let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1, Kind::Time)]);
         Self { panes, made: 1, listed: true, chosen: Vec::new() }
     }
 }
 
 impl Charts {
-    /// Draw a line on the chart of that number, as dropping a number onto it does.
+    /// Draw a number on the chart of that number, as dropping it there does.
     pub fn add(&mut self, chart: usize, trace: Trace) {
-        if let Some(chart) = self.chart(chart) {
-            chart.put(Line::new(trace));
+        if let Some(chart) = self.charts_mut().find(|candidate| candidate.number == chart) {
+            chart.take_in(&[trace]);
         }
     }
 
-    /// The chart of that number.
-    fn chart(&mut self, number: usize) -> Option<&mut Chart> {
-        self.panes.tiles.tiles_mut().find_map(|tile| match tile {
-            Tile::Pane(chart) if chart.number == number => Some(chart),
-            _ => None,
+    /// Every chart, also one that is behind another.
+    fn charts(&self) -> impl Iterator<Item = &Chart> {
+        self.panes.tiles.tiles().filter_map(|tile| match tile {
+            Tile::Pane(chart) => Some(chart),
+            Tile::Container(_) => None,
         })
     }
 
-    /// True when no chart has a line on it: nothing moves, so nothing needs drawing again.
+    fn charts_mut(&mut self) -> impl Iterator<Item = &mut Chart> {
+        self.panes.tiles.tiles_mut().filter_map(|tile| match tile {
+            Tile::Pane(chart) => Some(chart),
+            Tile::Container(_) => None,
+        })
+    }
+
+    /// True when no chart has anything on it: nothing moves, so nothing needs drawing again.
     pub fn is_empty(&self) -> bool {
-        self.traces().next().is_none()
+        self.charts().all(|chart| chart.lines.is_empty() && chart.curves.is_empty())
     }
 
     /// Whether there is a chart at all. What was kept from another run might be anything.
@@ -185,7 +289,11 @@ impl Charts {
                 ui.separator();
                 let about = "An empty chart, beside the others. Take it by its name to put it where it should be.";
                 if ui.button("New chart").on_hover_text(about).clicked() {
-                    self.new_chart();
+                    self.new_chart(Kind::Time);
+                }
+                let about = "An empty chart of two numbers of one message against each other: a point on a plane.";
+                if ui.button("New 2D chart").on_hover_text(about).clicked() {
+                    self.new_chart(Kind::Plane);
                 }
             });
             let mut drawn = Drawn { recorded, now, forward: None, moved: None };
@@ -197,33 +305,32 @@ impl Charts {
             if let Some(chart) = drawn.forward {
                 self.panes.make_active(|tile, _| tile == chart);
             }
-            // A line that was put down on another chart is taken off the one it was on.
-            if let Some((from, shade, onto)) = drawn.moved.filter(|(from, _, onto)| from != onto)
-                && let Some(line) = self.chart(from).and_then(|chart| chart.take(shade))
-                && let Some(chart) = self.chart(onto)
-            {
-                chart.put(line);
+            // What was put down on another chart is taken off the one it was on.
+            if let Some((from, shade, onto)) = drawn.moved {
+                let mut charts: Vec<&mut Chart> = self.charts_mut().collect();
+                let place = |charts: &[&mut Chart], number| charts.iter().position(|chart| chart.number == number);
+                if let (Some(from), Some(onto)) = (place(&charts, from), place(&charts, onto))
+                    && let Ok([from, onto]) = charts.get_disjoint_mut([from, onto])
+                {
+                    from.hand(shade, onto);
+                }
             }
         });
         recorded.signals.watch(self.wanted(opened));
-    }
-
-    /// The lines of every chart, also of one that is behind another.
-    fn traces(&self) -> impl Iterator<Item = &Trace> {
-        let charts = self.panes.tiles.tiles().filter_map(|tile| match tile {
-            Tile::Pane(chart) => Some(chart),
-            Tile::Container(_) => None,
-        });
-        charts.flat_map(|chart| &chart.lines).map(|line| &line.trace)
     }
 
     /// What is to be read out of messages: the topics that are open in the
     /// list, and every number from inside a message that is on a chart.
     fn wanted(&self, opened: BTreeSet<String>) -> Wanted {
         let mut wanted: Wanted = opened.into_iter().map(|topic| (topic, BTreeSet::new())).collect();
-        for trace in self.traces() {
-            if let Trace::Inside { topic, number } = trace {
-                wanted.entry(topic.clone()).or_default().insert(number.clone());
+        for chart in self.charts() {
+            for line in &chart.lines {
+                if let Trace::Inside { topic, number } = &line.trace {
+                    wanted.entry(topic.clone()).or_default().insert(number.clone());
+                }
+            }
+            for curve in &chart.curves {
+                wanted.entry(curve.topic.clone()).or_default().extend(curve.axes.iter().flatten().cloned());
             }
         }
         wanted
@@ -231,9 +338,9 @@ impl Charts {
 
     /// Add an empty chart. The charts share the room as a grid, until the user
     /// arranges them another way: then a new one goes beside what is there.
-    fn new_chart(&mut self) {
+    fn new_chart(&mut self, kind: Kind) {
         self.made += 1;
-        let chart = self.panes.tiles.insert_pane(Chart::new(self.made));
+        let chart = self.panes.tiles.insert_pane(Chart::new(self.made, kind));
         let root = self.panes.root;
         self.panes.root = Some(match root.and_then(|root| Some((root, self.panes.tiles.get_mut(root)?))) {
             Some((root, Tile::Container(Container::Grid(grid)))) => {
@@ -246,18 +353,30 @@ impl Charts {
     }
 }
 
-/// Written over the top of a chart: how much of the past it shows, and under
-/// that what is drawn on it, by name.
+/// Written over the top of a chart: how much of the past it shows and, for
+/// numbers against each other, how it is looked at. Under that is what is
+/// drawn on it, by name.
 fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
     // The lines pass behind what is written, and show through what it is written on.
     let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
     backing.show(ui, |ui| {
         ui.horizontal(|ui| {
             let label = ui.label("Show the last");
-            let seconds = egui::DragValue::new(&mut chart.seconds).range(5.0..=History::LONGEST).suffix(" s");
+            let seconds = egui::DragValue::new(&mut chart.seconds).range(1.0..=History::LONGEST).suffix(" s");
             ui.add(seconds).labelled_by(label.id).on_hover_text("How much of the past this chart shows");
+            if chart.kind != Kind::Time {
+                let about = "One scale for every axis: a unit is as long along one as along another";
+                ui.toggle_value(&mut chart.view.equal, "1:1").on_hover_text(about);
+                let about = "Show all there is again, after zooming with the wheel or dragging the chart";
+                if ui.button("Fit").on_hover_text(about).clicked() {
+                    chart.view.held = None;
+                }
+            }
         });
-        lines::names(ui, chart.number, &mut chart.lines, recorded);
+        match chart.kind {
+            Kind::Time => lines::names(ui, chart.number, &mut chart.lines, recorded),
+            kind => curves::names(ui, chart.number, kind, &mut chart.curves, recorded),
+        }
     });
 }
 
@@ -281,11 +400,15 @@ impl Behavior<Chart> for Drawn<'_> {
             ui.set_min_size(ui.available_size());
             // The lines have the whole chart. Their names are written over them.
             let whole = ui.available_rect_before_wrap();
-            lines::lines(ui, &chart.name(), &chart.lines, self.recorded, self.now - chart.seconds, self.now);
+            let (name, shown) = (chart.name(), (self.now - chart.seconds, self.now));
+            match chart.kind {
+                Kind::Time => lines::lines(ui, &name, &chart.lines, self.recorded, shown.0, shown.1),
+                kind => curves::draw(ui, (&name, kind), &mut chart.curves, &mut chart.view, self.recorded, shown),
+            }
             ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| written_over(ui, chart, self.recorded));
         });
         match landed.as_deref() {
-            Some(Carried::Numbers(numbers)) => numbers.iter().for_each(|trace| chart.put(Line::new(trace.clone()))),
+            Some(Carried::Numbers(numbers)) => chart.take_in(numbers),
             Some(Carried::Line { chart: from, shade }) => self.moved = Some((*from, *shade, chart.number)),
             None => {}
         }

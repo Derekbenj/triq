@@ -164,6 +164,35 @@ pub fn between<P>(points: &VecDeque<P>, place: impl Fn(&P) -> (f64, f64), since:
     cut(first, since).into_iter().chain(in_view).chain(cut(end, until)).collect()
 }
 
+/// The points of up to three lines that were taken at the same times, between two times: each
+/// time with what every line was then, oldest first. A line is pairs of time and value, and the
+/// values of the first are along x, of the second along y and of a third along z, which is 0
+/// without one. A time that not every line has a point at is left out.
+pub fn together(lines: &[&VecDeque<(f64, f64)>], since: f64, until: f64) -> Vec<(f64, [f64; 3])> {
+    let Some((first, others)) = lines.split_first() else { return Vec::new() };
+    let begin = |line: &VecDeque<(f64, f64)>| line.partition_point(|point| point.0 < since);
+    // How far each of the other lines has been looked through.
+    let mut next: Vec<usize> = others.iter().map(|line| begin(line)).collect();
+    let mut found = Vec::new();
+    for (at, value) in first.range(begin(first)..).take_while(|point| point.0 <= until) {
+        let mut point = [*value, 0.0, 0.0];
+        let mut whole = true;
+        for (axis, (line, next)) in others.iter().zip(&mut next).enumerate() {
+            while line.get(*next).is_some_and(|other| other.0 < *at) {
+                *next += 1;
+            }
+            match line.get(*next) {
+                Some(other) if other.0 == *at => point[axis + 1] = other.1,
+                _ => whole = false,
+            }
+        }
+        if whole {
+            found.push((*at, point));
+        }
+    }
+    found
+}
+
 impl History {
     /// How many seconds of the past are kept.
     pub const LONGEST: f64 = 3600.0;
