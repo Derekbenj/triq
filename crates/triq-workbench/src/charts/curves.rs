@@ -354,28 +354,33 @@ fn ground(ui: &mut Ui, painter: &Painter, lens: &Lens, ([along, beside, up], rea
         let ruler = (0f64.clamp(from + inset, to - inset) / across).round() * across;
         let way = (at(axis, most, ruler) - at(axis, least, ruler)).normalized().rot90();
         let below = if way.y < 0.0 { -way } else { way };
+        // Write something beside the line, where this axis is at a value: if there is room on the chart.
         let mut write = |ui: &mut Ui, written: String, ink: Color32, value: f64| {
             let written = ui.painter().layout_no_wrap(written, font.clone(), ink);
             let size = written.size();
             let middle = at(axis, value, ruler)
                 + below * (4.0 + (below.x * size.x).abs() / 2.0 + (below.y * size.y).abs() / 2.0);
             let place = Rect::from_center_size(middle, size);
-            if area.contains_rect(place) && !taken.iter().any(|other| other.expand(2.0).intersects(place)) {
+            let room = area.contains_rect(place) && !taken.iter().any(|other| other.expand(2.0).intersects(place));
+            if room {
                 ui.put(place, egui::Label::new(written));
                 taken.push(place);
             }
+            room
         };
-        let values = marks(least, most, step);
-        for value in &values {
-            let strength = if *value == 0.0 { 0.7 } else { 0.25 };
-            if let Some(seen) = clipped([at(axis, *value, from), at(axis, *value, to)], area) {
+        let mut written = Vec::new();
+        for value in marks(least, most, step) {
+            let strength = if value == 0.0 { 0.7 } else { 0.25 };
+            if let Some(seen) = clipped([at(axis, value, from), at(axis, value, to)], area) {
                 painter.line_segment(seen, Stroke::new(1.0, faint.gamma_multiply(strength)));
             }
-            write(ui, tick(*value, step), faint, *value);
+            if write(ui, tick(value, step), faint, value) {
+                written.push(value);
+            }
         }
-        if let Some(last) = values.last() {
-            write(ui, LETTERS[axis].to_owned(), AXES[axis], last + step / 2.0);
-        }
+        // The letter of the axis goes after the last value that is written, or else before the first.
+        let ends = [written.last().map(|last| last + step / 2.0), written.first().map(|first| first - step / 2.0)];
+        let _ = ends.into_iter().flatten().any(|end| write(ui, LETTERS[axis].to_owned(), AXES[axis], end));
     }
 }
 
