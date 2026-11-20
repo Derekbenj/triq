@@ -510,14 +510,15 @@ is made:
 - Drag the numbers of one message onto it one after another, the one along x first, then y, and
   on a 3D chart z; or choose them in that order and drag them together. They are one curve,
   called by its topic. Several curves can share a chart, each with its own numbers.
-- A box for each axis says which number is along it, and opens the numbers of the topic to pick
-  another. A number that is picked for another axis of the curve trades places with the one that
-  was there, so x and y are swapped in one step.
+- A slot for each axis says which number is along it. Drag a number of the same topic out of
+  the list onto a slot to put it there; if several were chosen, the others go into the slots
+  after it. Drag a slot onto another slot of the curve to swap the two. A number that is put in
+  one slot and was in another trades places with the one that was there, so both keep their past.
 - The newest point of a curve is a dot. In `…`, `Draw its trail` also draws the path the point
   took over the time the chart shows, and `Fade into the past` makes the older part of that path
   more see-through.
-- A curve has a past from when it was put on a chart. A number that is picked for an axis and was
-  on no chart has none, so the trail begins again.
+- A curve has a past from when it was put on a chart. A number that is put in a slot and was on
+  no chart has none, so the trail begins again.
 - A chart shows everything there is, edge to edge, when it first has something to show and when
   you press `Fit`. Otherwise it stays where it is, and the point moves over it. The wheel, or a
   pinch, zooms about the middle of the chart, and dragging moves it.

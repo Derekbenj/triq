@@ -73,29 +73,26 @@ fn is_at(harness: &mut Window<'_>, scene: &Scene, place: [f32; 3]) {
     harness.run_steps(2);
 }
 
-/// The boxes on a chart that say what is along its axes, in the order they are read in: a row
+/// The slots on a chart that say what is along its axes, in the order they are read in: a row
 /// that the chart is too narrow for goes on in the next line.
-fn boxes<'a>(harness: &'a Window<'_>, chart: &str) -> Vec<egui_kittest::Node<'a>> {
+fn slots<'a>(harness: &'a Window<'_>, chart: &str) -> Vec<egui_kittest::Node<'a>> {
     let room = room(harness, chart);
-    let boxes = harness.query_all_by_role(Role::ComboBox).filter(|axis| room.contains(axis.rect().center()));
-    // A chart in space has one more box, on the row above, which says what its ground is.
-    let grounds = Ground::ALL.map(Ground::name);
-    let mut boxes: Vec<_> =
-        boxes.filter(|axis| !grounds.contains(&axis.value().unwrap_or_default().as_str())).collect();
-    boxes.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
-    boxes
+    let slots = ["x", "y", "z"].into_iter().flat_map(|axis| harness.query_all_by_role_and_label(Role::Button, axis));
+    let mut slots: Vec<_> = slots.filter(|slot| room.contains(slot.rect().center())).collect();
+    slots.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
+    slots
 }
 
-/// What the boxes on a chart say is along its axes: x first.
+/// What the slots on a chart say is along its axes: x first.
 fn axes(harness: &Window<'_>, chart: &str) -> Vec<String> {
-    boxes(harness, chart).into_iter().map(|axis| axis.value().unwrap_or_default()).collect()
+    slots(harness, chart).into_iter().map(|axis| axis.value().unwrap_or_default()).collect()
 }
 
-/// Tell the box of an axis of a chart which number is along it: 0 is the box of x.
-fn along(harness: &mut Window<'_>, chart: &str, axis: usize, number: &str) {
-    boxes(harness, chart)[axis].click();
-    harness.run_steps(3);
-    harness.get_by_role_and_label(Role::Button, number).click();
+/// Put one of the sensor's numbers in the slot of an axis of a chart, by dragging it there out
+/// of the list: 0 is the slot of x.
+fn along(harness: &mut Window<'_>, sensor: &str, chart: &str, axis: usize, number: &str) {
+    let (from, onto) = (grab(harness, sensor, number), slots(harness, chart)[axis].rect().center());
+    drag(harness, from, onto);
     harness.run_steps(3);
 }
 
@@ -186,17 +183,33 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     assert!(low.x > to.x - 30.0 && high.x > to.x - 30.0 && (high.y - to.y).abs() < 16.0 && low.y > high.y + 400.0);
     assert_eq!(lines(&harness), 5 + 9, "from 1 to 3 and from 5 to 9, half a unit apart");
 
-    // A box is told which number is along its axis. One that was along the other axis trades
-    // places with the one that was here: both keep their past, and the trail goes on, the
-    // other way up.
-    along(&mut harness, "Chart 2", 0, "translation[1]");
+    // Each axis has a slot that says which number is along it. A number is put in a slot by
+    // dragging it there out of the list. One that was along the other axis trades places with
+    // the one that was here: both keep their past, and the trail goes on, the other way up.
+    along(&mut harness, &sensor, "Chart 2", 0, "translation[1]");
     assert_eq!(axes(&harness, "Chart 2"), ["translation[1]", "translation[0]"]);
+    // A slot is taken, with its number, and put down on another slot of the curve: they trade places too.
+    let place = |harness: &Window<'_>, axis: usize| slots(harness, "Chart 2")[axis].rect().center();
+    let (from, onto) = (place(&harness, 1), place(&harness, 0));
+    drag(&mut harness, from, onto);
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]"]);
+    let (from, onto) = (place(&harness, 0), place(&harness, 1));
+    drag(&mut harness, from, onto);
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[1]", "translation[0]"]);
+    assert_eq!(
+        harness
+            .query_all_by_label(sensor.as_str())
+            .filter(|name| room(&harness, "Chart 2").contains(name.rect().center()))
+            .count(),
+        1,
+        "and no curve was begun for it"
+    );
     fit(&mut harness);
     let [left, right, low, high] = ["5", "9", "2.0", "3.0"].map(|value| written(&harness, value));
     assert!(left.x < right.x - 300.0 && (left.y - right.y).abs() < 1.0 && high.y < low.y - 200.0);
     assert_eq!(pieces(&harness, "Chart 2").len(), 1);
     // A number that was on no chart has no past. The trail begins again with the next messages.
-    along(&mut harness, "Chart 2", 1, "translation[2]");
+    along(&mut harness, &sensor, "Chart 2", 1, "translation[2]");
     assert!(pieces(&harness, "Chart 2").is_empty());
     is_at(&mut harness, &scene, [0.0, 2.0, 1.0]);
     is_at(&mut harness, &scene, [0.0, 4.0, 3.0]);
@@ -355,14 +368,14 @@ fn several_curves_share_a_chart_each_with_its_own_numbers() -> triq::Result {
     // draw until a number is along y as well: the next of the topic that is put down.
     put_down(&mut harness, &filtered, &["translation[0]"], "Chart 2");
     assert_eq!(rows(&harness), [true, true]);
-    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[0]", "choose"]);
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[0]", "drop a number"]);
     is_at(&mut harness, &scene, [4.0, 2.0, 0.0]);
     assert_eq!(dots(&harness, "Chart 2").len(), 1);
     put_down(&mut harness, &filtered, &["translation[1]"], "Chart 2");
     assert_eq!(axes(&harness, "Chart 2")[2..], ["translation[0]", "translation[1]"]);
     // The curve of the sensor has a number along each of its axes. One more of its numbers begins another curve.
     put_down(&mut harness, &sensor, &["translation[2]"], "Chart 2");
-    assert_eq!(axes(&harness, "Chart 2")[4..], ["translation[2]", "choose"]);
+    assert_eq!(axes(&harness, "Chart 2")[4..], ["translation[2]", "drop a number"]);
     let last = harness.query_all_by_label("×").rfind(|cross| place.contains(cross.rect().center()));
     last.expect("the cross of the last curve").click();
     harness.run_steps(3);
@@ -535,6 +548,24 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     assert!(harness.query_by_label_contains("three numbers of one message").is_some());
     let sensor = opened(&mut harness, &scene);
     put_down(&mut harness, &sensor, &["translation[0]", "translation[1]", "translation[2]"], "Chart 2");
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[2]"]);
+    // Several numbers that are put down on a slot go along its axis and the ones after it, in
+    // the order they were chosen in.
+    let onto_first = |harness: &mut Window<'_>, numbers: &[&str]| {
+        for number in numbers {
+            let at = grab(harness, &sensor, number);
+            click_holding(harness, at, egui::Modifiers::COMMAND);
+        }
+        let (from, onto) = (grab(harness, &sensor, numbers[0]), slots(harness, "Chart 2")[0].rect().center());
+        drag(harness, from, onto);
+        for number in numbers {
+            let at = grab(harness, &sensor, number);
+            click_holding(harness, at, egui::Modifiers::COMMAND);
+        }
+    };
+    onto_first(&mut harness, &["translation[2]", "translation[0]"]);
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[2]", "translation[0]", "translation[1]"]);
+    onto_first(&mut harness, &["translation[0]", "translation[1]", "translation[2]"]);
     assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[2]"]);
     told(&mut harness, &sensor, "Chart 2", "Draw its trail");
     // The sensor goes from where every axis is 0 to another place, and then back to halfway between them.

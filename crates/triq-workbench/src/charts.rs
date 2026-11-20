@@ -31,6 +31,7 @@ use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles
 use lines::Line;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use triq_views::panes;
 use view::View;
 
@@ -210,16 +211,24 @@ enum Carried {
     /// A line or a curve of a chart, on its way to another: the number of the
     /// chart it is on, and which of that chart's colours it was given.
     Line { chart: usize, shade: usize },
+    /// The number along an axis of a curve, on its way to another axis of the curve: the
+    /// number of the chart, which of its colours the curve was given, and the axis.
+    Slot { chart: usize, shade: usize, axis: usize },
+}
+
+/// What is held over a place on a chart, to be put down there, and whether it was just let go of.
+fn over(ui: &Ui, place: egui::Rect) -> Option<(Arc<Carried>, bool)> {
+    ui.ctx().pointer_interact_pos().filter(|pointer| place.contains(*pointer))?;
+    let carried = egui::DragAndDrop::payload::<Carried>(ui.ctx())?;
+    Some((carried, ui.input(|input| input.pointer.any_released())))
 }
 
 /// A line of the chart of that number that is held over a row of the chart's names, to be put
 /// down there: which of the chart's colours it was given, and whether it was just let go of.
 fn held_over(ui: &Ui, chart: usize, row: egui::Rect) -> Option<(usize, bool)> {
-    ui.ctx().pointer_interact_pos().filter(|pointer| row.contains(*pointer))?;
-    match *egui::DragAndDrop::payload::<Carried>(ui.ctx())? {
-        Carried::Line { chart: from, shade } if from == chart => {
-            Some((shade, ui.input(|input| input.pointer.any_released())))
-        }
+    let (carried, let_go) = over(ui, row)?;
+    match *carried {
+        Carried::Line { chart: from, shade } if from == chart => Some((shade, let_go)),
         _ => None,
     }
 }
@@ -432,7 +441,7 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
         }
         match chart.kind {
             Kind::Time => lines::names(ui, chart.number, &mut chart.lines, recorded),
-            kind => curves::names(ui, chart.number, kind, &mut chart.curves, recorded),
+            kind => curves::names(ui, chart.number, kind, &mut chart.curves),
         }
     });
 }
@@ -467,7 +476,8 @@ impl Behavior<Chart> for Drawn<'_> {
         match landed.as_deref() {
             Some(Carried::Numbers(numbers)) => chart.take_in(numbers),
             Some(Carried::Line { chart: from, shade }) => self.moved = Some((*from, *shade, chart.number)),
-            None => {}
+            // A number that leaves its slot and is put down beside the slots stays where it was.
+            Some(Carried::Slot { .. }) | None => {}
         }
         UiResponse::None
     }

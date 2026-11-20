@@ -7,7 +7,7 @@
 use super::lines::written;
 use super::pen::{self, Pen};
 use super::view::{Frame, Lens, Point, View, clipped, ground_reach, marks, round_step, tick};
-use super::{Carried, Kind, Recorded, carried, held_over, mark};
+use super::{Carried, Kind, Recorded, Trace, carried, held_over, mark, over};
 use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
     self, Align, Color32, Layout, Painter, PointerButton, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo,
@@ -72,26 +72,77 @@ impl Curve {
         numbers.map_or(Vec::new(), |numbers| recorded.signals.points(&self.topic, &numbers, since, until))
     }
 
-    /// The box that says which number is along an axis, after the letter of the axis. It opens
-    /// the numbers of the topic to choose from.
-    ///
-    /// A number is along one axis of a curve. One that is chosen for another axis trades
-    /// places with the number that was there: so x and y are swapped in one go, and both keep
-    /// their past, which a number that is on no chart for a moment would lose.
-    fn choose(&mut self, ui: &mut Ui, axis: usize, recorded: Recorded<'_>) {
-        let letter = ui.weak(LETTERS[axis]);
-        let listed = recorded.signals.watched(&self.topic).map_or(Vec::new(), |watched| watched.numbers);
-        let before = self.axes[axis].clone();
-        let along = before.clone().unwrap_or_else(|| "choose".to_owned());
-        let numbers = egui::ComboBox::from_id_salt(axis).selected_text(along).show_ui(ui, |ui| {
-            for (number, _) in listed {
-                ui.selectable_value(&mut self.axes[axis], Some(number.clone()), number);
-            }
-        });
-        numbers.response.labelled_by(letter.id);
-        let had_it = (0..self.axes.len()).find(|other| *other != axis && self.axes[*other] == self.axes[axis]);
-        if let Some(other) = had_it.filter(|_| self.axes[axis] != before) {
+    /// Put a number along an axis. A number is along one axis of a curve: if it was along
+    /// another, the two trade places. So x and y are swapped in one go, and both keep their
+    /// past, which a number that is on no chart for a moment would lose.
+    fn put(&mut self, axis: usize, number: &str) {
+        let before = self.axes[axis].replace(number.to_owned());
+        let had_it = |other: &usize| *other != axis && self.axes[*other].as_deref() == Some(number);
+        if let Some(other) = (0..self.axes.len()).find(had_it) {
             self.axes[other] = before;
+        }
+    }
+
+    /// The slot of an axis, on a chart with so many axes: it says which number is along the
+    /// axis. A number is put there by dragging it onto the slot: out of the list, with any
+    /// that were chosen with it going along the axes after this one, or out of another slot
+    /// of the curve, which is taken with its number.
+    fn slot(&mut self, ui: &mut Ui, chart: usize, (axis, axes): (usize, usize)) {
+        let (letter, along) = (LETTERS[axis], self.axes[axis].clone());
+        let said = along.clone().unwrap_or_else(|| "drop a number".to_owned());
+        // The slot is one piece: on a chart that is too narrow for the row, it goes to the next line whole.
+        let framed = |ui: &mut Ui| {
+            let (font, faint) = (egui::TextStyle::Body.resolve(ui.style()), ui.visuals().weak_text_color());
+            let ink = if along.is_some() { ui.visuals().text_color() } else { faint };
+            let mut words = LayoutJob::default();
+            words.append(letter, 0.0, TextFormat { font_id: font.clone(), color: faint, ..Default::default() });
+            words.append(&said, 6.0, TextFormat { font_id: font, color: ink, ..Default::default() });
+            let words = ui.painter().layout_job(words);
+            let (place, slot) = ui.allocate_exact_size(words.size() + egui::vec2(8.0, 2.0), Sense::hover());
+            let edge = ui.visuals().widgets.noninteractive.bg_stroke;
+            ui.painter().rect_stroke(place, 3, edge, egui::StrokeKind::Inside);
+            ui.painter().galley(place.min + egui::vec2(4.0, 1.0), words, ink);
+            slot
+        };
+        let slot = match along {
+            Some(_) => {
+                let taken = Carried::Slot { chart, shade: self.pen.shade, axis };
+                carried(ui, ui.scope_id().with(("slot", axis)), taken, framed)
+            }
+            None => framed(ui),
+        };
+        slot.widget_info(|| {
+            let mut slot = WidgetInfo::labeled(Role::Button, true, letter);
+            slot.current_text_value = Some(said.clone());
+            slot
+        });
+        slot.clone().on_hover_text("Drag a number of this topic here, out of the list or out of another of these");
+        // What is held over the slot and has a place in it: numbers of the curve's topic, in
+        // the order they come in, or the number of another slot of the curve.
+        let Some((held, let_go)) = over(ui, slot.rect) else { return };
+        let of_topic = |number: &Trace| match number {
+            Trace::Inside { topic, number } if *topic == self.topic => Some(number.clone()),
+            _ => None,
+        };
+        let (numbers, from) = match &*held {
+            Carried::Numbers(numbers) => (numbers.iter().filter_map(of_topic).collect(), None),
+            Carried::Slot { chart: on, shade, axis: from } if (*on, *shade) == (chart, self.pen.shade) => {
+                (Vec::new(), Some(*from).filter(|from| *from != axis))
+            }
+            _ => (Vec::new(), None),
+        };
+        if numbers.is_empty() && from.is_none() {
+            return;
+        }
+        let ready = egui::Stroke::new(1.5, ui.visuals().selection.stroke.color);
+        ui.painter().rect_stroke(slot.rect, 3, ready, egui::StrokeKind::Outside);
+        if let_go {
+            numbers.iter().zip(axis..axes).for_each(|(number, axis)| self.put(axis, number));
+            if let Some(from) = from {
+                self.axes.swap(from, axis);
+            }
+            // It was put down here, and is not put down on the chart as well.
+            egui::DragAndDrop::clear_payload(ui.ctx());
         }
     }
 }
@@ -100,10 +151,10 @@ impl Curve {
 /// opens a picker, and the box beside it says whether the axes name the curve's numbers. The
 /// curve is taken by the name of its topic to be put down on another chart of the kind, or on
 /// another row here: it takes that row's place, and the curves are drawn in the order of their
-/// rows, the last over the others. A box for each axis says which number is along it. Of the
-/// three buttons at the end, the eye hides the curve, the next opens how it is drawn, and the
-/// last takes it off.
-pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curve>, recorded: Recorded<'_>) {
+/// rows, the last over the others. A slot for each axis says which number is along it, and
+/// takes another that is dragged onto it. Of the three buttons at the end, the eye hides the
+/// curve, the next opens how it is drawn, and the last takes it off.
+pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curve>) {
     if curves.is_empty() {
         ui.weak(kind.hint());
         return;
@@ -125,7 +176,7 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
                 name.on_hover_text(
                     "Drag it onto another chart of this kind to move it there, or onto another name here",
                 );
-                (0..kind.axes()).for_each(|axis| curve.choose(ui, axis, recorded));
+                (0..kind.axes()).for_each(|axis| curve.slot(ui, chart, (axis, kind.axes())));
                 curve.pen.eye(ui);
                 pen::more(ui, |ui| {
                     ui.checkbox(&mut curve.trail, "Draw its trail")
