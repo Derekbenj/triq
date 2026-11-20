@@ -19,7 +19,7 @@ const TURN: f32 = 0.01;
 /// from where its values are 0. Nearer, the values of its grid could not be told apart.
 const NEAREST: f64 = 1e-6;
 /// How many times further the ground of a chart in space reaches than what is on it.
-const GROUND: f64 = 10.0;
+const GROUND: f64 = 2.0;
 /// How many lines of a grid are drawn at the most. More than that could not be told apart.
 const MOST: f64 = 200.0;
 
@@ -71,12 +71,15 @@ pub(super) struct View {
     pub(super) from: (f32, f32),
     /// Which two axes of a chart in space are the ground.
     pub(super) ground: Ground,
+    /// Which of the axes x, y and z run the other way: to the left, or down. On a chart of
+    /// numbers over time, the second says whether the largest value is at the bottom.
+    pub(super) reversed: [bool; 3],
 }
 
 impl Default for View {
     /// A chart in space is first looked at from the front and a little to the right, from above.
     fn default() -> Self {
-        Self { equal: false, held: None, from: (-FRAC_PI_3, FRAC_PI_6), ground: Ground::Xy }
+        Self { equal: false, held: None, from: (-FRAC_PI_3, FRAC_PI_6), ground: Ground::Xy, reversed: [false; 3] }
     }
 }
 
@@ -134,15 +137,22 @@ fn edge(room: Rect) -> f64 {
 }
 
 /// How far the ground of a chart in space reaches from where every axis is 0, along each of
-/// the two axes it lies along: ten times as far as the furthest that any of some points is
-/// from there along an axis, as a round number. With nothing away from there, as far as if
-/// something were 1 away.
+/// the two axes it lies along: twice as far as the furthest that any of some points is from
+/// there along that axis, as a round number. With one scale for every axis it is a square,
+/// twice as far across as the furthest that any point is along any axis, also the one that
+/// is up. Along an axis that nothing is away from 0 on, it reaches as far as it does at the
+/// most, and with nothing away from there at all, as far as if something were 1 away.
 ///
 /// So the ground is a part of the world, not of the chart: it is as large however the chart
 /// is looked at, and stays where it is while a point moves over it.
-pub fn ground_reach(points: impl Iterator<Item = Point>) -> f64 {
-    let furthest = points.flatten().fold(0.0, |furthest: f64, value| furthest.max(value.abs()));
-    round_step(GROUND * if furthest > 0.0 { furthest } else { 1.0 })
+pub fn ground_reach(points: impl Iterator<Item = Point>, lying: [usize; 2], equal: bool) -> [f64; 2] {
+    let mut furthest = [0.0f64; 3];
+    for point in points {
+        furthest = std::array::from_fn(|axis| furthest[axis].max(point[axis].abs()));
+    }
+    let most = furthest.into_iter().fold(0.0, f64::max);
+    let most = if most > 0.0 { most } else { 1.0 };
+    lying.map(|axis| round_step(GROUND * if equal || furthest[axis] == 0.0 { most } else { furthest[axis] }))
 }
 
 /// A round distance for the lines of a grid to be apart: the least of 1, 2 and 5 times a
@@ -288,12 +298,12 @@ impl Lens {
         frame
     }
 
-    /// On a plane: the values at the left and right edges of the room, and at its bottom and top.
-    pub fn edges(&self) -> [(f64, f64); 2] {
-        let half = [self.room.width(), self.room.height()].map(|side| f64::from(side) / 2.0);
-        [0, 1].map(|axis| {
-            let reach = half[axis] / self.scales[axis];
-            (self.frame.middle[axis] - reach, self.frame.middle[axis] + reach)
-        })
+    /// The same with some of the axes x, y and z the other way round: what was to the right
+    /// is to the left, and what was up is down.
+    pub fn reversed(mut self, axes: [bool; 3]) -> Lens {
+        for axis in (0..3).filter(|axis| axes[*axis]) {
+            self.ways[axis] = -self.ways[axis];
+        }
+        self
     }
 }

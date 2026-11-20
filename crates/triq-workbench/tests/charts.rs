@@ -511,10 +511,13 @@ fn anything_goes_into_anything() -> triq::Result {
     assert!(fourth.right() <= both.left() && both.top() == fourth.top(), "the fourth, and the two, on one bar");
     assert!(fifth.top() > both.bottom() - 1.0 && sixth.top() == fifth.top() && fifth.right() <= sixth.left());
     assert!(shows(&harness, "Charts 4, 5, 6, 1, 2, 3") && lines(&harness, &scene) == [rate.as_str()]);
-    // The chart behind keeps its line, and its name brings it forward.
+    // The chart behind keeps its line, and its name brings it forward. On a chart as narrow as
+    // these, what is written over it takes more lines, so the names are not level with each other.
     name_of(&harness, "Chart 5").click();
     harness.run_steps(3);
-    assert_eq!(lines(&harness, &scene), [lost.clone(), rate.clone()]);
+    let mut drawn = lines(&harness, &scene);
+    drawn.sort();
+    assert_eq!(drawn, [lost.clone(), rate.clone()]);
 
     // A group that is left with one chart is no group any more, and its bar goes.
     close(&mut harness, "Chart 6");
@@ -662,6 +665,21 @@ fn each_chart_shows_as_much_of_the_past_as_it_is_told() -> triq::Result {
     for chart in ["Chart 1", "Chart 2"] {
         assert!(written_on(&harness, chart, "30 s ago") && written_on(&harness, chart, "80.0"), "{chart}");
     }
+    // The largest value is at the top of a chart, and the smallest at the bottom, until the
+    // chart is told to reverse its axis: then it is the other way round, on that chart alone.
+    let high = |harness: &Window<'_>, chart: &str, value: &str| {
+        let place = room(harness, chart);
+        let written = harness.query_all_by_label(value).find(|written| place.contains(written.rect().center()));
+        written.expect("the value on the chart").rect().center().y
+    };
+    assert!(high(&harness, "Chart 2", "80.0") < high(&harness, "Chart 2", "20.0"));
+    let place = room(&harness, "Chart 2");
+    let reverse =
+        harness.query_all_by_role_and_label(Role::Button, "y").find(|axis| place.contains(axis.rect().center()));
+    reverse.expect("the button on the chart").click();
+    harness.run_steps(3);
+    assert!(high(&harness, "Chart 2", "80.0") > high(&harness, "Chart 2", "20.0") + 300.0);
+    assert!(high(&harness, "Chart 1", "80.0") < high(&harness, "Chart 1", "20.0"));
     // The first is told to show five. The second goes on as it was.
     show_the_last(&mut harness, "Chart 1", 5.0);
     assert!(written_on(&harness, "Chart 1", "5 s ago") && written_on(&harness, "Chart 1", "70.0"));

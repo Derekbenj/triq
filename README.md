@@ -497,7 +497,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - `Show the last`, written on every chart, sets how many seconds of the past that chart shows, up
   to the one hour that is kept. A new chart shows thirty.
 - The top and bottom of a chart are always the largest and the smallest value in view, written at
-  its right edge. Hover over a chart to read the value of every line at that moment.
+  its right edge. Hover over a chart to read the value of every line at that moment. `Reverse`
+  `y` turns the chart upside down: the smallest value is at the top.
 - A chart ends at the present and moves on with every frame the window draws. A number from inside
   a message is drawn right up to the edge, as its message arrives. The runtimes' reports arrive a
   tenth of a second apart, so those lines end 0.15 s short of the edge and slide along evenly
@@ -532,12 +533,17 @@ is made:
   says its value where it leaves it: x at the bottom, y at the right.
 - `1:1` gives every axis one scale, so that shapes are as they are. Click it again to have each
   axis fill the chart. A 3D chart starts with it on, and a 2D chart with it off.
+- `Reverse` has a button for each axis. While it is down, that axis runs the other way: x to the
+  left, y down, and on a 3D chart whichever axis it is. A stick of a game controller is a case
+  for it: SDL gives -32768 for all the way up and 32767 for all the way down, so pushing it up
+  draws downwards until y is reversed.
 - On a 3D chart the grid is the ground: the plane where the axis that is up is 0. `Ground` says
   which two axes it is along, `xy`, `xz` or `yz`, and the third is up. The ground is a part of
-  the world, not of the chart. It is a square about the point where every axis is 0, and reaches
-  ten times as far from there as the furthest that anything on the chart is, as a round number:
-  with a point 7 away, to 100 either way. It stays where it is while a point moves over it, and
-  it is as large from near by as from far away: zoom out, and you see all of it.
+  the world, not of the chart. It lies about the point where every axis is 0, and reaches twice
+  as far from there along each of its axes as the furthest that anything on the chart is along
+  that axis, as a round number: with a point 7 away along x, to 20 either way. With `1:1` on it
+  is a square, twice as far across as the furthest that anything is along any axis. It stays
+  where it is while a point moves over it, and it is as large from near by as from far away.
 - The values of the ground are written along its axes: those of x along the line where y is 0,
   and those of y along the line where x is 0, each with its letter after the last value. When
   the chart does not show that line, they are written along the nearest line it does show.

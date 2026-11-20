@@ -77,7 +77,8 @@ fn is_at(harness: &mut Window<'_>, scene: &Scene, place: [f32; 3]) {
 /// that the chart is too narrow for goes on in the next line.
 fn slots<'a>(harness: &'a Window<'_>, chart: &str) -> Vec<egui_kittest::Node<'a>> {
     let room = room(harness, chart);
-    let slots = ["x", "y", "z"].into_iter().flat_map(|axis| harness.query_all_by_role_and_label(Role::Button, axis));
+    let names = ["x axis", "y axis", "z axis"].into_iter();
+    let slots = names.flat_map(|axis| harness.query_all_by_role_and_label(Role::Button, axis));
     let mut slots: Vec<_> = slots.filter(|slot| room.contains(slot.rect().center())).collect();
     slots.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
     slots
@@ -106,6 +107,15 @@ fn told(harness: &mut Window<'_>, curve: &str, chart: &str, what: &str) {
     harness.run_steps(3);
     // A click elsewhere closes it again.
     harness.key_press(egui::Key::Escape);
+    harness.run_steps(3);
+}
+
+/// Have an axis of the second chart run the other way, or back the way it ran.
+fn reverse(harness: &mut Window<'_>, axis: &str) {
+    let place = room(harness, "Chart 2");
+    let button =
+        harness.query_all_by_role_and_label(Role::Button, axis).find(|axis| place.contains(axis.rect().center()));
+    button.expect("the button on the chart").click();
     harness.run_steps(3);
 }
 
@@ -182,6 +192,23 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     assert!((left.y - right.y).abs() < 1.0 && left.y > from.y - 16.0, "along the bottom: {left:?} and {right:?}");
     assert!(low.x > to.x - 30.0 && high.x > to.x - 30.0 && (high.y - to.y).abs() < 16.0 && low.y > high.y + 400.0);
     assert_eq!(lines(&harness), 5 + 9, "from 1 to 3 and from 5 to 9, half a unit apart");
+
+    // An axis is reversed with the button of its letter: what was to the right is to the left
+    // then, its values run the other way, and the other axis is as it was.
+    reverse(&mut harness, "x");
+    let (turned, back) = ends(&harness, "Chart 2");
+    assert!((turned.x - to.x).abs() < 1.0 && (back.x - from.x).abs() < 1.0, "from {turned:?} to {back:?}");
+    assert!((turned.y - from.y).abs() < 1.0 && (back.y - to.y).abs() < 1.0, "as high as before");
+    let [one, three] = ["1.0", "3.0"].map(|value| written(&harness, value));
+    assert!(three.x < one.x - 300.0 && (one.y - three.y).abs() < 1.0, "{one:?} and {three:?}");
+    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
+    assert!(kept.contains(r#""reversed":[true,false,false]"#), "{kept}");
+    reverse(&mut harness, "y");
+    let (turned, back) = ends(&harness, "Chart 2");
+    assert!((turned - to).length() < 1.0 && (back - from).length() < 1.0, "both ways round: {turned:?} to {back:?}");
+    reverse(&mut harness, "x");
+    reverse(&mut harness, "y");
+    assert_eq!(ends(&harness, "Chart 2"), (from, to));
 
     // Each axis has a slot that says which number is along it. A number is put in a slot by
     // dragging it there out of the list. One that was along the other axis trades places with
@@ -616,6 +643,11 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     let stands = ring(&harness);
     assert!((stands.x - middle.x).abs() < 0.5 && stands.y > middle.y + 10.0, "{stands:?} under {middle:?}");
     assert!(written_on(&harness, "Chart 2", "z 0.50"));
+    // With the axis that is up reversed, the ground is above the point, and the point hangs from it.
+    reverse(&mut harness, "z");
+    let (hangs, dot) = (ring(&harness), dots(&harness, "Chart 2")[0]);
+    assert!((hangs.x - dot.x).abs() < 0.5 && hangs.y < dot.y - 10.0, "{hangs:?} over {dot:?}");
+    reverse(&mut harness, "z");
     // The row under the chart says which number is along each axis.
     for (letter, number) in ["x", "y", "z"].into_iter().zip(axes(&harness, "Chart 2")) {
         assert!(written_on(&harness, "Chart 2", &format!("{letter}  {number}")), "{letter}");
@@ -815,16 +847,22 @@ fn how_far_out_a_point_is_drawn_says_how_much_further_away_a_chart_must_be_to_sh
 }
 
 #[test]
-fn the_ground_of_a_chart_in_space_is_a_part_of_the_world_ten_times_as_large_as_what_is_on_it() {
-    // The ground reaches as far from where every axis is 0 as ten times the furthest that any
-    // point is from there along an axis, as a round number. It does not depend on how the chart
-    // is looked at: it is as large from near by as from far away.
-    assert_eq!(charts::ground_reach([[-6.83, 5.15, 2.54]].into_iter()), 100.0);
-    assert_eq!(charts::ground_reach([[0.0, 0.0, 2.54], [1.0, -2.0, 0.0]].into_iter()), 50.0);
-    assert_eq!(charts::ground_reach([[0.3, 0.0, 0.0]].into_iter()), 5.0);
-    // With nothing away from there, it reaches as far as if something were 1 away.
-    assert_eq!(charts::ground_reach([[0.0; 3]].into_iter()), 10.0);
-    assert_eq!(charts::ground_reach(std::iter::empty()), 10.0);
+fn the_ground_of_a_chart_in_space_is_a_part_of_the_world_twice_as_large_as_what_is_on_it() {
+    // The ground reaches from where every axis is 0, along each of its two axes, twice as far
+    // as the furthest that any point is along that axis, as a round number. It does not depend
+    // on how the chart is looked at: it is as large from near by as from far away.
+    let (ground, points) = ([0, 1], [[-6.83, 2.0, 2.54], [1.0, -1.5, 0.0]]);
+    assert_eq!(charts::ground_reach(points.into_iter(), ground, false), [20.0, 5.0]);
+    assert_eq!(charts::ground_reach(points.into_iter(), [2, 0], false), [10.0, 20.0]);
+    // With one scale for every axis it is a square, twice as far across as the furthest that
+    // any point is along any axis: also the one that is up.
+    assert_eq!(charts::ground_reach(points.into_iter(), ground, true), [20.0, 20.0]);
+    assert_eq!(charts::ground_reach([[0.5, 0.0, 30.0]].into_iter(), ground, true), [100.0, 100.0]);
+    // Along an axis that nothing is away from 0 on, it reaches as far as it does at the most,
+    // and with nothing away from there at all, as far as if something were 1 away.
+    assert_eq!(charts::ground_reach([[0.0, 3.0, 40.0]].into_iter(), ground, false), [100.0, 10.0]);
+    assert_eq!(charts::ground_reach([[0.0; 3]].into_iter(), ground, false), [2.0, 2.0]);
+    assert_eq!(charts::ground_reach(std::iter::empty(), ground, true), [2.0, 2.0]);
 
     // A room whose shorter side is as long as the diagonal of a box that is 200 points along every edge.
     let room = Rect::from_center_size(pos2(500.0, 400.0), vec2(600.0, 200.0 * 3f32.sqrt()));
@@ -881,14 +919,28 @@ fn a_chart_on_a_plane_has_x_across_and_y_up() {
     let lens = Lens::flat(frame, room, false);
     assert_eq!(lens.at([2.0, 20.0, 0.0]), room.center());
     assert_eq!((lens.at([0.0, 10.0, 0.0]), lens.at([4.0, 30.0, 0.0])), (room.left_bottom(), room.right_top()));
-    assert_eq!(lens.edges(), [(0.0, 4.0), (10.0, 30.0)]);
+    // A place on the screen is a point of the plane, the other way about.
+    assert_eq!(lens.on_plane(room.left_bottom(), [0, 1, 2], 0.0), Some([0.0, 10.0, 0.0]));
 
     // With one scale for both, a unit is as long across as up: 10 points, which the 20 of y
     // need. All that was asked for is still in the room, and more of x to either side of it.
     let lens = Lens::flat(frame, room, true);
     assert_eq!(lens.at([3.0, 21.0, 0.0]) - lens.at([2.0, 20.0, 0.0]), vec2(10.0, -10.0));
     assert_eq!((lens.at([2.0, 10.0, 0.0]), lens.at([2.0, 30.0, 0.0])), (room.center_bottom(), room.center_top()));
-    assert_eq!(lens.edges(), [(-18.0, 22.0), (10.0, 30.0)]);
+    assert_eq!(lens.on_plane(room.left_bottom(), [0, 1, 2], 0.0), Some([-18.0, 10.0, 0.0]));
+
+    // An axis is reversed: what was to the right is to the left, and what was up is down.
+    let lens = Lens::flat(frame, room, false).reversed([true, false, false]);
+    assert_eq!((lens.at([0.0, 10.0, 0.0]), lens.at([4.0, 30.0, 0.0])), (room.right_bottom(), room.left_top()));
+    assert_eq!(lens.on_plane(room.left_bottom(), [0, 1, 2], 0.0), Some([4.0, 10.0, 0.0]));
+    let lens = Lens::flat(frame, room, false).reversed([true, true, false]);
+    assert_eq!((lens.at([0.0, 10.0, 0.0]), lens.at([4.0, 30.0, 0.0])), (room.right_top(), room.left_bottom()));
+    // Moved by hand, it goes with the pointer whichever way its axes run.
+    let moved = lens.moved(vec2(100.0, 20.0));
+    assert_eq!(
+        Lens::flat(moved, room, false).reversed([true, true, false]).at(frame.middle),
+        room.center() + vec2(100.0, 20.0)
+    );
 }
 
 #[test]

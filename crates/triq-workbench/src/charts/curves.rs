@@ -112,7 +112,7 @@ impl Curve {
             None => framed(ui),
         };
         slot.widget_info(|| {
-            let mut slot = WidgetInfo::labeled(Role::Button, true, letter);
+            let mut slot = WidgetInfo::labeled(Role::Button, true, format!("{letter} axis"));
             slot.current_text_value = Some(said.clone());
             slot
         });
@@ -267,9 +267,12 @@ pub(super) fn draw(
 
     // A dot on the very edge of what is shown is drawn whole, not cut in half.
     let (room, looked) = (area.shrink(DOT + 2.0), *view);
-    let lens = |frame: Frame| match kind {
-        Kind::Space => Lens::space(frame, room, looked.equal, looked.from, looked.ground),
-        _ => Lens::flat(frame, room, looked.equal),
+    let lens = |frame: Frame| {
+        let lens = match kind {
+            Kind::Space => Lens::space(frame, room, looked.equal, looked.from, looked.ground),
+            _ => Lens::flat(frame, room, looked.equal),
+        };
+        lens.reversed(looked.reversed)
     };
     // How far out a chart that shows some part draws where the curves are now: beyond 1, it has lost sight of one.
     let out = |frame: Frame| newest.iter().flatten().map(|point| lens(frame).out(*point)).fold(0.0, f64::max);
@@ -300,7 +303,8 @@ pub(super) fn draw(
     let (lens, painter, dark) = (lens(frame), ui.painter_at(area), ui.visuals().dark_mode);
     match kind {
         Kind::Space => {
-            ground(ui, &painter, &lens, (lying, ground_reach(points())), area);
+            let reach = ground_reach(points(), [lying[0], lying[1]], looked.equal);
+            ground(ui, &painter, &lens, (lying, reach), area);
             origin(ui, &painter, &lens, lying[2], area);
         }
         _ => grid(ui, &painter, &lens, area),
@@ -330,40 +334,49 @@ pub(super) fn draw(
 /// it follows a curve. Each says its value where it leaves the chart: those of x at the
 /// bottom, and those of y at the right. Where an axis is 0, its line is stronger.
 fn grid(ui: &mut Ui, painter: &Painter, lens: &Lens, area: Rect) {
-    // What the chart shows: the values that are drawn in two opposite corners.
+    // What the chart shows: the values that are drawn in two opposite corners. Which of the
+    // two is the smaller goes by which way the axis runs.
     let corners = [area.left_bottom(), area.right_top()].map(|corner| lens.on_plane(corner, [0, 1, 2], 0.0));
-    let [Some(least), Some(most)] = corners else { return };
+    let [Some(one), Some(other)] = corners else { return };
+    let shown = |axis: usize| (one[axis].min(other[axis]), one[axis].max(other[axis]));
     let (faint, font) = (ui.visuals().weak_text_color(), egui::TextStyle::Small.resolve(ui.style()));
-    for (axis, other) in [(0, 1), (1, 0)] {
-        let step = round_step(SPACING / lens.scale(axis));
-        for value in marks(least[axis], most[axis], step) {
+    for (axis, across) in [(0, 1), (1, 0)] {
+        let ((least, most), (from, to), step) = (shown(axis), shown(across), round_step(SPACING / lens.scale(axis)));
+        for value in marks(least, most, step) {
             let end = |far: f64| {
                 let mut point = [0.0; 3];
-                (point[axis], point[other]) = (value, far);
+                (point[axis], point[across]) = (value, far);
                 lens.at(point)
             };
-            // From the top to the bottom, or from the left to the right: the value is written at the end.
-            let (from, to) = (end(most[other]), end(least[other]));
-            let (from, to) = if axis == 0 { (from, to) } else { (to, from) };
+            let ends = [end(from), end(to)];
             let strength = if value == 0.0 { 0.7 } else { 0.25 };
-            painter.line_segment([from, to], Stroke::new(1.0, faint.gamma_multiply(strength)));
+            painter.line_segment(ends, Stroke::new(1.0, faint.gamma_multiply(strength)));
+            // The value is written at the bottom of a line that goes up, and at the right of one that goes across.
+            let lower = if ends[0].y > ends[1].y { ends[0] } else { ends[1] };
+            let at = if axis == 0 { lower } else { egui::pos2(ends[0].x.max(ends[1].x), ends[0].y) };
             let written = painter.layout_no_wrap(tick(value, step), font.clone(), faint);
             let within = area.shrink2(written.size() / 2.0 + egui::vec2(2.0, 1.0));
-            ui.put(Rect::from_center_size(to.clamp(within.min, within.max), written.size()), egui::Label::new(written));
+            ui.put(Rect::from_center_size(at.clamp(within.min, within.max), written.size()), egui::Label::new(written));
         }
     }
 }
 
 /// The ground of a chart in space: the plane where the axis that is up is 0, as a grid. It is
-/// a part of the world: it reaches `reach` from where every axis is 0 along each of its two
-/// axes, wherever the chart looks, and its lines are at round values. A curve moves over it,
+/// a part of the world: it reaches `reach` from where every axis is 0 along its two axes,
+/// wherever the chart looks, and its lines are at round values. A curve moves over it,
 /// and a chart that follows a curve moves over it with the curve.
 ///
 /// The values are written along the axes: those of each axis along the line where the other
 /// is 0, with the letter of the axis after the last of them. When the chart does not show
 /// that line, they are written along the line nearest to it that the chart shows, a little in
 /// from the edge. Where an axis is 0, its line is stronger.
-fn ground(ui: &mut Ui, painter: &Painter, lens: &Lens, ([along, beside, up], reach): ([usize; 3], f64), area: Rect) {
+fn ground(
+    ui: &mut Ui,
+    painter: &Painter,
+    lens: &Lens,
+    ([along, beside, up], reach): ([usize; 3], [f64; 2]),
+    area: Rect,
+) {
     // What of the ground the chart shows: the points of it that are drawn in the corners. Seen
     // from its own level the ground is a line, and nothing of it is drawn.
     let corners = [area.left_top(), area.right_top(), area.right_bottom(), area.left_bottom()];
@@ -373,7 +386,8 @@ fn ground(ui: &mut Ui, painter: &Painter, lens: &Lens, ([along, beside, up], rea
         let values = corners.iter().map(|corner| corner[axis]);
         let (least, most) =
             values.fold((f64::INFINITY, f64::NEG_INFINITY), |(least, most), value| (least.min(value), most.max(value)));
-        (least.max(-reach), most.min(reach))
+        let reach = if axis == along { reach[0] } else { reach[1] };
+        ((least.max(-reach), most.min(reach)), reach)
     };
     let at = |axis: usize, value: f64, across: f64| {
         let mut point = [0.0; 3];
@@ -389,7 +403,7 @@ fn ground(ui: &mut Ui, painter: &Painter, lens: &Lens, ([along, beside, up], rea
     // Where values are written already: none is written over another.
     let mut taken: Vec<Rect> = Vec::new();
     for (axis, step, across) in [(along, steps[0], steps[1]), (beside, steps[1], steps[0])] {
-        let ((least, most), (from, to)) = (shown(axis), shown(along + beside - axis));
+        let (((least, most), reach), ((from, to), _)) = (shown(axis), shown(along + beside - axis));
         if least > most || from > to || !step.is_finite() || !across.is_finite() {
             continue;
         }

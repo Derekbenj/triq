@@ -149,9 +149,15 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
 
 /// The lines of the chart of that name, from the time `since` at its left
 /// edge to `until` at its right. The chart reaches from the smallest value in
-/// view at the bottom to the largest at the top, and says at its right edge
-/// what those are.
-pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<'_>, since: f64, until: f64) {
+/// view at the bottom to the largest at the top, or the other way round if it
+/// is `reversed`, and says at its right edge what those are.
+pub(super) fn lines(
+    ui: &mut Ui,
+    (name, reversed): (&str, bool),
+    drawn: &[Line],
+    recorded: Recorded<'_>,
+    (since, until): (f64, f64),
+) {
     let (whole, chart) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
     // The drawing is called by the chart's name, for whoever cannot see it.
     chart.widget_info(|| WidgetInfo::labeled(Role::Canvas, true, name));
@@ -167,6 +173,7 @@ pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<
     let inside = area.shrink2(egui::vec2(0.0, 2.0));
     let place = |(at, value): &(f64, f64)| {
         let (across, up) = ((at - since) / seconds, (value - low) / (high - low));
+        let up = if reversed { 1.0 - up } else { up };
         egui::pos2(egui::lerp(inside.x_range(), across as f32), egui::lerp(inside.bottom()..=inside.top(), up as f32))
     };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
@@ -180,8 +187,9 @@ pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));
     };
-    corner(ui, area, Layout::top_down(Align::Max), written(high));
-    corner(ui, area, Layout::bottom_up(Align::Max), written(low));
+    let (top, bottom) = if reversed { (low, high) } else { (high, low) };
+    corner(ui, area, Layout::top_down(Align::Max), written(top));
+    corner(ui, area, Layout::bottom_up(Align::Max), written(bottom));
     corner(ui, foot, Layout::left_to_right(Align::Center), format!("{seconds} s ago"));
     corner(ui, foot, Layout::right_to_left(Align::Center), "now".to_owned());
 

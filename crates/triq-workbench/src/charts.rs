@@ -409,7 +409,8 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
     // The lines pass behind what is written, and show through what it is written on.
     let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
     backing.show(ui, |ui| {
-        ui.horizontal(|ui| {
+        // On a chart that is too narrow for all of it, the row goes on in the next line.
+        ui.horizontal_wrapped(|ui| {
             let label = ui.label("Show the last");
             let seconds = egui::DragValue::new(&mut chart.seconds).range(1.0..=History::LONGEST).suffix(" s");
             ui.add(seconds).labelled_by(label.id).on_hover_text("How much of the past this chart shows");
@@ -431,6 +432,14 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
                 });
                 let about = "Which two axes are the ground, where the grid is. The third is up.";
                 chosen.response.labelled_by(label.id).on_hover_text(about);
+            }
+            // An axis runs the other way when the button of its letter is down. Numbers over
+            // time have the one axis of values, which is up: y.
+            ui.weak("Reverse");
+            let axes = if chart.kind == Kind::Time { 1..2 } else { 0..chart.kind.axes() };
+            for axis in axes {
+                let about = "Have this axis run the other way: to the left, or down";
+                ui.toggle_value(&mut chart.view.reversed[axis], ["x", "y", "z"][axis]).on_hover_text(about);
             }
             let about = "Show or hide the names of what is drawn on this chart";
             ui.toggle_value(&mut chart.legend, "Legend").on_hover_text(about);
@@ -468,7 +477,7 @@ impl Behavior<Chart> for Drawn<'_> {
             let whole = ui.available_rect_before_wrap();
             let (name, shown) = (chart.name(), (self.now - chart.seconds, self.now));
             match chart.kind {
-                Kind::Time => lines::lines(ui, &name, &chart.lines, self.recorded, shown.0, shown.1),
+                Kind::Time => lines::lines(ui, (&name, chart.view.reversed[1]), &chart.lines, self.recorded, shown),
                 kind => curves::draw(ui, (&name, kind), &mut chart.curves, &mut chart.view, self.recorded, shown),
             }
             ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| written_over(ui, chart, self.recorded));
