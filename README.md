@@ -552,7 +552,10 @@ is made:
 
 The workbench measures none of this itself. A runtime reports counters for each of its connections,
 and the workbench reads them ten times a second and keeps what they say. So a line has ten points a
-second, whatever the rate of the data. A rate is taken over the half second before each point, and
+second, whatever the rate of the data. Asking the runtimes it knows takes a millisecond or two each.
+Finding out which runtimes there are takes far longer, about a millisecond for every output on the
+machine, so the workbench does that only when a runtime announces that it came, went or changed,
+and every two seconds besides. A rate is taken over the half second before each point, and
 is timed by when the samples were sent: both ends of a connection report the send time of their
 newest sample, which the sender stamps on it. If samples were counted against the clock of the
 workbench's readings instead, sixty samples a second would read as 58, 60 or 62. The longest gap is

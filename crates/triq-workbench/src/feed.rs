@@ -1,9 +1,11 @@
 //! The workbench's link to the machine, kept off the thread that draws.
 //!
 //! One thread keeps the list of inventories fresh: it asks every runtime ten
-//! times a second, and at once when one announces a change. From one reading
-//! of the counters to another it works out how fast data is flowing, and it
-//! keeps what each connection did as history. Another thread carries out what
+//! times a second, and at once when one announces a change. Which runtimes
+//! there are it finds out when one announces a change, and once a second
+//! besides: looking the machine over takes far longer than asking them. From
+//! one reading of the counters to another it works out how fast data is
+//! flowing, and it keeps what each connection did as history. Another thread carries out what
 //! the user asked for, one request at a time, so a slow runtime never freezes
 //! the window. Requests that belong together are carried out in their order,
 //! as far as the runtimes go along with them. A third thread reads the topics
@@ -26,6 +28,10 @@ use triq::{Inventory, Placement, Remote, Watch};
 /// How often the machine is read when nothing announces a change. Every
 /// reading is a point on a chart.
 const REFRESH: Duration = Duration::from_millis(100);
+/// How often the machine is looked over for runtimes when none has announced a change, in case
+/// one came without saying so. Looking it over takes a millisecond or so for every service
+/// there is: with fifty outputs running, as long as there is between two readings.
+const LOOKED_OVER: Duration = Duration::from_secs(2);
 /// How often the rates beside the pins are worked out again. Changing ten
 /// times a second they would be hard to read, and counted over so short a
 /// time they would be rough.
@@ -124,10 +130,22 @@ impl Feed {
                 let mut rated = (Instant::now(), Arc::new(Vec::new()));
                 // When history last took a reading, and when the next regular one is due.
                 let (mut recorded, mut due) = (None::<Instant>, Instant::now());
+                // The runtimes that are there, when the machine was last looked over for them,
+                // and whether one has announced a change since.
+                let (mut runtimes, mut looked, mut heard) = (Vec::<String>::new(), None::<Instant>, true);
                 while !shared.stop.load(Ordering::Acquire) {
                     // Whatever was seen to before the machine is read shows in the reading.
                     let seen_to = shared.seen_to.load(Ordering::Acquire);
-                    if let Ok(found) = triq::discover() {
+                    let found = if heard || looked.is_none_or(|at| at.elapsed() >= LOOKED_OVER) {
+                        looked = Some(Instant::now());
+                        triq::discover()
+                    } else {
+                        // A runtime that does not answer is gone, and is left out until it is found again.
+                        let asked = |runtime: &String| Remote::open(runtime).and_then(|remote| remote.inventory()).ok();
+                        Ok(runtimes.iter().filter_map(asked).collect())
+                    };
+                    if let Ok(found) = found {
+                        runtimes = found.iter().map(|inventory| inventory.runtime.clone()).collect();
                         let found = Arc::new(found);
                         // Changes can be announced in quick succession, and two
                         // readings a few milliseconds apart would say little.
@@ -148,7 +166,8 @@ impl Feed {
                     while due <= now {
                         due += REFRESH;
                     }
-                    let _ = watch.wait(due - now);
+                    // Not hearing is no proof that nothing changed: then the machine is looked over.
+                    heard = watch.wait(due - now).unwrap_or(true);
                 }
             }
         })?;

@@ -3,11 +3,20 @@
 mod scene;
 use scene::*;
 use serde_json::json;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use triq::{NodeInfo, NodeState, Placement};
 use triq_workbench::feed::{Feed, Request};
 use triq_workbench::history::Connection;
+
+/// Held by each test from before it starts its feed. A feed asks every runtime on the machine,
+/// and the first time it asks one takes a moment: many times what asking it again does. Four
+/// feeds doing that at once, while the scenes of four tests come and go and whatever else
+/// runs on the machine is asked too, take longer over it than a test waits.
+fn one_at_a_time() -> MutexGuard<'static, ()> {
+    static FEED: Mutex<()> = Mutex::new(());
+    FEED.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn node(feed: &Feed, runtime: &str, name: &str) -> Option<NodeInfo> {
     let inventories = feed.inventories();
@@ -17,6 +26,7 @@ fn node(feed: &Feed, runtime: &str, name: &str) -> Option<NodeInfo> {
 
 #[test]
 fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
+    let _turn = one_at_a_time();
     let redraws = Arc::new(AtomicUsize::new(0));
     let feed = Feed::start({
         let redraws = redraws.clone();
@@ -120,6 +130,7 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
 
 #[test]
 fn nothing_of_the_feed_runs_once_it_is_dropped() -> triq::Result {
+    let _turn = one_at_a_time();
     // What the feed calls to have the window drawn again belongs to its threads.
     let kept = Arc::new(());
     let feed = Feed::start({
@@ -141,6 +152,7 @@ fn nothing_of_the_feed_runs_once_it_is_dropped() -> triq::Result {
 
 #[test]
 fn requests_that_are_applied_together_stop_at_the_first_that_is_refused() -> triq::Result {
+    let _turn = one_at_a_time();
     let feed = Feed::start(|| {})?;
     let Scene { robot, desk, imu: _imu, viewer: _viewer } = Scene::new()?;
     let (robot, desk) = (robot.name().to_owned(), desk.name().to_owned());
@@ -183,6 +195,7 @@ fn requests_that_are_applied_together_stop_at_the_first_that_is_refused() -> tri
 
 #[test]
 fn the_feed_says_when_what_was_asked_for_shows_in_what_it_reports() -> triq::Result {
+    let _turn = one_at_a_time();
     let feed = Feed::start(|| {})?;
     let Scene { robot, desk: _desk, imu: _imu, viewer: _viewer } = Scene::new()?;
     let robot = robot.name().to_owned();
