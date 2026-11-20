@@ -4,27 +4,19 @@
 //! times, so what a chart must show is known exactly.
 #[path = "support/scene.rs"]
 mod scene;
+#[path = "support/charts.rs"]
+mod shown;
 #[path = "support/window.rs"]
 mod window;
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, Node};
 use scene::*;
+use shown::*;
 use std::time::Duration;
-use triq_workbench::charts::{self, Charts, Recorded, Trace};
+use triq_workbench::charts::{self, Charts, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::{alone, click, click_holding, drag, drag_by_way_of, strokes};
-
-struct Shown {
-    charts: Charts,
-    history: History,
-    signals: Signals,
-    /// The time at the right edge of every chart.
-    now: f64,
-}
-
-type Window<'a> = Harness<'a, Shown>;
+use window::{alone, click, click_holding, drag, drag_by_way_of};
 
 /// As the workbench kept its charts when they all showed the same stretch of the past, and drew
 /// nothing but lines over time: one chart, with two lines. The second was given a colour by hand.
@@ -52,113 +44,6 @@ fn history(scene: &Scene) -> triq::Result<History> {
         history.record(&reading);
     }
     Ok(history)
-}
-
-/// The row of one number of a connection in the list: the thing to drag.
-fn number<'a>(harness: &'a Window<'_>, input: &'a str, stat: &'a str) -> Node<'a> {
-    let connection = harness.get_by_label(input).parent().expect("the connection's part of the list");
-    connection.get_by_label(stat)
-}
-
-/// Where to press on one number in the list. Topics of other programs on the
-/// machine may be listed above it, so it is brought into view first.
-fn grab(harness: &mut Window<'_>, entry: &str, word: &str) -> egui::Pos2 {
-    number(harness, entry, word).scroll_to_me();
-    harness.run_steps(3);
-    number(harness, entry, word).rect().center()
-}
-
-fn shows(harness: &Window<'_>, label: &str) -> bool {
-    harness.query_all_by_label(label).next().is_some()
-}
-
-/// A place on each empty chart: where it says so.
-fn empty(harness: &Window<'_>) -> Vec<egui::Pos2> {
-    harness.query_all_by_label("Drag a number here.").map(|hint| hint.rect().center()).collect()
-}
-
-/// Type into the box on a chart that says how much of the past it shows.
-fn show_the_last(harness: &mut Window<'_>, chart: &str, seconds: f64) {
-    let room = room(harness, chart);
-    let past = harness.query_all_by_role(Role::SpinButton).find(|number| room.contains(number.rect().center()));
-    past.expect("a box on the chart").set_value_accesskit(seconds);
-    harness.run_steps(3);
-}
-
-/// Whether something is written on a chart.
-fn written_on(harness: &Window<'_>, chart: &str, label: &str) -> bool {
-    let room = room(harness, chart);
-    harness.query_all_by_label(label).any(|written| room.contains(written.rect().center()))
-}
-
-/// The charts in a window. The list holds every topic on the machine, and they are first
-/// read a moment after the start: the window opens after that, so that the topics of other
-/// programs do not come into the list, and move its rows, under a pointer that took aim.
-fn open(shown: Shown) -> Window<'static> {
-    assert!(wait_for(|| !shown.signals.topics().is_empty()), "the topics of the machine are listed");
-    let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
-        |ui, shown: &mut Shown| {
-            let recorded = Recorded { history: &shown.history, signals: &shown.signals };
-            shown.charts.show(ui, recorded, shown.now);
-        },
-        shown,
-    );
-    harness.run_steps(3);
-    harness
-}
-
-/// Where the name of a chart is, on the bar above it: the thing to take a chart by.
-fn name(harness: &Window<'_>, chart: &str) -> egui::Rect {
-    harness.get_by_role_and_label(Role::Button, chart).rect()
-}
-
-/// The name of a chart on the bar above it: a click brings the chart forward.
-fn name_of<'a>(harness: &'a Window<'_>, chart: &'a str) -> Node<'a> {
-    harness.get_by_role_and_label(Role::Button, chart)
-}
-
-/// Where a chart is drawn, under its bar.
-fn room(harness: &Window<'_>, chart: &str) -> egui::Rect {
-    harness.get_by_role_and_label(Role::Canvas, chart).rect()
-}
-
-/// Press the button that adds a chart.
-fn add(harness: &mut Window<'_>) {
-    harness.get_by_label("New chart").click();
-    harness.run_steps(3);
-}
-
-/// Take a chart by its name and put it down at a place.
-fn put(harness: &mut Window<'_>, chart: &str, at: egui::Pos2) {
-    let name = name(harness, chart);
-    drag(harness, name.center(), at);
-    harness.run_steps(10);
-}
-
-/// The middle of one half of where a chart is drawn: `side` points from the chart's middle to that half.
-fn half(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
-    let room = room(harness, chart);
-    room.center() + side * room.size() / 4.0
-}
-
-/// Where to put a chart down to make it the neighbour of another on that side: high on the
-/// half, where the highlight takes in the bar above the chart as well.
-fn beside(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
-    half(harness, chart, side) - egui::vec2(0.0, 30.0)
-}
-
-/// Where to put a chart down to have it go in with another, as a group of the two: low on the
-/// half, where the highlight is all under the bar.
-fn within(harness: &Window<'_>, chart: &str, side: egui::Vec2) -> egui::Pos2 {
-    half(harness, chart, side) + egui::vec2(0.0, 30.0)
-}
-
-/// Press the cross beside the name of a chart.
-fn close(harness: &mut Window<'_>, chart: &str) {
-    let name = name(harness, chart);
-    let cross = harness.query_all_by_label("Close").find(|cross| name.contains(cross.rect().center()));
-    cross.expect("a cross beside the name").click();
-    harness.run_steps(3);
 }
 
 #[test]
@@ -282,16 +167,6 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(!shows(&harness, &format!("{viewed} latency")), "the second chart is gone");
     assert!(!shows(&harness, "Close"), "and the last chart stays");
     Ok(())
-}
-
-/// A window for arranging charts in. The scene was read twice while nothing
-/// happened in it: enough to put numbers on charts, though every line is flat.
-fn arranging(scene: &Scene, charts: Charts) -> triq::Result<Window<'static>> {
-    let (mut history, reading) = (History::default(), scene.inventories());
-    history.record(&reading);
-    history.record(&later(&reading, scene.inventories(), [Duration::from_secs(2); 2]));
-    let now = history.newest().expect("a point");
-    Ok(open(Shown { charts, history, signals: Signals::start()?, now }))
 }
 
 /// The lines on the charts by name, row by row from the top, and from left to right in a row.
@@ -459,12 +334,6 @@ fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     });
     assert!(unread);
     Ok(())
-}
-
-/// The colour a line on a chart is drawn in, as the button beside its name says it: `#rrggbbaa`.
-fn colour(harness: &Window<'_>, line: &str) -> String {
-    let names = harness.get_by_label(line).parent().expect("the name's row");
-    names.get_by_role(Role::ColorWell).value().expect("a colour")
 }
 
 #[test]
@@ -865,17 +734,6 @@ fn several_numbers_are_chosen_and_dragged_onto_a_chart_together() -> triq::Resul
     put(&mut harness, "lost", "Chart 1");
     assert_eq!(lines(&harness, &scene)[..4], [latency, rate, gap, lost]);
     Ok(())
-}
-
-/// The pieces that the lines of a chart are drawn in, from left to right: how strong the colour of each is.
-fn strengths(harness: &Window<'_>, chart: &str) -> Vec<u8> {
-    let room = room(harness, chart).expand(1.0);
-    let lines = strokes(harness).into_iter().filter(|(points, _, width)| {
-        *width == 2.0 && points.len() > 1 && points.iter().all(|point| room.contains(*point))
-    });
-    let mut pieces: Vec<(f32, u8)> = lines.map(|(points, color, _)| (points[0].x, color.a())).collect();
-    pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
-    pieces.into_iter().map(|(_, strength)| strength).collect()
 }
 
 #[test]
