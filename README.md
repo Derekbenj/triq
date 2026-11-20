@@ -587,7 +587,7 @@ list of numbers, the lines over time, the curves of numbers against each other,
 how those are looked at and what a line is drawn with in `charts/`),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 5,560 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 5,830 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
