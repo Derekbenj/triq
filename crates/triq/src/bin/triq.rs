@@ -155,14 +155,9 @@ fn describe_node(node: &NodeInfo) -> String {
     for input in &node.inputs {
         _ = writeln!(text, "    {}", port(&input.port));
         for source in &input.sources {
-            let state = match (&source.problem, source.connected) {
-                (Some(problem), _) => problem.as_str(),
-                (None, true) => "connected",
-                (None, false) => "waiting for the output",
-            };
             _ = writeln!(
                 text,
-                "      <- {} ({state}, {} received, {} lost, {} us latency, {} us longest gap)",
+                "      <- {} ({} received, {} lost, {} us latency, {} us longest gap)",
                 source.output, source.received, source.lost, source.latency_us, source.gap_us
             );
         }

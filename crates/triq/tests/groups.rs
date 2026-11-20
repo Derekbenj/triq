@@ -211,5 +211,10 @@ fn a_group_that_could_not_be_made_is_not_offered() -> triq::Result {
     rt.register_group("mismatched", from_outside)?;
     assert!(matches!(rt.spawn_kind("mismatched", "m", Placement::Dedicated, json!(null)), Err(Error::Mismatch(_))));
     assert_eq!(rt.inventory().nodes.len(), 1, "only the node that was there before");
+    // So is an output outside the group that is not there then: a wire needs both its ends.
+    let early = two().connect(&format!("{}/nobody/out", rt.name()), "a/input");
+    rt.register_group("early", early)?;
+    assert!(matches!(rt.spawn_kind("early", "e", Placement::Dedicated, json!(null)), Err(Error::Unknown(_))));
+    assert_eq!(rt.inventory().nodes.len(), 1, "only the node that was there before");
     Ok(())
 }

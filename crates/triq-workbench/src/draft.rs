@@ -376,16 +376,8 @@ fn input_mut<'a>(machine: &'a mut [Inventory], name: &str) -> Option<&'a mut Inp
 
 /// Have the input called `to` hear the output called `from`, as a wire that was drawn does.
 fn hear(machine: &mut [Inventory], from: String, to: &str) {
-    let source = SourceInfo {
-        output: from,
-        connected: true,
-        problem: None,
-        received: 0,
-        lost: 0,
-        sent_ns: 0,
-        latency_us: 0,
-        gap_us: 0,
-    };
+    let source =
+        SourceInfo { output: from, connected: true, received: 0, lost: 0, sent_ns: 0, latency_us: 0, gap_us: 0 };
     if let Some(input) = input_mut(machine, to) {
         input.sources.push(source);
     }

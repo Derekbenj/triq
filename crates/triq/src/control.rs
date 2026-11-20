@@ -25,7 +25,7 @@ type Server = iceoryx2::port::server::Server<Svc, [u8], (), [u8], ()>;
 type Client = iceoryx2::port::client::Client<Svc, [u8], (), [u8], ()>;
 
 const MAX_CLIENTS: usize = 32;
-/// How often a runtime looks for outputs its inputs are still waiting for, and for outputs that are gone.
+/// How often a runtime looks whether the outputs that its inputs hear are still there.
 const HOUSEKEEPING: Duration = Duration::from_millis(250);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(5);
 const LIVENESS_CHECK: Duration = Duration::from_millis(100);
@@ -200,7 +200,7 @@ fn serve(server: &Server, listener: &Listener, notifier: &Notifier, owner: &Weak
                 notifier.notify()?;
             }
         }
-        owner.follow_outputs();
+        owner.drop_gone();
     }
     Ok(())
 }

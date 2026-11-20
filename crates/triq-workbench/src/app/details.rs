@@ -201,14 +201,12 @@ pub(super) fn node_details(
         }
         for source in &input.sources {
             let drafted = marks.wire(&source.output, &name);
-            let link = match (&source.problem, source.connected) {
-                _ if drafted == Some(Mark::New) => "to be connected, when the draft is applied".to_owned(),
-                (Some(problem), _) => problem.clone(),
-                (None, true) => format!(
+            let link = match drafted {
+                Some(Mark::New) => "to be connected, when the draft is applied".to_owned(),
+                _ => format!(
                     "{} received, {} lost, {} µs latency, {} µs longest gap",
                     source.received, source.lost, source.latency_us, source.gap_us
                 ),
-                (None, false) => "waiting for the output".to_owned(),
             };
             ui.weak(format!("from {}", source.output));
             ui.horizontal_wrapped(|ui| {

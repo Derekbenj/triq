@@ -65,7 +65,6 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     for label in ["imu", "smoother", "viewer", "New filter", "raw: Pose", "smooth: Pose", "image: u8[]"] {
         assert!(shows(&harness, label), "{label:?} is on screen");
     }
-    assert!(shows(&harness, "waiting"), "a connection without its output says so");
     assert_eq!(wires(&harness, [&robot, &desk]), 2);
 
     // Where data flows, the pins say how fast.

@@ -171,10 +171,11 @@ fn periodic_nodes_and_removal_work_in_a_shared_pool() -> triq::Result {
     while probe.input.recv()?.is_some() {}
     std::thread::sleep(Duration::from_millis(30));
     assert!(probe.input.recv()?.is_none(), "a removed node no longer runs");
-    // Its connection went with it. The probe is connected again, to the node that will take the name.
-    rt.connect("ticker/output", "probe/input")?;
+    // Its name is free again, and its connection went with it: the node that takes the name
+    // is heard once the probe is connected to it.
     rt.spawn::<Ticker>("ticker", Placement::pool("work"), ())?;
-    assert_eq!(collect(&probe.input, 1)[0], 1, "and its name is free again");
+    rt.connect("ticker/output", "probe/input")?;
+    assert!(!collect(&probe.input, 1).is_empty(), "the new node runs, and is heard");
     Ok(())
 }
 

@@ -77,8 +77,8 @@ fn a_watcher_hears_every_change_and_nothing_else() -> triq::Result {
     check("a node the application holds");
     rt.connect("bench/feed", "gain1/input")?;
     check("a connection");
-    rt.connect("later/out", "bench/probe")?;
-    check("a connection that waits for its output");
+    rt.connect("gain1/output", "bench/probe")?;
+    check("another connection");
     rt.set_params("gain1", json!({ "factor": 3 }))?;
     check("new settings");
     rt.pause("gain1")?;
@@ -89,8 +89,15 @@ fn a_watcher_hears_every_change_and_nothing_else() -> triq::Result {
     check("factory information");
     rt.disconnect("bench/feed", "gain1/input")?;
     check("a disconnection");
+    let before = revision.get();
     rt.remove("gain1")?;
     check("a removal");
+    // The probe heard the node that is gone. It lets go of it a moment later, which is one more
+    // change: it may come so soon after the removal that the two are heard as one.
+    assert!(wait_for(|| rt.inventory().nodes[0].inputs[0].sources.is_empty()), "the probe lets go");
+    while watch.wait(Duration::from_millis(5))? {}
+    assert!(rt.inventory().revision >= before + 2, "letting go moves the runtime's revision on again");
+    revision.set(rt.inventory().revision);
 
     // Messages are not changes.
     rt.connect("bench/feed", "bench/probe")?;

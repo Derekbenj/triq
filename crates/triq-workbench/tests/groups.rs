@@ -4,8 +4,7 @@
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
-use triq::Remote;
-use triq::prelude::*;
+use triq::{Placement, Remote};
 use triq_workbench::graph::{self, Card, Cut, Groups, Kind, Places};
 use triq_workbench::snarl::Snarl;
 
@@ -43,13 +42,6 @@ fn wires(snarl: &Snarl<Card>) -> Vec<String> {
 
 fn groups<const N: usize>(members: [(String, &str); N]) -> Groups {
     members.into_iter().map(|(node, group)| (node, group.to_owned())).collect()
-}
-
-/// The camera that the viewer waits for.
-#[derive(Ports)]
-#[allow(dead_code)]
-struct CameraPorts {
-    image: Output<[u8]>,
 }
 
 #[test]
@@ -108,7 +100,7 @@ fn a_group_is_drawn_as_one_card_with_the_ports_that_lead_outside_it() -> triq::R
     let cards = graph::cards(&scene.inventories(), &mixed, None);
     let both = called(&cards, "/both");
     assert_eq!(both.runtime(), None);
-    // The viewer's input for images waits for an output that does not exist: it leads outside the group.
+    // The viewer's input for images is connected to nothing: the card of the group offers it.
     let mut heard = written(both)[0].clone();
     heard.sort();
     assert_eq!(heard, ["smoother.raw: Pose", "viewer.image: u8[]", "viewer.pose: Pose"]);
@@ -195,10 +187,7 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
         (format!("{desk}/viewer"), "all"),
     ]);
     let cards = graph::cards(&scene.inventories(), &all, Some("all"));
-    // The viewer's input for images waits for an output that does not exist: there is no pin for
-    // that out there. The viewer's own pin says what it waits for.
     assert!(cards.iter().all(|card| card.node().is_some()));
-    assert_eq!(called(&cards, &format!("{desk}/viewer")).waiting(1), [format!("{robot}/camera/image")]);
     Ok(())
 }
 
@@ -225,28 +214,6 @@ fn the_ports_around_a_group_are_offered_one_group_out_and_no_further() -> triq::
     assert_eq!(free("sensing/filters"), ["near.raw: Pose", "viewer.pose: Pose"]);
     // In the outer group, those are offered: the other filter, and the viewer's input that hears nothing.
     assert_eq!(free("sensing"), ["spare.raw: Pose", "viewer.image: u8[]", "viewer.pose: Pose"]);
-    Ok(())
-}
-
-#[test]
-fn an_input_that_only_waits_is_offered_as_one_that_is_connected_to_nothing() -> triq::Result {
-    let scene = Scene::new()?;
-    let robot = scene.robot.name().to_owned();
-    // The viewer's input for images waits for the output of a camera that does not exist: it
-    // hears nothing. Seen from inside a group beside the viewer it is on Group Output, to be wired.
-    let filtering = groups([(format!("{robot}/smoother"), "filtering")]);
-    let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
-    let exit = called(&cards, "//out/filtering");
-    assert_eq!(written(exit)[0], ["viewer.pose: Pose", "viewer.image: u8[]"]);
-    // Its pin says what it waits for, there as on the viewer's own card.
-    assert_eq!(exit.waiting(1), [format!("{robot}/camera/image")]);
-
-    // The camera starts. Now the input hears an output that is outside the group, which is no
-    // affair of the group's: neither end of that wire is on the two cards.
-    let _camera: CameraPorts = scene.robot.attach("camera")?;
-    let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
-    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["viewer.pose: Pose"]);
-    assert_eq!(written(called(&cards, "//in/filtering"))[1], ["imu.pose: Pose"]);
     Ok(())
 }
 

@@ -99,9 +99,8 @@ impl Scene {
 
         let desk = Runtime::new(&unique("desk"))?;
         let viewer: ViewerPorts = desk.attach("viewer")?;
+        // Its other input, for images, is connected to nothing.
         desk.connect(&format!("{}/smoother/smooth", robot.name()), "viewer/pose")?;
-        // An output nobody offers yet.
-        desk.connect(&format!("{}/camera/image", robot.name()), "viewer/image")?;
         // A connection is live a moment after it was asked for. A test begins when both are.
         let live = |runtime: &Runtime, node: &str| {
             let nodes = runtime.inventory().nodes;

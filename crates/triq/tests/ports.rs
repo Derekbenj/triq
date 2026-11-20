@@ -283,16 +283,19 @@ fn a_loan_is_filled_in_place() -> triq::Result {
 }
 
 #[test]
-fn an_input_connected_too_early_links_once_the_output_appears() -> triq::Result {
+fn connecting_to_an_output_that_is_not_there_is_refused() -> triq::Result {
     let rt = Runtime::new(&unique("early"))?;
     let sink: Sink = rt.attach("sink")?;
-    rt.connect("later/out", "sink/input")?;
-    let waiting = &rt.inventory().nodes[0].inputs[0].sources[0];
-    assert_eq!(waiting.output, format!("{}/later/out", rt.name()));
-    assert!(!waiting.connected);
+    // No node is called `later` yet. A connection is between two ports that are there: this one
+    // is refused, in words that name what is missing, and nothing is kept of it.
+    let refused = rt.connect("later/out", "sink/input").expect_err("there is no such output");
+    assert!(matches!(&refused, Error::Unknown(what) if what.contains("later/out")), "{refused}");
+    assert!(rt.inventory().nodes[0].inputs[0].sources.is_empty());
 
+    // The node appears. Nothing waited for it: it is connected when that is asked for again.
     let source: Source = rt.attach("later")?;
-    assert!(wait_for(|| source.out.subscribers() == 1));
+    assert_eq!(source.out.subscribers(), 0);
+    rt.connect("later/out", "sink/input")?;
     source.out.send(pose(5.0))?;
     assert_eq!(*sink.input.recv()?.unwrap(), pose(5.0));
     Ok(())
@@ -406,7 +409,6 @@ fn asking_about_an_input_does_not_hold_up_its_reader() -> triq::Result {
     let source: Source = rt.attach("source")?;
     let sink: Sink = rt.attach("sink")?;
     rt.connect("source/out", "sink/input")?;
-    rt.connect("missing/out", "sink/input")?; // keeps the runtime retrying in the background
 
     let stop = std::sync::atomic::AtomicBool::new(false);
     let slow = std::thread::scope(|scope| -> triq::Result<usize> {

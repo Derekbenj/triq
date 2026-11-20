@@ -1,6 +1,6 @@
-//! A connection ends with what it is connected to: an input lets go of an
-//! output whose node was removed or whose program stopped. Only an output that
-//! has not been there yet is waited for.
+//! A connection is between two ports that are there, and ends when either
+//! goes: an input lets go of an output whose node was removed or whose program
+//! stopped, and does not hear a node that takes the name later.
 #[path = "support/helpers.rs"]
 mod helpers;
 use helpers::*;
@@ -23,25 +23,25 @@ fn wanted(rt: &Runtime, node: &str) -> Vec<(String, bool)> {
     node.inputs[0].sources.iter().map(|source| (source.output.clone(), source.connected)).collect()
 }
 
-/// Longer than a runtime takes to notice that an output is gone or has appeared.
+/// Longer than a runtime takes to notice that an output is gone.
 fn a_moment() {
     std::thread::sleep(Duration::from_millis(600));
 }
 
 #[test]
-fn an_input_waits_for_an_output_that_is_not_there_yet_and_lets_go_of_one_that_is_gone() -> triq::Result {
+fn an_input_lets_go_of_an_output_whose_program_stops() -> triq::Result {
     let consumer = Runtime::new(&unique("consumer"))?;
     let sink: Sink = consumer.attach("sink")?;
     let producer_name = unique("producer");
     let output = format!("{producer_name}/source/out");
-    // The producing program does not run yet. The input waits for it.
-    consumer.connect(&output, "sink/input")?;
-    assert_eq!(wanted(&consumer, "sink"), [(output.clone(), false)]);
+    // The producing program does not run yet: there is nothing to connect to.
+    assert!(matches!(consumer.connect(&output, "sink/input"), Err(Error::Unknown(_))));
+    assert!(wanted(&consumer, "sink").is_empty());
 
-    // It starts, and the input links to it by itself.
+    // It runs, and the input is connected to it.
     let producer = Runtime::new(&producer_name)?;
     let source: Source = producer.attach("source")?;
-    assert!(wait_for(|| source.out.subscribers() == 1), "the waiting input links by itself");
+    consumer.connect(&output, "sink/input")?;
     source.out.send(1)?;
     assert_eq!(collect(&sink.input, 1), [1]);
 

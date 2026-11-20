@@ -1,14 +1,13 @@
 //! The receiving end of a connection: one iceoryx2 subscriber per connected output.
 //!
-//! A connection is to the node that sends, not to its name. An input waits
-//! for an output that is not there yet. Once it has linked to one, and that
-//! one goes, the connection is gone with it: a node that later takes the
-//! name is not heard unless it is connected.
+//! A connection is between two ports that are there, and ends when either
+//! goes. It is to the node that sends, not to its name: a node that later
+//! takes the name is not heard unless it is connected.
 use super::{NodeGuard, PortOptions};
 use crate::inventory::SourceInfo;
 use crate::message::Headed;
 use crate::message::now_ns;
-use crate::raw::{IpcNode, Listener, PubSub, RawSample, Subscriber, any_alive};
+use crate::raw::{IpcNode, Listener, PubSub, RawSample, Subscriber};
 use crate::{Error, Header, Payload, Result, Stamp};
 use iceoryx2::identifiers::UniquePublisherId;
 use iceoryx2::prelude::{CallbackProgression, NodeState, PortFactory, PortName, ServiceName};
@@ -31,15 +30,13 @@ pub struct Input<T: Payload + ?Sized, H: Header = ()> {
 
 /// What the runtime keeps of an input after handing it to its node.
 pub(crate) trait InputPort: Send + Sync {
-    /// Remember that this input wants `output`, and subscribe if it exists already.
+    /// Subscribe to `output`. Refused if no node is there that sends on it.
     fn connect(&self, ipc: &IpcNode, output: &str) -> Result;
     fn disconnect(&self, output: &str);
-    /// Subscribe to wanted outputs that have appeared since. True if any did.
-    fn link_pending(&self, ipc: &IpcNode) -> bool;
-    /// Let go of the outputs that were linked and are gone: their node was
-    /// removed, or their program stopped. True if any was.
+    /// Let go of the outputs that are gone: their node was removed, or their
+    /// program stopped. True if any was.
     fn drop_gone(&self) -> bool;
-    /// One per linked output; a thread waiting on them wakes when data arrives.
+    /// One per connected output; a thread waiting on them wakes when data arrives.
     fn listeners(&self) -> Vec<Arc<Listener>>;
     fn info(&self) -> Vec<SourceInfo>;
     /// How many samples the node has taken from this input so far.
@@ -66,13 +63,10 @@ struct Sources<T: Payload + ?Sized, H: Header> {
     next: usize,
 }
 
-/// One output this input wants to hear from.
+/// One output this input hears.
 struct Source<T: Payload + ?Sized, H: Header> {
     output: Arc<str>,
-    /// `None` while the output is not there yet.
-    link: Option<Link<T, H>>,
-    /// Why the last attempt to link failed, other than the output not existing.
-    problem: Option<String>,
+    link: Link<T, H>,
     last_seq: u64,
     /// When the newest sample was sent, by its stamp. Zero before the first.
     last_sent_ns: u64,
@@ -124,38 +118,24 @@ struct Link<T: Payload + ?Sized, H: Header> {
     sender: UniquePublisherId,
 }
 
-/// The sending port of the node behind an output, if that node is running.
+/// The sending port of the node behind an output. `None` when no node is
+/// there: the port was closed, or the program it was in has died. A program
+/// that iceoryx2 cannot tell the state of counts as living, so that no
+/// connection is let go of on a doubt.
 fn sender<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>) -> Option<UniquePublisherId> {
-    let mut publishers = Vec::new();
+    let mut ports = Vec::new();
     service.dynamic_config().list_publishers(|publisher| {
-        publishers.push((publisher.publisher_id, publisher.node_id));
+        ports.push((publisher.publisher_id, publisher.node_id));
         CallbackProgression::Continue
     });
-    publishers.into_iter().find(|(_, owner)| any_alive(&[*owner], service)).map(|(sender, _)| sender)
-}
-
-/// Whether a sending port is gone for good: it was closed, or the program it
-/// was in is dead. Anything less certain than that is not gone.
-fn gone<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>, sender: UniquePublisherId) -> bool {
-    let mut owner = None;
-    service.dynamic_config().list_publishers(|publisher| {
-        if publisher.publisher_id == sender {
-            owner = Some(publisher.node_id);
+    let mut dead = Vec::new();
+    let _ = service.nodes(|node| {
+        if matches!(node, NodeState::Dead(_)) {
+            dead.push(*node.node_id());
         }
         CallbackProgression::Continue
     });
-    let Some(owner) = owner else { return true };
-    let mut dead = false;
-    let _ = service.nodes(|node| {
-        dead |= matches!(node, NodeState::Dead(_)) && *node.node_id() == owner;
-        CallbackProgression::Continue
-    });
-    dead
-}
-
-enum LinkError {
-    Absent,
-    Failed(Error),
+    ports.into_iter().find(|(_, owner)| !dead.contains(owner)).map(|(sender, _)| sender)
 }
 
 impl<T: Payload + ?Sized, H: Header> Input<T, H> {
@@ -170,7 +150,7 @@ impl<T: Payload + ?Sized, H: Header> Input<T, H> {
         for offset in 0..count {
             let index = (sources.next + offset) % count;
             let source = &mut sources.list[index];
-            let Some(link) = &source.link else { continue };
+            let link = &source.link;
             while let Some(raw) = T::receive(&link.subscriber)? {
                 // A node that took the name of the one this input is linked to is not heard:
                 // what it sends before the link is let go of is passed over.
@@ -243,11 +223,10 @@ impl<T: Payload + ?Sized, H: Header> Deref for Sample<T, H> {
 }
 
 impl<T: Payload + ?Sized, H: Header> Source<T, H> {
-    fn new(output: &str) -> Self {
+    fn new(output: &str, link: Link<T, H>) -> Self {
         Self {
             output: output.into(),
-            link: None,
-            problem: None,
+            link,
             last_seq: 0,
             last_sent_ns: 0,
             received: 0,
@@ -293,36 +272,36 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
     }
 
     /// Open the output's services and subscribe. iceoryx2 refuses a different message type.
-    /// An output whose services are still held by others, but which nobody sends on, is absent.
-    fn link(&self, ipc: &IpcNode, output: &str) -> std::result::Result<Link<T, H>, LinkError> {
-        let failed = |error: Error| LinkError::Failed(error);
-        let name = ServiceName::new(output).map_err(|error| failed(error.into()))?;
+    /// An output that no node sends on is not there, also while others still hold its services.
+    fn link(&self, ipc: &IpcNode, output: &str) -> Result<Link<T, H>> {
+        let absent = || Error::Unknown(format!("output {output:?}"));
+        let name = ServiceName::new(output)?;
         let service = match T::open(ipc.service_builder(&name).publish_subscribe::<T>().user_header::<Headed<H>>()) {
             Ok(service) => service,
-            Err(PublishSubscribeOpenError::DoesNotExist) => return Err(LinkError::Absent),
+            Err(PublishSubscribeOpenError::DoesNotExist) => return Err(absent()),
             Err(PublishSubscribeOpenError::IncompatibleTypes) => {
                 let expected = T::message_type::<H>();
-                return Err(failed(Error::Mismatch(format!(
+                return Err(Error::Mismatch(format!(
                     "{output} does not carry {}{}",
                     expected.name,
                     if expected.slice { " slices" } else { "" }
-                ))));
+                )));
             }
-            Err(error) => return Err(failed(error.into())),
+            Err(error) => return Err(error.into()),
         };
-        let sender = sender(&service).ok_or(LinkError::Absent)?;
+        let sender = sender(&service).ok_or_else(absent)?;
         let events = match ipc.service_builder(&name).event().open() {
             Ok(events) => events,
-            Err(EventOpenError::DoesNotExist) => return Err(LinkError::Absent),
-            Err(error) => return Err(failed(error.into())),
+            Err(EventOpenError::DoesNotExist) => return Err(absent()),
+            Err(error) => return Err(error.into()),
         };
         let mut subscriber = service.subscriber_builder().name(&self.port);
         if let Some(depth) = self.depth {
             subscriber = subscriber.buffer_size(depth);
         }
         Ok(Link {
-            subscriber: subscriber.create().map_err(|error| failed(error.into()))?,
-            listener: Arc::new(events.listener_builder().create().map_err(|error| failed(error.into()))?),
+            subscriber: subscriber.create()?,
+            listener: Arc::new(events.listener_builder().create()?),
             service: Arc::new(service),
             sender,
         })
@@ -336,18 +315,13 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
     fn connect(&self, ipc: &IpcNode, output: &str) -> Result {
         // A link to a node that is gone is no connection to the node that has its name now.
         self.drop_gone();
-        let wanted = |sources: &Sources<T, H>| sources.list.iter().any(|source| &*source.output == output);
-        if wanted(&self.sources.lock().unwrap()) {
+        let connected = |sources: &Sources<T, H>| sources.list.iter().any(|source| &*source.output == output);
+        if connected(&self.sources.lock().unwrap()) {
             return Ok(());
         }
-        let mut source = Source::new(output);
-        match self.link(ipc, output) {
-            Ok(link) => source.link = Some(link),
-            Err(LinkError::Absent) => {}
-            Err(LinkError::Failed(error)) => return Err(error),
-        }
+        let source = Source::new(output, self.link(ipc, output)?);
         let mut sources = self.sources.lock().unwrap();
-        if !wanted(&sources) {
+        if !connected(&sources) {
             sources.list.push(source);
         }
         Ok(())
@@ -362,48 +336,23 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
         let _: Vec<Source<T, H>> = gone;
     }
 
-    fn link_pending(&self, ipc: &IpcNode) -> bool {
-        let pending: Vec<Arc<str>> = {
-            let sources = self.sources.lock().unwrap();
-            sources.list.iter().filter(|source| source.link.is_none()).map(|source| source.output.clone()).collect()
-        };
-        let mut linked = false;
-        for output in pending {
-            let attempt = self.link(ipc, &output);
-            let mut sources = self.sources.lock().unwrap();
-            // The source may have been disconnected while the attempt was under way.
-            let Some(source) = sources.list.iter_mut().find(|source| source.output == output && source.link.is_none())
-            else {
-                continue;
-            };
-            match attempt {
-                Ok(link) => {
-                    source.link = Some(link);
-                    source.problem = None;
-                    linked = true;
-                }
-                Err(LinkError::Absent) => {}
-                Err(LinkError::Failed(error)) => source.problem = Some(error.to_string()),
-            }
-        }
-        linked
-    }
-
     fn drop_gone(&self) -> bool {
         // The services are looked at after the lock is released.
         let links: Vec<(Arc<PubSub<T, H>>, UniquePublisherId)> = {
             let sources = self.sources.lock().unwrap();
-            let linked = sources.list.iter().filter_map(|source| source.link.as_ref());
-            linked.map(|link| (link.service.clone(), link.sender)).collect()
+            sources.list.iter().map(|source| (source.link.service.clone(), source.link.sender)).collect()
         };
-        let lost: Vec<UniquePublisherId> =
-            links.into_iter().filter(|(service, sender)| gone(service, *sender)).map(|(_, sender)| sender).collect();
+        // An output is gone when the port that sends on it is not the one the link was made to.
+        let gone = |(service, linked): (Arc<PubSub<T, H>>, UniquePublisherId)| {
+            (sender(&service) != Some(linked)).then_some(linked)
+        };
+        let lost: Vec<UniquePublisherId> = links.into_iter().filter_map(gone).collect();
         if lost.is_empty() {
             return false;
         }
         let mut sources = self.sources.lock().unwrap();
         // A source that was connected anew in the meantime has another sender, and stays.
-        let is_lost = |source: &Source<T, H>| source.link.as_ref().is_some_and(|link| lost.contains(&link.sender));
+        let is_lost = |source: &Source<T, H>| lost.contains(&source.link.sender);
         let (left, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut sources.list).into_iter().partition(is_lost);
         sources.list = kept;
         drop(sources);
@@ -413,7 +362,7 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
 
     fn listeners(&self) -> Vec<Arc<Listener>> {
         let sources = self.sources.lock().unwrap();
-        sources.list.iter().filter_map(|source| source.link.as_ref()).map(|link| link.listener.clone()).collect()
+        sources.list.iter().map(|source| source.link.listener.clone()).collect()
     }
 
     fn taken(&self) -> u64 {
@@ -425,29 +374,27 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
             return false;
         }
         let sources = self.sources.lock().unwrap();
-        let mut linked = sources.list.iter().filter_map(|source| source.link.as_ref());
-        linked.any(|link| link.subscriber.has_samples().unwrap_or(false))
+        sources.list.iter().any(|source| source.link.subscriber.has_samples().unwrap_or(false))
     }
 
     fn info(&self) -> Vec<SourceInfo> {
         // The services are looked at after the lock is released.
-        let (mut infos, services): (Vec<SourceInfo>, Vec<_>) = {
+        let (mut infos, links): (Vec<SourceInfo>, Vec<_>) = {
             let sources = self.sources.lock().unwrap();
             let describe = |source: &Source<T, H>| SourceInfo {
                 output: source.output.to_string(),
                 connected: false,
-                problem: source.problem.clone(),
                 received: source.received,
                 lost: source.lost,
                 sent_ns: source.last_sent_ns,
                 latency_us: source.latency_ns / 1000,
                 gap_us: source.gap_ns.largest(now_ns()) / 1000,
             };
-            let service = |source: &Source<T, H>| source.link.as_ref().map(|link| link.service.clone());
-            sources.list.iter().map(|source| (describe(source), service(source))).unzip()
+            let link = |source: &Source<T, H>| (source.link.service.clone(), source.link.sender);
+            sources.list.iter().map(|source| (describe(source), link(source))).unzip()
         };
-        for (info, service) in infos.iter_mut().zip(services) {
-            info.connected = service.is_some_and(|service| sender(&service).is_some());
+        for (info, (service, linked)) in infos.iter_mut().zip(links) {
+            info.connected = sender(&service) == Some(linked);
         }
         infos
     }

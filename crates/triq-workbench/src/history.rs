@@ -178,8 +178,7 @@ impl History {
             for node in &inventory.nodes {
                 for input in &node.inputs {
                     let to = format!("{}/{}/{}", inventory.runtime, node.name, input.port.name);
-                    // An input that is still waiting for its output has nothing to measure.
-                    for source in input.sources.iter().filter(|source| source.connected) {
+                    for source in &input.sources {
                         let connection = Connection { to: to.clone(), from: source.output.clone() };
                         let passed = Reading { count: source.received, sent_ns: source.sent_ns, taken_ns };
                         let trace = self.traces.entry(connection.clone()).or_default();

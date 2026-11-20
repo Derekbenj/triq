@@ -81,6 +81,9 @@ fn a_third_program_wires_two_others_and_a_crash_takes_its_wiring_with_it() {
     // Requests the owner refuses come back as errors.
     assert!(triq(&["spawn", &left, "nope", "x"]).unwrap_err().contains("unknown"));
     assert!(triq(&["connect", &format!("{left}/ticks/output"), &format!("{right}/ghost/input")]).is_err());
+    // So does a connection to an output that is not there: nothing waits for it to appear.
+    let refused = triq(&["connect", &format!("{left}/tiks/output"), &format!("{right}/twice/input")]).unwrap_err();
+    assert!(refused.contains("unknown output") && refused.contains("tiks"), "{refused}");
 
     triq(&["set", &format!("{left}/ticks"), r#"{"period_ms":50}"#]).unwrap();
     assert_eq!(node(&left, "ticks").unwrap().params["period_ms"], 50);

@@ -52,10 +52,6 @@ fn every_node_becomes_a_card_and_every_live_connection_a_wire() -> triq::Result 
             format!("{robot}/smoother/smooth -> {desk}/viewer/pose")
         ])
     );
-    // The connection to an output that does not exist has no wire; the card says what it waits for.
-    let viewer = snarl.nodes().find(|card| card.name() == "viewer").unwrap();
-    assert_eq!(viewer.waiting(0), Vec::<String>::new());
-    assert_eq!(viewer.waiting(1), [format!("{robot}/camera/image")]);
     Ok(())
 }
 
@@ -269,7 +265,7 @@ fn a_rate_is_timed_by_when_the_samples_were_sent() -> triq::Result {
     for port in [format!("{robot}/imu/pose"), format!("{robot}/smoother/raw"), format!("{desk}/viewer/pose")] {
         assert!((rates[&port] - 60.0).abs() < 1e-6, "{port}: {}", rates[&port]);
     }
-    assert_eq!(rates[&format!("{desk}/viewer/image")], 0.0, "an input still waiting for its output reads zero");
+    assert_eq!(rates[&format!("{desk}/viewer/image")], 0.0, "an input that nothing is connected to reads zero");
 
     // And so are the points a chart draws.
     let mut history = triq_workbench::history::History::default();

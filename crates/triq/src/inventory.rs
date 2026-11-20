@@ -73,7 +73,8 @@ pub struct Group {
     pub nodes: Vec<Member>,
     /// Each from an output to an input, both `node/port` by the names the
     /// nodes have in the group. The output may also be one that is not of
-    /// the group: `runtime/node/port`.
+    /// the group: `runtime/node/port`. It has to be there when the group is
+    /// asked for, or the group is not made.
     pub wires: Vec<(String, String)>,
 }
 
@@ -154,7 +155,7 @@ pub enum NodeState {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InputInfo {
     pub port: PortSpec,
-    /// Every output this input wants to hear from: the edges of the graph.
+    /// Every output this input hears: the edges of the graph.
     pub sources: Vec<SourceInfo>,
 }
 
@@ -162,10 +163,9 @@ pub struct InputInfo {
 pub struct SourceInfo {
     /// `runtime/node/port` of the output.
     pub output: String,
-    /// The output exists and has a live sender.
+    /// The node that sends is there. False only for the moment between that
+    /// node going and the input letting go of the output.
     pub connected: bool,
-    /// Why subscribing failed, if it did for a reason other than the output not existing yet.
-    pub problem: Option<String>,
     pub received: u64,
     /// Samples overwritten in the queue before the input read them.
     pub lost: u64,

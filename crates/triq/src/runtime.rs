@@ -265,10 +265,10 @@ impl Runtime {
     /// Make the input `to` receive from the output `from`.
     ///
     /// Names are `node/port` within this runtime or `runtime/node/port`.
-    /// `to` must belong to this runtime. The output may not exist yet: the
-    /// input waits, and links to it when it appears. The connection is to
-    /// the node that sends then. When that node is removed, or its program
-    /// stops, the connection is gone with it.
+    /// `to` must belong to this runtime. Both ports must be there: an output
+    /// that no node sends on is refused, as an input that does not exist is.
+    /// The connection is to the node that sends now. When that node is
+    /// removed, or its program stops, the connection is gone with it.
     pub fn connect(&self, from: &str, to: &str) -> Result {
         self.inner.connect(from, to)
     }
@@ -459,8 +459,6 @@ impl Inner {
         }
         drop(ipc);
         self.changed();
-        // Inputs that were connected early may have been waiting for these outputs.
-        self.follow_outputs();
         Ok((ports, inputs))
     }
 
@@ -513,9 +511,8 @@ impl Inner {
         Ok(())
     }
 
-    /// Bring every input up to date with the outputs it wants: let go of those that are gone,
-    /// link to those that have appeared, and let the inputs' threads know.
-    pub(crate) fn follow_outputs(&self) {
+    /// Have every input let go of the outputs that are gone, and let the inputs' threads know.
+    pub(crate) fn drop_gone(&self) {
         let inputs: Vec<Wired> = {
             let state = self.state.lock().unwrap();
             let per_node = |record: &Record| {
@@ -524,10 +521,8 @@ impl Inner {
             };
             state.nodes.values().flat_map(per_node).collect()
         };
-        let ipc = self.ipc.lock().unwrap();
         for (input, executor) in inputs {
-            // Both are done, whatever the first finds.
-            if input.drop_gone() | input.link_pending(&ipc) {
+            if input.drop_gone() {
                 executor.inspect(|executor| _ = executor.refresh());
                 self.changed();
             }

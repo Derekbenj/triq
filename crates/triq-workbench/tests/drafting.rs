@@ -180,23 +180,24 @@ fn a_draft_can_be_discarded_and_what_is_refused_of_one_stays_a_draft() -> triq::
     assert!(!shows(&harness, "filter1") && !shows(&harness, "to be created"));
     assert_eq!((harness.state().drafted(), drawn(&harness, &viewer)), (Vec::new(), vec![first.clone()]));
 
-    // Another draft: the viewer is to hear the second filter as well, and the first is cut off.
+    // Another draft: the first filter is cut off from the viewer, which is to hear the second instead.
     press(&mut harness, "Draft");
     let graph = harness.state().graph();
     let (old, new, to) = (output(graph, &first), output(graph, &second), input(graph, &viewer));
     let extra = input(graph, &format!("{robot}/second/raw"));
+    harness.state_mut().unwire(old, to);
     harness.state_mut().wire(new, to);
     harness.state_mut().wire(sensor, extra);
-    harness.state_mut().unwire(old, to);
     harness.run_steps(3);
     assert_eq!(harness.state().drafted().len(), 3);
     // Before it is applied, the second filter is removed behind the workbench's back.
     Remote::open(&robot)?.remove("second")?;
     assert_eq!(state("second"), None);
     press(&mut harness, "Apply draft");
-    // The first change was made. The second was refused, there being no such node, and the third
-    // was not asked for: the two are a draft again, and the workbench says what went wrong.
-    assert!(wait_for(|| heard(&scene.desk) == [first.clone(), second.clone()]), "{:?}", heard(&scene.desk));
+    // The first change was made. The second was refused, there being no such output to connect
+    // to, and the third was not asked for: the two are a draft again, and the workbench says
+    // what went wrong.
+    assert!(wait_for(|| heard(&scene.desk).is_empty()), "{:?}", heard(&scene.desk));
     assert!(until(&mut harness, |harness| shows(harness, "Apply draft")), "there is a draft again");
     assert_eq!(harness.state().drafted().len(), 2);
     assert!(harness.query_by_label_contains("1 of the 3 changes were made").is_some());

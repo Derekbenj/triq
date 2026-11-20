@@ -38,7 +38,7 @@ fn a_connection_gets_a_point_for_what_happened_between_two_readings() -> triq::R
 
     let first = scene.inventories();
     history.record(&first);
-    // The viewer's other input waits for an output that does not exist: that is not a connection yet.
+    // The viewer's other input is connected to nothing.
     // Which of the two inputs comes first depends on the names the two runtimes were given.
     let mut both = [&filtered, &viewed];
     both.sort_by(|one, other| one.to.cmp(&other.to));

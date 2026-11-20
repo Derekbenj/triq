@@ -122,17 +122,7 @@ impl Viewer<'_> {
                 let received: u64 = input.sources.iter().map(|source| source.received).sum();
                 let lost: u64 = input.sources.iter().map(|source| source.lost).sum();
                 written.on_hover_text(format!("{whose}{received} received, {lost} lost"));
-                let waiting: Vec<&str> = input
-                    .sources
-                    .iter()
-                    .filter(|source| !source.connected)
-                    .map(|source| source.output.as_str())
-                    .collect();
-                if waiting.is_empty() {
-                    aside(ui, rate(self.rates, &pin.name()));
-                } else {
-                    aside(ui, "waiting".to_owned()).on_hover_text(format!("waiting for {}", waiting.join(", ")));
-                }
+                aside(ui, rate(self.rates, &pin.name()));
             }
             Port::Output(output) => {
                 written.on_hover_text(format!("{whose}{} sent to {} inputs", output.sent, output.subscribers));
