@@ -739,7 +739,30 @@ fn several_numbers_are_chosen_and_dragged_onto_a_chart_together() -> triq::Resul
     click(&mut harness, at, egui::PointerButton::Primary);
     choose(&mut harness, "lost");
     put(&mut harness, "lost", "Chart 1");
-    assert_eq!(lines(&harness, &scene)[..4], [latency, rate, gap, lost]);
+    assert_eq!(lines(&harness, &scene)[..4], [latency.clone(), rate.clone(), gap.clone(), lost.clone()]);
+
+    // Clicked with Shift held, a number is chosen with every number of the list between it and
+    // the one that was chosen last, in the order of the list: here the four of the connection.
+    let at = grab(&mut harness, &filtered, "rate");
+    click(&mut harness, at, egui::PointerButton::Primary);
+    let at = grab(&mut harness, &filtered, "latency");
+    click_holding(&mut harness, at, egui::Modifiers::SHIFT);
+    close(&mut harness, "Chart 1");
+    close(&mut harness, "Chart 3");
+    put(&mut harness, "gap", "Chart 2");
+    assert_eq!(lines(&harness, &scene), [lost.clone(), rate.clone(), gap.clone(), latency.clone()], "one was there");
+    // From a number further down to one further up, they are chosen in that order.
+    add(&mut harness);
+    let at = grab(&mut harness, &filtered, "gap");
+    click(&mut harness, at, egui::PointerButton::Primary);
+    let at = grab(&mut harness, &filtered, "rate");
+    click_holding(&mut harness, at, egui::Modifiers::SHIFT);
+    put(&mut harness, "rate", "Chart 4");
+    let place = room(&harness, "Chart 4");
+    let named = harness.query_all_by_label_contains(scene.robot.name());
+    let mut rows: Vec<_> = named.filter(|line| place.contains(line.rect().center())).collect();
+    rows.sort_by(|a, b| a.rect().top().total_cmp(&b.rect().top()));
+    assert_eq!(rows.iter().filter_map(|line| line.value()).collect::<Vec<_>>(), [gap, lost, rate]);
     Ok(())
 }
 

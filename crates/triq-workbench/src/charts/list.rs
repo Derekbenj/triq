@@ -1,8 +1,9 @@
 //! The list beside the charts: everything that has numbers, each to be dragged onto a chart.
 //!
 //! A click on a number chooses it, and with the command key held it is one
-//! more of those that are chosen. Whichever of them is dragged onto a chart
-//! takes the others along.
+//! more of those that are chosen. With Shift held, every number of the list
+//! from the one that was chosen last to this one is. Whichever of them is
+//! dragged onto a chart takes the others along.
 use super::lines::written;
 use super::{Carried, Recorded, Trace, carried};
 use crate::history::Stat;
@@ -35,10 +36,10 @@ pub(super) fn numbers(ui: &mut Ui, recorded: Recorded<'_>, chosen: &mut Vec<Trac
     let mut listed: Vec<_> = heard.chain(sent).chain(others).collect();
     listed.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let (mut opened, mut rows) = (BTreeSet::new(), Rows { chosen, seen: Vec::new() });
+    let (mut opened, mut rows) = (BTreeSet::new(), Rows { chosen, listed: Vec::new(), run_to: None });
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.weak("Drag a number onto a chart to see it over time.");
-        ui.weak("Hold Ctrl, or Cmd on a Mac, and click numbers to drag several at once.");
+        ui.weak("Hold Ctrl, or Cmd on a Mac, and click numbers to drag several at once. With Shift, a click takes all from the last one chosen to this one.");
         ui.separator();
         if listed.is_empty() {
             ui.weak("Nothing is running.");
@@ -61,19 +62,38 @@ pub(super) fn numbers(ui: &mut Ui, recorded: Recorded<'_>, chosen: &mut Vec<Trac
             ui.separator();
         }
     });
-    // What the list no longer shows is no longer chosen: nothing is dragged along unseen.
-    rows.chosen.retain(|number| rows.seen.contains(number));
+    rows.settle();
     opened
 }
 
-/// The rows of the list as they are drawn: the numbers that are chosen, in the
-/// order they were chosen in, and which of them were among the rows.
+/// The rows of the list as they are drawn.
 struct Rows<'a> {
+    /// The numbers that are chosen, in the order they were chosen in.
     chosen: &'a mut Vec<Trace>,
-    seen: Vec<Trace>,
+    /// Every number that has a row, from the top down.
+    listed: Vec<Trace>,
+    /// A number that was clicked with Shift held: the last of a run of numbers to choose.
+    run_to: Option<Trace>,
 }
 
 impl Rows<'_> {
+    /// Once every row is drawn: choose the run of numbers that a click with Shift asked for,
+    /// and let go of what the list no longer shows, so that nothing is dragged along unseen.
+    fn settle(&mut self) {
+        let row = |number: &Trace| self.listed.iter().position(|listed| listed == number);
+        if let Some(last) = self.run_to.take().and_then(|number| row(&number)) {
+            // From the number that was chosen last, down the list or up it, to the one that was clicked.
+            let first = self.chosen.last().and_then(row).unwrap_or(last);
+            let run: Vec<usize> = if first <= last { (first..=last).collect() } else { (last..=first).rev().collect() };
+            for number in run.into_iter().map(|row| self.listed[row].clone()) {
+                if !self.chosen.contains(&number) {
+                    self.chosen.push(number);
+                }
+            }
+        }
+        self.chosen.retain(|number| self.listed.contains(number));
+    }
+
     /// The numbers inside the messages of a topic that is open in the list.
     fn inside(&mut self, ui: &mut Ui, signals: &Signals, topic: &str) {
         let Some(watched) = signals.watched(topic) else {
@@ -111,17 +131,15 @@ impl Rows<'_> {
             ui.painter().set(behind, marked);
         }
         if row.clicked() {
-            match (ui.input(|input| input.modifiers.command), among) {
-                (true, true) => self.chosen.retain(|chosen| *chosen != trace),
-                (true, false) => self.chosen.push(trace.clone()),
-                // Without the key it is the only one that is chosen, or none is, if it was that already.
-                (false, _) => {
-                    *self.chosen = if *self.chosen == [trace.clone()] { Vec::new() } else { vec![trace.clone()] }
-                }
+            let held = ui.input(|input| input.modifiers);
+            match (held.shift, held.command, among) {
+                (true, ..) => self.run_to = Some(trace.clone()),
+                (_, true, true) => self.chosen.retain(|chosen| *chosen != trace),
+                (_, true, false) => self.chosen.push(trace.clone()),
+                // With no key held it is the only one that is chosen, or none is, if it was that already.
+                _ => *self.chosen = if *self.chosen == [trace.clone()] { Vec::new() } else { vec![trace.clone()] },
             }
         }
-        if self.chosen.contains(&trace) {
-            self.seen.push(trace);
-        }
+        self.listed.push(trace);
     }
 }

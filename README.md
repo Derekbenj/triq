@@ -477,7 +477,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - Drag a line by its name onto another chart to move it there. It keeps a colour that was chosen
   for it, and otherwise takes the first that is free on that chart.
 - Click a number in the list to choose it, and hold Ctrl (Cmd on a Mac) while clicking to choose
-  several. Dragging any chosen number takes the others with it, in the order they were chosen.
+  several. Hold Shift while clicking to choose every number from the one chosen last to this one.
+  Dragging any chosen number takes the others with it, in the order they were chosen.
 - `New chart` adds an empty chart beside the others. Charts are panes, arranged by hand like the
   windows, to any depth: neighbours, groups, and several in one place. Drag the line between two
   charts to give one more room and the other less.
