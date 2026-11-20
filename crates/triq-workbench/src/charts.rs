@@ -19,7 +19,7 @@
 //! reports is drawn a moment behind it, where the report has arrived.
 use crate::history::History;
 use crate::signals::{Signals, Wanted};
-use eframe::egui::{self, Ui, UiBuilder};
+use eframe::egui::{self, Sense, Ui, UiBuilder};
 use egui_tiles::{Behavior, Container, SimplificationOptions, Tile, TileId, Tiles, Tree, UiResponse};
 use lines::Line;
 use serde::{Deserialize, Serialize};
@@ -68,15 +68,55 @@ impl Chart {
         format!("Chart {}", self.number)
     }
 
-    /// Draw a line on the chart, unless it is there already. It takes the
-    /// first colour that no line on the chart was given.
-    fn add(&mut self, trace: Trace) {
-        if self.lines.iter().any(|line| line.trace == trace) {
+    /// Draw a line on the chart, unless one that follows the same number is
+    /// there already. It takes the first colour that no line on the chart was given.
+    fn put(&mut self, mut line: Line) {
+        if self.lines.iter().any(|drawn| drawn.trace == line.trace) {
             return;
         }
         let free = (0..).find(|shade| self.lines.iter().all(|line| line.shade != *shade));
-        self.lines.push(Line { trace, shade: free.unwrap_or_default(), chosen: None });
+        line.shade = free.unwrap_or_default();
+        self.lines.push(line);
     }
+
+    /// Take off the line that was given that colour.
+    fn take(&mut self, shade: usize) -> Option<Line> {
+        let line = self.lines.iter().position(|line| line.shade == shade)?;
+        Some(self.lines.remove(line))
+    }
+}
+
+/// What is dragged onto a chart.
+#[derive(Clone)]
+enum Carried {
+    /// Numbers out of the list, in the order they were chosen in.
+    Numbers(Vec<Trace>),
+    /// A line of a chart, on its way to another: the number of the chart it
+    /// is on, and which of that chart's colours it was given.
+    Line { chart: usize, shade: usize },
+}
+
+/// Draw something that is dragged onto a chart, and can be clicked as well:
+/// as `Ui::dnd_drag_source` does, which takes no clicks.
+fn carried(
+    ui: &mut Ui,
+    id: egui::Id,
+    carried: Carried,
+    contents: impl FnOnce(&mut Ui) -> egui::Response,
+) -> egui::Response {
+    if !ui.ctx().is_being_dragged(id) {
+        let drawn = contents(ui);
+        return ui.interact(drawn.rect, id, Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
+    }
+    egui::DragAndDrop::set_payload(ui.ctx(), carried);
+    // On its way, it is drawn over everything else, where the pointer is.
+    let layer = egui::LayerId::new(egui::Order::Tooltip, id);
+    let drawn = ui.scope_builder(UiBuilder::new().layer_id(layer), contents).inner;
+    if let Some(pointer) = ui.ctx().pointer_interact_pos() {
+        let to_pointer = egui::emath::TSTransform::from_translation(pointer - drawn.rect.center());
+        ui.ctx().transform_layer_shapes(layer, to_pointer);
+    }
+    drawn
 }
 
 /// The charts, with all that the next run of the workbench is to find as it was.
@@ -90,25 +130,32 @@ pub struct Charts {
     made: usize,
     /// Whether the list of numbers is shown beside the charts.
     listed: bool,
+    /// The numbers in the list that are chosen, to be dragged onto a chart together.
+    #[serde(skip)]
+    chosen: Vec<Trace>,
 }
 
 impl Default for Charts {
     fn default() -> Self {
         let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1)]);
-        Self { panes, made: 1, listed: true }
+        Self { panes, made: 1, listed: true, chosen: Vec::new() }
     }
 }
 
 impl Charts {
     /// Draw a line on the chart of that number, as dropping a number onto it does.
     pub fn add(&mut self, chart: usize, trace: Trace) {
-        for tile in self.panes.tiles.tiles_mut() {
-            if let Tile::Pane(candidate) = tile
-                && candidate.number == chart
-            {
-                candidate.add(trace.clone());
-            }
+        if let Some(chart) = self.chart(chart) {
+            chart.put(Line::new(trace));
         }
+    }
+
+    /// The chart of that number.
+    fn chart(&mut self, number: usize) -> Option<&mut Chart> {
+        self.panes.tiles.tiles_mut().find_map(|tile| match tile {
+            Tile::Pane(chart) if chart.number == number => Some(chart),
+            _ => None,
+        })
     }
 
     /// True when no chart has a line on it: nothing moves, so nothing needs drawing again.
@@ -128,7 +175,8 @@ impl Charts {
         let most = (ui.available_width() - NARROWEST_CHARTS).max(NARROWEST_LIST);
         let list = egui::Panel::left("numbers").default_size(300.0).size_range(NARROWEST_LIST..=most);
         // A list that is hidden has no topic open that anyone could see.
-        let opened = if self.listed { list.show(ui, |ui| list::numbers(ui, recorded)).inner } else { BTreeSet::new() };
+        let numbers = |ui: &mut Ui| list::numbers(ui, recorded, &mut self.chosen);
+        let opened = if self.listed { list.show(ui, numbers).inner } else { BTreeSet::new() };
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.toggle_value(&mut self.listed, "Numbers").on_hover_text("Show or hide the list of numbers");
@@ -138,7 +186,7 @@ impl Charts {
                     self.new_chart();
                 }
             });
-            let mut drawn = Drawn { recorded, now, forward: None };
+            let mut drawn = Drawn { recorded, now, forward: None, moved: None };
             let carried = self.panes.dragged_id(ui.ctx());
             self.panes.ui(&mut drawn, ui);
             if panes::tidy(&mut self.panes, carried) {
@@ -146,6 +194,13 @@ impl Charts {
             }
             if let Some(chart) = drawn.forward {
                 self.panes.make_active(|tile, _| tile == chart);
+            }
+            // A line that was put down on another chart is taken off the one it was on.
+            if let Some((from, shade, onto)) = drawn.moved.filter(|(from, _, onto)| from != onto)
+                && let Some(line) = self.chart(from).and_then(|chart| chart.take(shade))
+                && let Some(chart) = self.chart(onto)
+            {
+                chart.put(line);
             }
         });
         recorded.signals.watch(self.wanted(opened));
@@ -200,7 +255,7 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
             let seconds = egui::DragValue::new(&mut chart.seconds).range(5.0..=History::LONGEST).suffix(" s");
             ui.add(seconds).labelled_by(label.id).on_hover_text("How much of the past this chart shows");
         });
-        lines::names(ui, &mut chart.lines, recorded);
+        lines::names(ui, chart.number, &mut chart.lines, recorded);
     });
 }
 
@@ -213,19 +268,24 @@ struct Drawn<'a> {
     now: f64,
     /// A chart to bring in front of those it shares its place with.
     forward: Option<TileId>,
+    /// A line that was put down on a chart: the number of the chart it is on, which of that
+    /// chart's colours it was given, and the number of the chart it was put down on.
+    moved: Option<(usize, usize, usize)>,
 }
 
 impl Behavior<Chart> for Drawn<'_> {
     fn pane_ui(&mut self, ui: &mut Ui, _: TileId, chart: &mut Chart) -> UiResponse {
-        let (_, landed) = ui.dnd_drop_zone::<Trace, ()>(egui::Frame::canvas(ui.style()), |ui| {
+        let (_, landed) = ui.dnd_drop_zone::<Carried, ()>(egui::Frame::canvas(ui.style()), |ui| {
             ui.set_min_size(ui.available_size());
             // The lines have the whole chart. Their names are written over them.
             let whole = ui.available_rect_before_wrap();
             lines::lines(ui, &chart.name(), &chart.lines, self.recorded, self.now - chart.seconds, self.now);
             ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| written_over(ui, chart, self.recorded));
         });
-        if let Some(trace) = landed {
-            chart.add(Trace::clone(&trace));
+        match landed.as_deref() {
+            Some(Carried::Numbers(numbers)) => numbers.iter().for_each(|trace| chart.put(Line::new(trace.clone()))),
+            Some(Carried::Line { chart: from, shade }) => self.moved = Some((*from, *shade, chart.number)),
+            None => {}
         }
         UiResponse::None
     }
@@ -246,9 +306,9 @@ impl Behavior<Chart> for Drawn<'_> {
         }
     }
 
-    /// A number that is held over the name of a chart brings the chart forward, to be put down on it.
+    /// What is held over the name of a chart brings the chart forward, to be put down on it.
     fn on_tab_button(&mut self, _: &mut Tiles<Chart>, chart: TileId, name: egui::Response) -> egui::Response {
-        if name.dnd_hover_payload::<Trace>().is_some() {
+        if name.dnd_hover_payload::<Carried>().is_some() {
             self.forward = Some(chart);
         }
         name.on_hover_text(

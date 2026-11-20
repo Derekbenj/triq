@@ -14,7 +14,7 @@ use triq_workbench::charts::{self, Charts, Recorded, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::{alone, drag, drag_by_way_of};
+use window::{alone, click, click_holding, drag, drag_by_way_of};
 
 struct Shown {
     charts: Charts,
@@ -25,6 +25,16 @@ struct Shown {
 }
 
 type Window<'a> = Harness<'a, Shown>;
+
+/// As the workbench kept its charts when they all showed the same stretch of the past, and drew
+/// nothing but lines over time: one chart, with two lines. The second was given a colour by hand.
+const KEPT: &str = r#"{"panes":{"id":14635840284022990772,"root":2,"tiles":{"next_tile_id":3,"tiles":{
+    "1":{"Pane":{"number":1,"lines":[
+        {"trace":{"Heard":{"connection":{"to":"robot/smoother/raw","from":"robot/imu/pose"},"stat":"Rate"}},
+         "shade":0,"chosen":null},
+        {"trace":{"Inside":{"topic":"robot/imu/pose","number":"translation[0]"}},"shade":1,"chosen":[255,0,255,255]}]}},
+    "2":{"Container":{"Tabs":{"children":[1],"active":1}}}},"invisible":[]},"height":null,"width":null},
+    "made":1,"seconds":45.0,"listed":true}"#;
 
 /// The filter's input heard 160, 120, 40 and then 80 samples in four
 /// stretches of two seconds: 80, 60, 20 and 40 a second, the last just now.
@@ -777,22 +787,83 @@ fn each_chart_shows_as_much_of_the_past_as_it_is_told() -> triq::Result {
 fn charts_kept_by_an_older_workbench_are_still_drawn() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;
-    // As the workbench kept its charts when they all showed the same stretch of the past,
-    // and drew nothing but lines over time.
-    let kept = r#"{"panes":{"id":14635840284022990772,"root":2,"tiles":{"next_tile_id":3,"tiles":{
-        "1":{"Pane":{"number":1,"lines":[
-            {"trace":{"Heard":{"connection":{"to":"robot/smoother/raw","from":"robot/imu/pose"},"stat":"Rate"}},
-             "shade":0,"chosen":null},
-            {"trace":{"Inside":{"topic":"robot/imu/pose","number":"translation[0]"}},"shade":1,"chosen":[255,0,255,255]}]}},
-        "2":{"Container":{"Tabs":{"children":[1],"active":1}}}},"invisible":[]},"height":null,"width":null},
-        "made":1,"seconds":45.0,"listed":true}"#;
-    let charts: Charts = serde_json::from_str(kept).expect("charts");
+    let charts: Charts = serde_json::from_str(KEPT).expect("charts");
     let mut harness = arranging(&scene, charts)?;
     harness.run_steps(3);
     for line in ["robot/smoother/raw rate", "robot/imu/pose translation[0]"] {
         assert!(written_on(&harness, "Chart 1", line), "{line}");
     }
     assert_eq!(colour(&harness, "robot/imu/pose translation[0]"), "#ff00ffff", "in the colour that was chosen");
+    Ok(())
+}
+
+#[test]
+fn a_line_is_taken_by_its_name_and_put_down_on_another_chart() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    // Two lines on the first chart, and a second chart with nothing on it. Nothing by the lines'
+    // names is running, which a line that is moved does not mind.
+    let mut harness = arranging(&scene, serde_json::from_str(KEPT).expect("charts"))?;
+    add(&mut harness);
+    let (rate, inside) = ("robot/smoother/raw rate", "robot/imu/pose translation[0]");
+    let name = |harness: &Window<'_>, line: &str| harness.get_by_label(line).rect().center();
+    let on = |harness: &Window<'_>, chart: &str| [rate, inside].map(|line| written_on(harness, chart, line));
+
+    // Put down on the second chart, a line is drawn there, and no longer on the first.
+    let (from, second) = (name(&harness, inside), room(&harness, "Chart 2").center());
+    drag(&mut harness, from, second);
+    assert_eq!((on(&harness, "Chart 1"), on(&harness, "Chart 2")), ([true, false], [false, true]));
+    assert_eq!(colour(&harness, inside), "#ff00ffff", "in the colour that was chosen for it");
+    // Put down on the chart it is on, it stays there.
+    let from = name(&harness, inside);
+    drag(&mut harness, from, second + egui::vec2(0.0, 100.0));
+    assert_eq!((on(&harness, "Chart 1"), on(&harness, "Chart 2")), ([true, false], [false, true]));
+
+    // The other follows it. A line that was given its colour takes one that is free where it lands.
+    let from = name(&harness, rate);
+    drag(&mut harness, from, second);
+    assert_eq!((on(&harness, "Chart 1"), on(&harness, "Chart 2")), ([false, false], [true, true]));
+    assert_ne!(colour(&harness, rate), colour(&harness, inside));
+    assert!(written_on(&harness, "Chart 1", "Drag a number here."), "the first chart has nothing on it");
+    Ok(())
+}
+
+#[test]
+fn several_numbers_are_chosen_and_dragged_onto_a_chart_together() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let filtered = format!("{}/smoother/raw", scene.robot.name());
+    let [rate, lost, gap, latency] = Stat::ALL.map(|stat| format!("{filtered} {}", stat.name()));
+    let mut harness = arranging(&scene, Charts::default())?;
+    three(&mut harness);
+    let choose = |harness: &mut Window<'_>, number: &str| {
+        let at = grab(harness, &filtered, number);
+        click_holding(harness, at, egui::Modifiers::COMMAND);
+    };
+    let put = |harness: &mut Window<'_>, number: &str, chart: &str| {
+        let (from, onto) = (grab(harness, &filtered, number), room(harness, chart).center());
+        drag(harness, from, onto);
+    };
+
+    // Clicked with the command key held, a number is one more of those that are chosen. Clicked so
+    // again, it is not. Whichever of them is dragged takes the others along, in the order they
+    // were chosen in.
+    for number in ["latency", "gap", "rate", "gap"] {
+        choose(&mut harness, number);
+    }
+    put(&mut harness, "rate", "Chart 1");
+    assert_eq!(lines(&harness, &scene), [latency.clone(), rate.clone()]);
+    // A number that is not among them goes alone, and they stay chosen.
+    put(&mut harness, "lost", "Chart 2");
+    put(&mut harness, "latency", "Chart 3");
+    assert_eq!(lines(&harness, &scene), [latency.clone(), rate.clone(), lost.clone(), latency.clone(), rate.clone()]);
+
+    // Clicked without the key, a number is the only one that is chosen.
+    let at = grab(&mut harness, &filtered, "gap");
+    click(&mut harness, at, egui::PointerButton::Primary);
+    choose(&mut harness, "lost");
+    put(&mut harness, "lost", "Chart 1");
+    assert_eq!(lines(&harness, &scene)[..4], [latency, rate, gap, lost]);
     Ok(())
 }
 

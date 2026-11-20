@@ -1,5 +1,5 @@
 //! A chart of numbers over time: the lines on it, their names, and how they are drawn.
-use super::Recorded;
+use super::{Carried, Recorded, carried};
 use crate::colors;
 use crate::history::{Connection, Stat};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
@@ -85,14 +85,20 @@ pub(super) struct Line {
 }
 
 impl Line {
+    /// A line that follows a number. The chart it is put on gives it a colour.
+    pub(super) fn new(trace: Trace) -> Self {
+        Self { trace, shade: 0, chosen: None }
+    }
+
     fn color(&self, dark: bool) -> Color32 {
         self.chosen.unwrap_or_else(|| color(self.shade, dark))
     }
 }
 
-/// Written over a chart: the colour, name and newest value of each line. The
-/// colour is a button that opens a picker, and the last button takes the line off.
-pub(super) fn names(ui: &mut Ui, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
+/// Written over the chart of that number: the colour, name and newest value of
+/// each line. The colour is a button that opens a picker, the line is taken by
+/// its name to be put down on another chart, and the last button takes it off.
+pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
         ui.weak("Drag a number here.");
         return;
@@ -110,7 +116,9 @@ pub(super) fn names(ui: &mut Ui, lines: &mut Vec<Line>, recorded: Recorded<'_>) 
                 if well.inner.on_hover_text("Choose the colour of this line").changed() {
                     line.chosen = Some(color);
                 }
-                let name = ui.label(line.trace.name());
+                let taken = Carried::Line { chart, shade: line.shade };
+                let name = carried(ui, ui.scope_id().with("name"), taken, |ui| ui.label(line.trace.name()));
+                let name = name.on_hover_text("Drag it onto another chart to move it there");
                 if let Trace::Heard { connection, .. } = &line.trace {
                     name.on_hover_text(format!("from {}", connection.from));
                 }
