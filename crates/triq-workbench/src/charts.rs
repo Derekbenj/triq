@@ -23,6 +23,7 @@
 //! (`lines.rs`), there are charts of numbers against each other (`curves.rs`):
 //! two numbers of one message, as a point that moves on a plane, or three, as
 //! a point that moves in space.
+use crate::colors::Colors;
 use crate::history::History;
 use crate::signals::{Signals, Wanted};
 use curves::Curve;
@@ -43,7 +44,7 @@ mod view;
 
 pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
-pub use list::Sort;
+pub use list::{by_runtime, runtime_of};
 pub use pen::{color, pieces};
 pub use view::{Frame, Ground, Lens, Point, clipped, ground_reach, marks, round_step, tick};
 
@@ -276,15 +277,15 @@ pub struct Charts {
     /// The numbers in the list that are chosen, to be dragged onto a chart together.
     #[serde(skip)]
     chosen: Vec<Trace>,
-    /// What the list of numbers is in order of.
-    #[serde(default)]
-    sorted: Sort,
+    /// The runtime whose numbers are the only ones in the list, if one was chosen there.
+    #[serde(skip)]
+    only: Option<String>,
 }
 
 impl Default for Charts {
     fn default() -> Self {
         let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1, Kind::Time)]);
-        Self { panes, made: 1, listed: true, chosen: Vec::new(), sorted: Sort::default() }
+        Self { panes, made: 1, listed: true, chosen: Vec::new(), only: None }
     }
 }
 
@@ -316,14 +317,15 @@ impl Charts {
         self.charts().all(|chart| chart.lines.is_empty() && chart.curves.is_empty())
     }
 
-    /// Draw the list of numbers and the charts. `now` is the present, the time
-    /// at the right edge of every chart, in seconds since 1970.
-    pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, now: f64) {
+    /// Draw the list of numbers and the charts. `colors` are those of the runtimes, for the
+    /// list, and `now` is the present, the time at the right edge of every chart, in seconds
+    /// since 1970.
+    pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, colors: &Colors, now: f64) {
         // In a narrow window the list gives way to the charts, down to the least it is laid out in.
         let most = (ui.available_width() - NARROWEST_CHARTS).max(NARROWEST_LIST);
         let list = egui::Panel::left("numbers").default_size(300.0).size_range(NARROWEST_LIST..=most);
         // A list that is hidden has no topic open that anyone could see.
-        let numbers = |ui: &mut Ui| list::numbers(ui, recorded, &mut self.chosen, &mut self.sorted);
+        let numbers = |ui: &mut Ui| list::numbers(ui, (recorded, colors), &mut self.chosen, &mut self.only);
         let opened = if self.listed { list.show(ui, numbers).inner } else { BTreeSet::new() };
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

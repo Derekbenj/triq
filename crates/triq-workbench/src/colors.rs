@@ -1,7 +1,7 @@
 //! One colour per runtime, so that a glance at the graph tells which program a node runs in.
 //! A runtime takes a colour of the palette, unless the user chose one for it.
 //! The lines of a chart take their colours from the same palette.
-use eframe::egui::Color32;
+use eframe::egui::{self, Color32, Role, Sense, Ui, WidgetInfo};
 use std::collections::BTreeMap;
 
 /// Hues that can be told apart from each other.
@@ -77,6 +77,14 @@ impl Colors {
     pub fn chosen(&self) -> &BTreeMap<String, Color32> {
         &self.chosen
     }
+}
+
+/// A dot in the colour of a runtime. It stands for the runtime, and is named after it.
+pub fn dot(ui: &mut Ui, color: Color32, runtime: &str) {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, ui.spacing().interact_size.y), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, runtime));
+    ui.painter().circle_filled(rect.center(), 5.0, color);
+    response.on_hover_text(format!("runs in {runtime}"));
 }
 
 /// A colour of the palette, by its place in it. On a light background it is darkened to stand out.

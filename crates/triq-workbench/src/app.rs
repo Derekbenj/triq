@@ -953,7 +953,7 @@ impl Contents {
             ui.ctx().request_repaint();
         }
         let recorded = Recorded { history: &self.feed.history(), signals: self.feed.signals() };
-        self.charts.show(ui, recorded, now);
+        self.charts.show(ui, recorded, &self.colors, now);
     }
 }
 

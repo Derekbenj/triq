@@ -12,11 +12,11 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use shown::*;
 use std::time::Duration;
-use triq_workbench::charts::{self, Charts, Sort, Trace};
+use triq_workbench::charts::{self, Charts, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::{alone, click, click_holding, drag, drag_by_way_of};
+use window::{alone, click, click_holding, discs, drag, drag_by_way_of};
 
 /// As the workbench kept its charts when they all showed the same stretch of the past, and drew
 /// nothing but lines over time: one chart, with two lines. The second was given a colour by hand.
@@ -69,20 +69,30 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         listed.map(|name| harness.get_by_label(name.as_str()).rect().top()).to_vec()
     };
     assert!(names(&harness).is_sorted(), "in order of their names");
-    // The list is put in another order with the box at its top: what is sent before what is heard.
-    let ordered = |harness: &mut Window<'_>, by: &str| {
+    // Each has a dot beside its name, in the colour of its runtime: what runs in the robot has
+    // one colour, and what runs at the desk another.
+    let dot = |harness: &Window<'_>, name: &str| {
+        let named = harness.get_by_label(name).rect();
+        let beside = |middle: &egui::Pos2| {
+            (middle.y - named.center().y).abs() < 3.0 && middle.x > named.left() - 2.0 && middle.x < named.left() + 14.0
+        };
+        let dots = discs(harness).into_iter().filter(|(middle, _)| beside(middle));
+        dots.map(|(_, color)| color).next().unwrap_or_else(|| panic!("no dot beside {name}"))
+    };
+    assert_eq!(dot(&harness, &sensor), dot(&harness, &filtered));
+    assert_ne!(dot(&harness, &sensor), dot(&harness, &viewed));
+    // The box at the top of the list names the runtimes, each beside its colour. The numbers of
+    // the one that is chosen there are the only ones listed, until every runtime is asked for again.
+    let only = |harness: &mut Window<'_>, runtime: &str| {
         harness.get_by_role(Role::ComboBox).click();
         harness.run_steps(3);
-        harness.get_by_role_and_label(Role::Button, by).click();
+        harness.get_by_role_and_label(Role::Button, runtime).click();
         harness.run_steps(3);
     };
-    ordered(&mut harness, "outputs first");
-    let [sent, heard, passed_on, seen] = <[f32; 4]>::try_from(names(&harness)).expect("four names");
-    assert!(sent < passed_on && passed_on < heard && heard < seen, "the two outputs, then the two that hear them");
-    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
-    assert!(kept.contains(r#""sorted":"Sent""#), "{kept}");
-    ordered(&mut harness, "name");
-    assert!(names(&harness).is_sorted());
+    only(&mut harness, &desk);
+    assert!(shows(&harness, &viewed) && !shows(&harness, &sensor) && !shows(&harness, &filtered));
+    only(&mut harness, "every runtime");
+    assert!(shows(&harness, &viewed) && shows(&harness, &sensor) && names(&harness).is_sorted());
     assert_eq!(empty(&harness).len(), 1, "one chart to begin with, with nothing on it");
 
     // Drag the rate onto the chart: it is drawn there, and named.
@@ -952,28 +962,17 @@ fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
 }
 
 #[test]
-fn the_list_of_numbers_is_in_order_of_name_or_of_rate_or_has_what_is_sent_first() {
-    // Of each entry: its name, how many samples a second pass, and whether it is sent or heard.
-    let entries = [
-        ("robot/imu/pose", 40.2, true),
-        ("robot/smoother/raw", 39.8, false),
-        ("robot/smoother/smooth", 120.0, true),
-        ("desk/viewer/pose", 0.0, false),
-    ];
-    let ordered = |by: Sort| {
-        let mut entries = entries;
-        entries.sort_by(|one, other| by.order(*one, *other));
-        entries.map(|(name, ..)| name)
-    };
-    let [desk, sensor, raw, smooth] =
-        ["desk/viewer/pose", "robot/imu/pose", "robot/smoother/raw", "robot/smoother/smooth"];
-    assert_eq!(ordered(Sort::Name), [desk, sensor, raw, smooth]);
-    // The fastest first. Two that are as fast, to the nearest sample a second, are in order of name:
-    // they do not change places with every reading.
-    assert_eq!(ordered(Sort::Rate), [smooth, sensor, raw, desk]);
-    // What is sent, in order of name, and then what is heard.
-    assert_eq!(ordered(Sort::Sent), [sensor, smooth, desk, raw]);
-    assert_eq!(Sort::ALL.map(Sort::name), ["name", "rate", "outputs first"]);
+fn the_list_of_numbers_is_in_order_of_runtime() {
+    // The numbers of a runtime stand together, the runtimes in order of their names. Within a
+    // runtime they are in order of node and port, so what a node hears and what it sends stand together.
+    let mut names = ["rig-2/camera/image", "rig/zoom/level", "rig/camera/image", "desk/viewer/pose"];
+    names.sort_by(|one, other| charts::by_runtime(one, other));
+    assert_eq!(names, ["desk/viewer/pose", "rig/camera/image", "rig/zoom/level", "rig-2/camera/image"]);
+    // In order of their whole names, `rig-2` would stand before `rig`, of whose name its own is made.
+    names.sort();
+    assert_eq!(names, ["desk/viewer/pose", "rig-2/camera/image", "rig/camera/image", "rig/zoom/level"]);
+    // A name with no parts is all runtime: a topic that is no runtime's is listed by it.
+    assert_eq!(["rig/camera/image", "alone"].map(charts::runtime_of), ["rig", "alone"]);
 }
 
 #[test]

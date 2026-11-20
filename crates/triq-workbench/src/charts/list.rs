@@ -6,103 +6,102 @@
 //! dragged onto a chart takes the others along.
 use super::lines::written;
 use super::{Carried, Recorded, Trace, carried};
+use crate::colors::{Colors, dot};
 use crate::history::Stat;
 use crate::signals::Signals;
-use eframe::egui::{self, Ui};
-use serde::{Deserialize, Serialize};
+use eframe::egui::text::{LayoutJob, TextFormat};
+use eframe::egui::{self, Color32, Ui};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-/// What the list of numbers is in order of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Sort {
-    /// Of name: what a node hears and what it sends stand together.
-    #[default]
-    Name,
-    /// Of how many samples a second pass: the fastest first.
-    Rate,
-    /// What is sent first, and then what is heard.
-    Sent,
+/// How large the dot before the name of an entry is.
+const DOT: f32 = 5.0;
+/// What the box at the top of the list says when the numbers of every runtime are listed.
+const EVERY: &str = "every runtime";
+
+/// The runtime that an entry of the list belongs to: the first part of its name. A connection
+/// is its input's, and a topic that is no runtime's is listed by what its name begins with.
+pub fn runtime_of(name: &str) -> &str {
+    name.split('/').next().unwrap_or(name)
 }
 
-impl Sort {
-    pub const ALL: [Sort; 3] = [Sort::Name, Sort::Rate, Sort::Sent];
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Sort::Name => "name",
-            Sort::Rate => "rate",
-            Sort::Sent => "outputs first",
-        }
+/// Which of two entries of the list comes first, by their names. The entries of a runtime
+/// stand together, the runtimes in order of their names. Within a runtime they are in order
+/// of node and port, so what a node hears and what it sends stand together.
+pub fn by_runtime(one: &str, other: &str) -> Ordering {
+    /// A name as its runtime and the rest.
+    fn parts(name: &str) -> (&str, &str) {
+        name.split_once('/').unwrap_or((name, ""))
     }
-
-    /// Which of two entries of the list comes first. Of each: its name, how many samples a
-    /// second pass, and whether it is something that is sent, not a connection that hears it.
-    /// Whatever the order, two that are alike in it are in order of name. Rates are compared
-    /// to the nearest sample a second, so that two which are as fast do not keep changing places.
-    pub fn order(self, one: (&str, f64, bool), other: (&str, f64, bool)) -> Ordering {
-        let first = match self {
-            Sort::Name => Ordering::Equal,
-            Sort::Rate => other.1.round().total_cmp(&one.1.round()),
-            Sort::Sent => other.2.cmp(&one.2),
-        };
-        first.then_with(|| one.0.cmp(other.0))
-    }
+    parts(one).cmp(&parts(other))
 }
 
-/// Everything that has numbers, in the order that `sorted` says and that the box at the top
-/// of the list sets: of name to begin with, where what a node hears and what it sends stand
-/// together. Each number can be dragged onto a chart, and `chosen` are those that go
-/// together. A topic can be opened, to see the numbers inside its messages; the topics that
-/// are open are returned.
+/// Everything that has numbers, runtime by runtime: see [`by_runtime`]. Each entry has a dot
+/// in the colour of its runtime, and the box at the top of the list names the runtimes: the
+/// numbers of the one that is chosen there are the only ones listed, which `only` holds. Each
+/// number can be dragged onto a chart, and `chosen` are those that go together. A topic can be
+/// opened, to see the numbers inside its messages; the topics that are open are returned.
 pub(super) fn numbers(
     ui: &mut Ui,
-    recorded: Recorded<'_>,
+    (recorded, colors): (Recorded<'_>, &Colors),
     chosen: &mut Vec<Trace>,
-    sorted: &mut Sort,
+    only: &mut Option<String>,
 ) -> BTreeSet<String> {
     let Recorded { history, signals } = recorded;
-    // What each is called, what is said under that, its numbers, whether it is a topic, and how fast it is.
+    // What each is called, what is said under that, its numbers, and whether it is a topic.
     let heard = history.connections().map(|connection| {
         let numbers = Stat::ALL.map(|stat| Trace::Heard { connection: connection.clone(), stat });
-        let rate = history.latest(connection).map_or(0.0, |point| point.rate);
-        (connection.to.clone(), format!("from {}", connection.from), numbers.to_vec(), false, rate)
+        (connection.to.clone(), format!("from {}", connection.from), numbers.to_vec(), false)
     });
     let outputs: BTreeSet<&String> = history.outputs().collect();
-    let sent = outputs.iter().map(|output| {
-        let (numbers, rate) = (vec![Trace::Sent { output: (*output).clone() }], history.sending(output).unwrap_or(0.0));
-        ((*output).clone(), "output".to_owned(), numbers, true, rate)
-    });
+    let sent = outputs
+        .iter()
+        .map(|output| ((*output).clone(), "output".to_owned(), vec![Trace::Sent { output: (*output).clone() }], true));
     // A topic that no runtime reports has nobody to count for it: another program's,
     // or an output whose program stopped while something still listens to it.
     let topics = signals.topics();
     let others = topics.iter().filter(|topic| !outputs.contains(&topic.name)).map(|topic| {
         let carried = format!("{}{}", topic.message, if topic.slice { "[]" } else { "" });
-        (topic.name.clone(), format!("a topic no runtime answers for: {carried}"), Vec::new(), true, 0.0)
+        (topic.name.clone(), format!("a topic no runtime answers for: {carried}"), Vec::new(), true)
     });
     let mut listed: Vec<_> = heard.chain(sent).chain(others).collect();
-    listed.sort_by(|one, other| sorted.order((&one.0, one.4, one.3), (&other.0, other.4, other.3)));
+    listed.sort_by(|one, other| by_runtime(&one.0, &other.0));
+    // The runtimes that have anything in the list. One that was chosen and has gone is chosen no longer.
+    let runtimes: BTreeSet<String> = listed.iter().map(|entry| runtime_of(&entry.0).to_owned()).collect();
+    if only.as_ref().is_some_and(|runtime| !runtimes.contains(runtime)) {
+        *only = None;
+    }
+    let dark = ui.visuals().dark_mode;
 
     let (mut opened, mut rows) = (BTreeSet::new(), Rows { chosen, listed: Vec::new(), run_to: None });
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.weak("Drag a number onto a chart to see it over time.");
         ui.weak("Hold Ctrl, or Cmd on a Mac, and click numbers to drag several at once. With Shift, a click takes all from the last one chosen to this one.");
         ui.horizontal(|ui| {
-            let label = ui.weak("In order of");
-            let order = egui::ComboBox::from_id_salt("order").selected_text(sorted.name()).show_ui(ui, |ui| {
-                for by in Sort::ALL {
-                    ui.selectable_value(sorted, by, by.name());
+            let label = ui.weak("Numbers of");
+            if let Some(runtime) = only.as_deref() {
+                dot(ui, colors.of(runtime, dark), runtime);
+            }
+            let shown = only.clone().unwrap_or_else(|| EVERY.to_owned());
+            let which = egui::ComboBox::from_id_salt("runtime").selected_text(shown).show_ui(ui, |ui| {
+                ui.selectable_value(only, None, EVERY);
+                for runtime in &runtimes {
+                    ui.horizontal(|ui| {
+                        dot(ui, colors.of(runtime, dark), runtime);
+                        ui.selectable_value(only, Some(runtime.clone()), runtime);
+                    });
                 }
             });
-            order.response.labelled_by(label.id);
+            which.response.labelled_by(label.id).on_hover_text("List the numbers of one runtime, or of every one");
         });
         ui.separator();
+        listed.retain(|entry| only.as_deref().is_none_or(|runtime| runtime_of(&entry.0) == runtime));
         if listed.is_empty() {
             ui.weak("Nothing is running.");
         }
-        for (name, about, numbers, topic, _) in listed {
+        for (name, about, numbers, topic) in listed {
             ui.vertical(|ui| {
-                ui.strong(&name);
+                rows.entry(ui, &name, colors.of(runtime_of(&name), dark));
                 ui.weak(about);
                 for trace in numbers {
                     let value = trace.latest(recorded).map_or(String::new(), |value| written(value) + trace.unit());
@@ -133,6 +132,20 @@ struct Rows<'a> {
 }
 
 impl Rows<'_> {
+    /// The name that heads an entry, after a dot in the colour of its runtime. The two are one
+    /// piece: the dot is drawn in the room that the name leaves before itself.
+    fn entry(&self, ui: &mut Ui, name: &str, color: Color32) {
+        let mut words = LayoutJob::default();
+        let ink = TextFormat {
+            font_id: egui::TextStyle::Body.resolve(ui.style()),
+            color: ui.visuals().strong_text_color(),
+            ..Default::default()
+        };
+        words.append(name, DOT * 2.0 + 6.0, ink);
+        let named = ui.label(words).on_hover_text(format!("runs in {}", runtime_of(name)));
+        ui.painter().circle_filled(egui::pos2(named.rect.left() + DOT, named.rect.center().y), DOT, color);
+    }
+
     /// Once every row is drawn: choose the run of numbers that a click with Shift asked for,
     /// and let go of what the list no longer shows, so that nothing is dragged along unseen.
     fn settle(&mut self) {

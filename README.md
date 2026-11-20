@@ -452,9 +452,9 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - On the left is every connection with its four current numbers: its rate, how many samples a
   second it is losing, the longest recent gap between two samples, and the latency of the newest
   sample. Every output is there too, with the rate it sends at. They are sorted by name, so what a
-  node takes in and what it sends appear together. `In order of`, at the top of the list, sorts
-  them another way: by `rate`, the fastest first, or `outputs first`, with what is sent before
-  what is heard.
+  node takes in and what it sends appear together, and so does everything of one runtime. Each
+  has a dot in the colour of its runtime before its name. The box at the top of the list names
+  the runtimes, each beside its dot: choose one to list its numbers alone, or `every runtime`.
 - Open an output to see the `numbers inside` its messages, each with its value in the newest
   message: `translation[0]`, `header.width`, the `length` of a slice. They can be dragged onto
   charts like the rest, and are drawn for every message, at the time it was sent.

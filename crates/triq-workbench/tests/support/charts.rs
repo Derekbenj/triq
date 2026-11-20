@@ -6,7 +6,8 @@ use super::window::{drag, drawn};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use std::time::Duration;
-use triq_workbench::charts::{Charts, Recorded};
+use triq_workbench::charts::{Charts, Recorded, runtime_of};
+use triq_workbench::colors::Colors;
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::History;
 use triq_workbench::signals::Signals;
@@ -65,10 +66,17 @@ pub fn written_on(harness: &Window<'_>, chart: &str, label: &str) -> bool {
 /// programs do not come into the list, and move its rows, under a pointer that took aim.
 pub fn open(shown: Shown) -> Window<'static> {
     assert!(wait_for(|| !shown.signals.topics().is_empty()), "the topics of the machine are listed");
+    // Each runtime that has something in the history is given a colour, as the workbench gives it one.
+    let mut colors = Colors::default();
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
-        |ui, shown: &mut Shown| {
+        move |ui, shown: &mut Shown| {
+            let named: Vec<String> = shown.history.outputs().cloned().collect();
+            let heard: Vec<String> = shown.history.connections().map(|connection| connection.to.clone()).collect();
+            let runtimes: std::collections::BTreeSet<&str> =
+                named.iter().chain(&heard).map(|name| runtime_of(name)).collect();
+            colors.update(runtimes);
             let recorded = Recorded { history: &shown.history, signals: &shown.signals };
-            shown.charts.show(ui, recorded, shown.now);
+            shown.charts.show(ui, recorded, &colors, shown.now);
         },
         shown,
     );

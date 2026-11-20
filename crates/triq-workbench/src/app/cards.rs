@@ -10,7 +10,7 @@
 //! with a glow around it.
 use super::details::{rate, toggle};
 use super::{Asking, Focus, Rates, Wish, awaits};
-use crate::colors::Colors;
+use crate::colors::{Colors, dot};
 use crate::draft::{Mark, Marks};
 use crate::feed::Request;
 use crate::graph::{self, Card, Kind, Port};
@@ -179,14 +179,6 @@ fn plain(dark: bool) -> Color32 {
 /// along a wire that it draws or cuts, with the pins at its ends.
 fn glow(dark: bool) -> egui::Shadow {
     egui::Shadow { offset: [0, 0], blur: 12, spread: 4, color: drafted(dark).gamma_multiply(0.7) }
-}
-
-/// A dot in the colour of a runtime. It stands for the runtime, and is named after it.
-fn dot(ui: &mut Ui, color: Color32, runtime: &str) {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(10.0, ui.spacing().interact_size.y), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(Role::Label, true, runtime));
-    ui.painter().circle_filled(rect.center(), 5.0, color);
-    response.on_hover_text(format!("runs in {runtime}"));
 }
 
 /// The small button on a card that pauses its node or starts it again: two bars, or a triangle.

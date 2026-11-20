@@ -109,6 +109,20 @@ pub fn pin(harness: &Bench<'_>, label: &str, after: bool) -> egui::Pos2 {
     nearest.unwrap_or_else(|| panic!("no pin beside {label:?}"))
 }
 
+/// Every dot that was drawn in the last frame and is filled in: its middle and its colour.
+pub fn discs<State>(harness: &Harness<'_, State>) -> Vec<(egui::Pos2, egui::Color32)> {
+    fn filled(shape: &egui::Shape, found: &mut Vec<(egui::Pos2, egui::Color32)>) {
+        match shape {
+            egui::Shape::Vec(inner) => inner.iter().for_each(|shape| filled(shape, found)),
+            egui::Shape::Circle(dot) if dot.fill != egui::Color32::TRANSPARENT => found.push((dot.center, dot.fill)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    harness.output().shapes.iter().for_each(|clipped| filled(&clipped.shape, &mut found));
+    found
+}
+
 /// A line that was drawn, and is not closed to a shape.
 pub struct Stroke {
     /// The places it passes through.
