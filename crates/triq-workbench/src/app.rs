@@ -292,8 +292,8 @@ impl Workbench {
     /// then. What cannot be read as a layout changes nothing.
     pub fn arrange(&mut self, layout: &str) {
         let Ok(Kept { windows, charts, cards, colors }) = serde_json::from_str(layout) else { return };
-        // Whatever wrote it, a workbench has its four windows and a chart.
-        if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) && charts.has_a_chart() {
+        // Whatever wrote it, a workbench has its four windows.
+        if Window::ALL.iter().all(|window| windows.tiles.find_pane(window).is_some()) {
             (self.windows, self.contents.charts) = (windows, charts);
             // A card that is on the drawing already goes where it was, too.
             for (_, drawn) in self.contents.snarl.nodes_ids_data_mut() {

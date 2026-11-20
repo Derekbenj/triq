@@ -165,7 +165,14 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     assert!(!shows(&harness, &line) && shows(&harness, &format!("{filtered} lost")));
     close(&mut harness, "Chart 2");
     assert!(!shows(&harness, &format!("{viewed} latency")), "the second chart is gone");
-    assert!(!shows(&harness, "Close"), "and the last chart stays");
+    // The last chart is closed like any other. Then there is none, until one is made: it is
+    // called by the next number, and has nothing on it.
+    close(&mut harness, "Chart 1");
+    assert!(!shows(&harness, "Chart 1") && !shows(&harness, "Close") && empty(&harness).is_empty());
+    assert!(harness.query_by_label_contains("There is no chart").is_some());
+    add(&mut harness);
+    assert!(shows(&harness, "Chart 3") && empty(&harness).len() == 1);
+    assert!(harness.query_by_label_contains("There is no chart").is_none());
     Ok(())
 }
 
@@ -197,8 +204,8 @@ fn charts_are_added_put_where_they_should_be_resized_and_closed() -> triq::Resul
     let (rate, lost, gap) = (format!("{filtered} rate"), format!("{filtered} lost"), format!("{filtered} gap"));
     let mut harness = arranging(&scene, Charts::default())?;
 
-    // One chart to begin with, which cannot be closed. A new chart appears beside it.
-    assert!(shows(&harness, "Chart 1") && !shows(&harness, "Close"));
+    // One chart to begin with. A new chart appears beside it.
+    assert!(shows(&harness, "Chart 1"));
     add(&mut harness);
     let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
     assert!(second.left() > first.left() + 300.0 && second.top() == first.top(), "beside the first");
@@ -243,7 +250,7 @@ fn charts_are_added_put_where_they_should_be_resized_and_closed() -> triq::Resul
     assert!((name(&harness, "Chart 3").left() - first.left()).abs() < 1.0, "the third begins at the left now");
     close(&mut harness, "Chart 1");
     assert_eq!(lines(&harness, &scene), [rate]);
-    assert!(shows(&harness, "Chart 3") && !shows(&harness, "Close"), "the last chart stays");
+    assert!(shows(&harness, "Chart 3"));
     Ok(())
 }
 
@@ -502,14 +509,14 @@ fn anything_goes_into_anything() -> triq::Result {
     assert!(!shows(&harness, "Charts 2, 3") && shows(&harness, "Charts 4, 5, 1, 2"));
     assert_eq!(name(&harness, "Chart 2").top(), name(&harness, "Chart 1").top());
 
-    // The cross beside the name of a group closes all that is in it, unless that is every chart there is.
+    // The cross beside the name of a group closes all that is in it, also when that is every chart there is.
     let crosses = |harness: &Window<'_>| harness.query_all_by_label("Close").count();
-    assert_eq!(crosses(&harness), 4, "one for each chart, and none for the group they are all in");
+    assert_eq!(crosses(&harness), 5, "one for each chart, and one for the group they are all in");
     add(&mut harness);
     assert_eq!(crosses(&harness), 6);
     close(&mut harness, "Charts 4, 5, 1, 2");
     assert!(["Chart 4", "Chart 5", "Chart 1", "Chart 2"].iter().all(|chart| !shows(&harness, chart)));
-    assert!(shows(&harness, "Chart 7") && crosses(&harness) == 0 && lines(&harness, &scene).is_empty());
+    assert!(shows(&harness, "Chart 7") && crosses(&harness) == 1 && lines(&harness, &scene).is_empty());
     Ok(())
 }
 

@@ -483,7 +483,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   charts to give one more room and the other less.
 - Hold a number you are dragging over the name of a chart that is behind another, and that chart
   comes to the front so that you can drop the number on it. The cross beside a name closes the
-  chart, or all the charts of a group; the last chart cannot be closed.
+  chart, or all the charts of a group; the last chart is closed
+  like any other, and `New chart` makes one again.
 - `Numbers` hides the list, which gives its room to the charts, and shows it again. While the list
   is hidden, only the numbers that are on charts are read out of messages.
 - A number on a chart is identified by name: the names of its runtime, node and port. It is

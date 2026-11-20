@@ -8,7 +8,8 @@
 //! The list can be hidden, to give the charts its room.
 //!
 //! There is one chart to begin with, and a button adds another beside what is
-//! there. A chart is taken by its name and put down beside another, on its
+//! there. Any of them is closed by the cross beside its name, also the last.
+//! A chart is taken by its name and put down beside another, on its
 //! middle to share its place, or inside it to make a group of the two: see
 //! `panes.rs`. The line between two charts is dragged to give one more room.
 //! `egui_tiles` does the arranging.
@@ -302,11 +303,6 @@ impl Charts {
         self.charts().all(|chart| chart.lines.is_empty() && chart.curves.is_empty())
     }
 
-    /// Whether there is a chart at all. What was kept from another run might be anything.
-    pub(crate) fn has_a_chart(&self) -> bool {
-        self.panes.tiles.tiles().any(|tile| tile.is_pane())
-    }
-
     /// Draw the list of numbers and the charts. `now` is the present, the time
     /// at the right edge of every chart, in seconds since 1970.
     pub fn show(&mut self, ui: &mut Ui, recorded: Recorded<'_>, now: f64) {
@@ -333,6 +329,9 @@ impl Charts {
                     self.new_chart(Kind::Space);
                 }
             });
+            if self.charts().next().is_none() {
+                ui.weak("There is no chart. The buttons above make one.");
+            }
             let mut drawn = Drawn { recorded, now, forward: None, moved: None };
             let carried = self.panes.dragged_id(ui.ctx());
             self.panes.ui(&mut drawn, ui);
@@ -495,10 +494,10 @@ impl Behavior<Chart> for Drawn<'_> {
         )
     }
 
-    /// What is behind a name is closed with it, unless that is every chart
-    /// there is: the last stays, so that there is always one to put a number on.
-    fn is_tab_closable(&self, tiles: &Tiles<Chart>, place: TileId) -> bool {
-        panes::panes_in(tiles, place).len() < tiles.tiles().filter(|tile| tile.is_pane()).count()
+    /// What is behind a name is closed with it: a chart, or every chart of a group. The last
+    /// chart can be closed like any other, and another made with the buttons above.
+    fn is_tab_closable(&self, _: &Tiles<Chart>, _: TileId) -> bool {
+        true
     }
 
     fn simplification_options(&self) -> SimplificationOptions {
