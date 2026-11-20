@@ -12,7 +12,7 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use shown::*;
 use std::time::Duration;
-use triq_workbench::charts::{self, Charts, Trace};
+use triq_workbench::charts::{self, Charts, Sort, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
@@ -69,6 +69,20 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
         listed.map(|name| harness.get_by_label(name.as_str()).rect().top()).to_vec()
     };
     assert!(names(&harness).is_sorted(), "in order of their names");
+    // The list is put in another order with the box at its top: what is sent before what is heard.
+    let ordered = |harness: &mut Window<'_>, by: &str| {
+        harness.get_by_role(Role::ComboBox).click();
+        harness.run_steps(3);
+        harness.get_by_role_and_label(Role::Button, by).click();
+        harness.run_steps(3);
+    };
+    ordered(&mut harness, "outputs first");
+    let [sent, heard, passed_on, seen] = <[f32; 4]>::try_from(names(&harness)).expect("four names");
+    assert!(sent < passed_on && passed_on < heard && heard < seen, "the two outputs, then the two that hear them");
+    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
+    assert!(kept.contains(r#""sorted":"Sent""#), "{kept}");
+    ordered(&mut harness, "name");
+    assert!(names(&harness).is_sorted());
     assert_eq!(empty(&harness).len(), 1, "one chart to begin with, with nothing on it");
 
     // Drag the rate onto the chart: it is drawn there, and named.
@@ -917,6 +931,31 @@ fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
     assert!((middle.0[0].x - 50.0).abs() < 5.0 && (middle.1 - 0.5).abs() < 0.05, "half as strong halfway");
     let sparse = charts::pieces(&[line[0], line[100]], 0.9);
     assert!((seen_from(&sparse) - 88.9).abs() < 1.0 && sparse.len() <= 40, "{} pieces", sparse.len());
+}
+
+#[test]
+fn the_list_of_numbers_is_in_order_of_name_or_of_rate_or_has_what_is_sent_first() {
+    // Of each entry: its name, how many samples a second pass, and whether it is sent or heard.
+    let entries = [
+        ("robot/imu/pose", 40.2, true),
+        ("robot/smoother/raw", 39.8, false),
+        ("robot/smoother/smooth", 120.0, true),
+        ("desk/viewer/pose", 0.0, false),
+    ];
+    let ordered = |by: Sort| {
+        let mut entries = entries;
+        entries.sort_by(|one, other| by.order(*one, *other));
+        entries.map(|(name, ..)| name)
+    };
+    let [desk, sensor, raw, smooth] =
+        ["desk/viewer/pose", "robot/imu/pose", "robot/smoother/raw", "robot/smoother/smooth"];
+    assert_eq!(ordered(Sort::Name), [desk, sensor, raw, smooth]);
+    // The fastest first. Two that are as fast, to the nearest sample a second, are in order of name:
+    // they do not change places with every reading.
+    assert_eq!(ordered(Sort::Rate), [smooth, sensor, raw, desk]);
+    // What is sent, in order of name, and then what is heard.
+    assert_eq!(ordered(Sort::Sent), [sensor, smooth, desk, raw]);
+    assert_eq!(Sort::ALL.map(Sort::name), ["name", "rate", "outputs first"]);
 }
 
 #[test]

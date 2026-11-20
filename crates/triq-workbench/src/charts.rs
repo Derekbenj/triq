@@ -42,6 +42,7 @@ mod view;
 
 pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
+pub use list::Sort;
 pub use pen::{color, pieces};
 pub use view::{Frame, Ground, Lens, Point, clipped, ground_reach, marks, round_step, tick};
 
@@ -266,12 +267,15 @@ pub struct Charts {
     /// The numbers in the list that are chosen, to be dragged onto a chart together.
     #[serde(skip)]
     chosen: Vec<Trace>,
+    /// What the list of numbers is in order of.
+    #[serde(default)]
+    sorted: Sort,
 }
 
 impl Default for Charts {
     fn default() -> Self {
         let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1, Kind::Time)]);
-        Self { panes, made: 1, listed: true, chosen: Vec::new() }
+        Self { panes, made: 1, listed: true, chosen: Vec::new(), sorted: Sort::default() }
     }
 }
 
@@ -310,7 +314,7 @@ impl Charts {
         let most = (ui.available_width() - NARROWEST_CHARTS).max(NARROWEST_LIST);
         let list = egui::Panel::left("numbers").default_size(300.0).size_range(NARROWEST_LIST..=most);
         // A list that is hidden has no topic open that anyone could see.
-        let numbers = |ui: &mut Ui| list::numbers(ui, recorded, &mut self.chosen);
+        let numbers = |ui: &mut Ui| list::numbers(ui, recorded, &mut self.chosen, &mut self.sorted);
         let opened = if self.listed { list.show(ui, numbers).inner } else { BTreeSet::new() };
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

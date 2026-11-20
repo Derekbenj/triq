@@ -9,42 +9,98 @@ use super::{Carried, Recorded, Trace, carried};
 use crate::history::Stat;
 use crate::signals::Signals;
 use eframe::egui::{self, Ui};
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-/// Everything that has numbers, in order of name: what a node hears and what
-/// it sends stand together. Each number can be dragged onto a chart, and
-/// `chosen` are those that go together. A topic can be opened, to see the
-/// numbers inside its messages; the topics that are open are returned.
-pub(super) fn numbers(ui: &mut Ui, recorded: Recorded<'_>, chosen: &mut Vec<Trace>) -> BTreeSet<String> {
+/// What the list of numbers is in order of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Sort {
+    /// Of name: what a node hears and what it sends stand together.
+    #[default]
+    Name,
+    /// Of how many samples a second pass: the fastest first.
+    Rate,
+    /// What is sent first, and then what is heard.
+    Sent,
+}
+
+impl Sort {
+    pub const ALL: [Sort; 3] = [Sort::Name, Sort::Rate, Sort::Sent];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Sort::Name => "name",
+            Sort::Rate => "rate",
+            Sort::Sent => "outputs first",
+        }
+    }
+
+    /// Which of two entries of the list comes first. Of each: its name, how many samples a
+    /// second pass, and whether it is something that is sent, not a connection that hears it.
+    /// Whatever the order, two that are alike in it are in order of name. Rates are compared
+    /// to the nearest sample a second, so that two which are as fast do not keep changing places.
+    pub fn order(self, one: (&str, f64, bool), other: (&str, f64, bool)) -> Ordering {
+        let first = match self {
+            Sort::Name => Ordering::Equal,
+            Sort::Rate => other.1.round().total_cmp(&one.1.round()),
+            Sort::Sent => other.2.cmp(&one.2),
+        };
+        first.then_with(|| one.0.cmp(other.0))
+    }
+}
+
+/// Everything that has numbers, in the order that `sorted` says and that the box at the top
+/// of the list sets: of name to begin with, where what a node hears and what it sends stand
+/// together. Each number can be dragged onto a chart, and `chosen` are those that go
+/// together. A topic can be opened, to see the numbers inside its messages; the topics that
+/// are open are returned.
+pub(super) fn numbers(
+    ui: &mut Ui,
+    recorded: Recorded<'_>,
+    chosen: &mut Vec<Trace>,
+    sorted: &mut Sort,
+) -> BTreeSet<String> {
     let Recorded { history, signals } = recorded;
-    // What each is called, what is said under that, its numbers, and whether it is a topic.
+    // What each is called, what is said under that, its numbers, whether it is a topic, and how fast it is.
     let heard = history.connections().map(|connection| {
         let numbers = Stat::ALL.map(|stat| Trace::Heard { connection: connection.clone(), stat });
-        (connection.to.clone(), format!("from {}", connection.from), numbers.to_vec(), false)
+        let rate = history.latest(connection).map_or(0.0, |point| point.rate);
+        (connection.to.clone(), format!("from {}", connection.from), numbers.to_vec(), false, rate)
     });
     let outputs: BTreeSet<&String> = history.outputs().collect();
-    let sent = outputs
-        .iter()
-        .map(|output| ((*output).clone(), "output".to_owned(), vec![Trace::Sent { output: (*output).clone() }], true));
+    let sent = outputs.iter().map(|output| {
+        let (numbers, rate) = (vec![Trace::Sent { output: (*output).clone() }], history.sending(output).unwrap_or(0.0));
+        ((*output).clone(), "output".to_owned(), numbers, true, rate)
+    });
     // A topic that no runtime reports has nobody to count for it: another program's,
     // or an output whose program stopped while something still listens to it.
     let topics = signals.topics();
     let others = topics.iter().filter(|topic| !outputs.contains(&topic.name)).map(|topic| {
         let carried = format!("{}{}", topic.message, if topic.slice { "[]" } else { "" });
-        (topic.name.clone(), format!("a topic no runtime answers for: {carried}"), Vec::new(), true)
+        (topic.name.clone(), format!("a topic no runtime answers for: {carried}"), Vec::new(), true, 0.0)
     });
     let mut listed: Vec<_> = heard.chain(sent).chain(others).collect();
-    listed.sort_by(|a, b| a.0.cmp(&b.0));
+    listed.sort_by(|one, other| sorted.order((&one.0, one.4, one.3), (&other.0, other.4, other.3)));
 
     let (mut opened, mut rows) = (BTreeSet::new(), Rows { chosen, listed: Vec::new(), run_to: None });
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.weak("Drag a number onto a chart to see it over time.");
         ui.weak("Hold Ctrl, or Cmd on a Mac, and click numbers to drag several at once. With Shift, a click takes all from the last one chosen to this one.");
+        ui.horizontal(|ui| {
+            let label = ui.weak("In order of");
+            let order = egui::ComboBox::from_id_salt("order").selected_text(sorted.name()).show_ui(ui, |ui| {
+                for by in Sort::ALL {
+                    ui.selectable_value(sorted, by, by.name());
+                }
+            });
+            order.response.labelled_by(label.id);
+        });
         ui.separator();
         if listed.is_empty() {
             ui.weak("Nothing is running.");
         }
-        for (name, about, numbers, topic) in listed {
+        for (name, about, numbers, topic, _) in listed {
             ui.vertical(|ui| {
                 ui.strong(&name);
                 ui.weak(about);
