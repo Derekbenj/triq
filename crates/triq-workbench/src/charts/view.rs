@@ -1,9 +1,10 @@
 //! How a chart of numbers against each other is looked at: what part of its
 //! points it shows, and where that puts a point on the screen.
 //!
-//! A chart shows all of its points until it is zoomed or moved by hand. From
-//! then on it shows what it was left at, until it is told to show all again.
-//! Zooming is about the middle of the chart, and so is turning a chart in space.
+//! A chart shows all of its points when it first has any, and from then on
+//! what it was left at: it stays where it is while its points move, until it
+//! is zoomed or moved by hand, or told to show all again. Zooming is about
+//! the middle of the chart, and so is turning a chart in space.
 //!
 //! In space, two of the axes are the ground and the third is up. Nothing is
 //! drawn smaller for being further away: a unit is as long at the back as at
@@ -17,6 +18,8 @@ const TURN: f32 = 0.01;
 /// How near a chart can be shown: until it reaches across this much of how far its middle is
 /// from where its values are 0. Nearer, the values of its grid could not be told apart.
 const NEAREST: f64 = 1e-6;
+/// How many times further the ground of a chart in space reaches than what is on it.
+const GROUND: f64 = 10.0;
 /// How many lines of a grid are drawn at the most. More than that could not be told apart.
 const MOST: f64 = 200.0;
 
@@ -60,7 +63,8 @@ pub type Point = [f64; 3];
 pub(super) struct View {
     /// Whether a unit is as long along one axis as along another, so that shapes are as they are.
     pub(super) equal: bool,
-    /// What part of its points the chart shows, once that was set by hand.
+    /// What part of its points the chart shows. `None` until it has shown any, and when it
+    /// is told to show all there is: then it finds out what that is, and keeps to it.
     pub(super) held: Option<Frame>,
     /// Where a chart in space is looked at from: how far round the upright axis, and from how
     /// far above the level, both in radians.
@@ -127,6 +131,18 @@ impl Frame {
 /// never wider there than from one of its corners to the opposite one, and that fits the room.
 fn edge(room: Rect) -> f64 {
     f64::from(room.width().min(room.height())) / 3f64.sqrt()
+}
+
+/// How far the ground of a chart in space reaches from where every axis is 0, along each of
+/// the two axes it lies along: ten times as far as the furthest that any of some points is
+/// from there along an axis, as a round number. With nothing away from there, as far as if
+/// something were 1 away.
+///
+/// So the ground is a part of the world, not of the chart: it is as large however the chart
+/// is looked at, and stays where it is while a point moves over it.
+pub fn ground_reach(points: impl Iterator<Item = Point>) -> f64 {
+    let furthest = points.flatten().fold(0.0, |furthest: f64, value| furthest.max(value.abs()));
+    round_step(GROUND * if furthest > 0.0 { furthest } else { 1.0 })
 }
 
 /// A round distance for the lines of a grid to be apart: the least of 1, 2 and 5 times a
@@ -221,14 +237,6 @@ impl Lens {
     /// the more the axis points towards the eye.
     pub fn on_screen(&self, axis: usize) -> f64 {
         self.scales[axis] * f64::from(self.ways[axis].length())
-    }
-
-    /// In space: how far along an axis the box reaches that the chart shows, from its least to
-    /// its most. The box is as large on the screen whichever way it is turned, and the ground
-    /// that is drawn is as large as its floor.
-    pub fn floor(&self, axis: usize) -> (f64, f64) {
-        let half = edge(self.room) / 2.0 / self.scales[axis];
-        (self.frame.middle[axis] - half, self.frame.middle[axis] + half)
     }
 
     /// How far out from the middle of the room a point is drawn: 0 in the middle, 1 on the

@@ -42,7 +42,7 @@ mod view;
 pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
 pub use pen::{color, pieces};
-pub use view::{Frame, Ground, Lens, Point, clipped, marks, round_step, tick};
+pub use view::{Frame, Ground, Lens, Point, clipped, ground_reach, marks, round_step, tick};
 
 /// Where the numbers come from: what the runtimes report of their connections
 /// and outputs, and what is read out of the messages themselves.

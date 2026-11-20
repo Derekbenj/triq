@@ -112,6 +112,14 @@ fn told(harness: &mut Window<'_>, curve: &str, chart: &str, what: &str) {
     harness.run_steps(3);
 }
 
+/// Tell the second chart to show all there is.
+fn fit(harness: &mut Window<'_>) {
+    let place = room(harness, "Chart 2");
+    let fit = harness.query_all_by_label("Fit").find(|fit| place.contains(fit.rect().center()));
+    fit.expect("the button on the chart").click();
+    harness.run_steps(3);
+}
+
 /// Where the trail of the one curve on a chart begins and where it ends.
 fn ends(harness: &Window<'_>, chart: &str) -> (egui::Pos2, egui::Pos2) {
     let trails = pieces(harness, chart);
@@ -142,16 +150,23 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     assert!(written_on(&harness, "Chart 2", &sensor) && harness.query_by_label_contains("two numbers").is_none());
     assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]"]);
 
-    // The newest point is a dot. While it is all there is to show, it is in the middle.
+    // The newest point is a dot. A chart that is told to show all there is has it in the
+    // middle, when it is all there is.
     is_at(&mut harness, &scene, [1.0, 5.0, 0.0]);
-    is_at(&mut harness, &scene, [3.0, 9.0, 0.0]);
+    fit(&mut harness);
     let (place, dot) = (room(&harness, "Chart 2"), dots(&harness, "Chart 2"));
     assert!(dot.len() == 1 && (dot[0] - place.center()).length() < 12.0, "{dot:?} in {place:?}");
-    assert!(pieces(&harness, "Chart 2").is_empty(), "and no trail is drawn behind it");
+    // The chart stays where it is, and the point moves over it: to the right and up.
+    is_at(&mut harness, &scene, [3.0, 9.0, 0.0]);
+    let moved = dots(&harness, "Chart 2");
+    assert!(moved.len() == 1 && moved[0].x > dot[0].x + 50.0 && moved[0].y < dot[0].y - 50.0, "{moved:?}");
+    assert!(place.contains(moved[0]) && pieces(&harness, "Chart 2").is_empty(), "and no trail is drawn behind it");
 
-    // Told to, the chart draws the path the point took since the curve was put on it: from the
-    // lower left, where x and y were smallest, to the upper right. The dot is at its newest end.
+    // Told to, the chart draws the path the point took since the curve was put on it. Told to
+    // show all there is, it does so from edge to edge: the path goes from the lower left, where
+    // x and y were smallest, to the upper right, and the dot is at its newest end.
     told(&mut harness, &sensor, "Chart 2", "Draw its trail");
+    fit(&mut harness);
     let (from, to) = ends(&harness, "Chart 2");
     assert!(to.x > from.x + 300.0 && to.y < from.y - 200.0, "from {from:?} to {to:?}");
     assert_eq!(dots(&harness, "Chart 2"), [to]);
@@ -176,6 +191,7 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     // other way up.
     along(&mut harness, "Chart 2", 0, "translation[1]");
     assert_eq!(axes(&harness, "Chart 2"), ["translation[1]", "translation[0]"]);
+    fit(&mut harness);
     let [left, right, low, high] = ["5", "9", "2.0", "3.0"].map(|value| written(&harness, value));
     assert!(left.x < right.x - 300.0 && (left.y - right.y).abs() < 1.0 && high.y < low.y - 200.0);
     assert_eq!(pieces(&harness, "Chart 2").len(), 1);
@@ -184,6 +200,7 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     assert!(pieces(&harness, "Chart 2").is_empty());
     is_at(&mut harness, &scene, [0.0, 2.0, 1.0]);
     is_at(&mut harness, &scene, [0.0, 4.0, 3.0]);
+    fit(&mut harness);
     let (from, to) = ends(&harness, "Chart 2");
     assert!(to.x > from.x + 300.0 && to.y < from.y - 200.0, "from {from:?} to {to:?}");
     Ok(())
@@ -204,7 +221,8 @@ fn a_chart_of_numbers_against_each_other_is_zoomed_moved_and_fitted() -> triq::R
         let trail = &pieces(harness, "Chart 2")[0].0;
         (trail[0], trail[1])
     };
-    // To begin with the chart shows all there is, from edge to edge. The dot is in the middle of it.
+    // Told to show all there is, the chart does so from edge to edge. The dot is in the middle of it.
+    fit(&mut harness);
     let (from, to) = corners(&harness);
     let (all, middle) = (to - from, from + (to - from) / 2.0);
     assert!(all.x > 300.0 && all.y < -200.0, "{all:?}");
@@ -360,6 +378,7 @@ fn several_curves_share_a_chart_each_with_its_own_numbers() -> triq::Result {
     };
     is_at(&mut harness, &scene, [8.0, 2.0, 0.0]);
     read(&mut harness, 4.0);
+    fit(&mut harness);
     let mut both = dots(&harness, "Chart 2");
     both.sort_by(|a, b| a.x.total_cmp(&b.x));
     assert!(both.len() == 2 && both[1].x > both[0].x + 100.0 && (both[1].y - both[0].y).abs() < 1.0, "{both:?}");
@@ -440,7 +459,8 @@ fn the_trail_of_a_curve_fades_into_the_past_when_told_to() -> triq::Result {
     assert!(trail.len() > 3 && strengths.iter().all(|strength| *strength <= strengths[newest]), "{strengths:?}");
     assert!(strengths.iter().min() < Some(&(strengths[newest] - 20)), "{strengths:?}");
 
-    // A picture for a human to look at.
+    // A picture for a human to look at, of all there is.
+    fit(&mut harness);
     harness.remove_cursor();
     harness.run_steps(2);
     match harness.render() {
@@ -528,21 +548,29 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     };
 
     // The trail is drawn from the first place to the second, and back to the dot, in the middle.
+    fit(&mut harness);
     let place = room(&harness, "Chart 2");
     let (from, to) = corners(&harness);
     let (across, middle) = (to - from, from + (to - from) / 2.0);
     assert!(across.length() > 100.0 && (dots(&harness, "Chart 2")[0] - middle).length() < 1.0, "{from:?} to {to:?}");
-    // Under it is the ground, where z is 0: a patch of it, as large as the floor of what the
-    // chart shows, with lines at round values. It does not reach the edges of the chart, and the
-    // values are written outside it, along its nearer edges: x runs from 0 to 4.
+    // Under it is the ground, where z is 0, with lines at round values. Their values are
+    // written along the axes: x runs to 4 and beyond.
     let lines = |harness: &Window<'_>, width: f32| {
         let lines = drawn(harness).0.into_iter().filter(|line| line.width == width && place.contains_rect(line.within));
         lines.collect::<Vec<_>>()
     };
-    let ground = lines(&harness, 1.0);
-    assert!(ground.len() > 8 && ground.len() < 24, "{} lines", ground.len());
-    assert!(ground.iter().flat_map(|line| &line.points).all(|end| place.shrink(5.0).contains(*end)), "{place:?}");
-    assert!(written_on(&harness, "Chart 2", "0") && written_on(&harness, "Chart 2", "4"));
+    let written = |harness: &Window<'_>, value: &str| {
+        let found = harness.query_all_by_label(value).find(|written| place.contains(written.rect().center()));
+        found.unwrap_or_else(|| panic!("{value} is written on the chart")).rect().center()
+    };
+    assert!(lines(&harness, 1.0).len() > 8, "{} lines", lines(&harness, 1.0).len());
+    let (two, four) = (written(&harness, "2"), written(&harness, "4"));
+    // The ground is a part of the world. It stays where it is while the point moves over it.
+    let was = dots(&harness, "Chart 2")[0];
+    is_at(&mut harness, &scene, [3.0, 1.0, 0.5]);
+    assert!((dots(&harness, "Chart 2")[0] - was).length() > 20.0, "the point has moved");
+    assert_eq!((written(&harness, "2"), written(&harness, "4")), (two, four), "and the ground has not");
+    is_at(&mut harness, &scene, [2.0, 1.0, 0.5]);
     // Where every axis is 0, each of them is drawn, a unit long: that is where the trail began.
     let axes_drawn = lines(&harness, 1.5);
     assert_eq!(axes_drawn.len(), 3);
@@ -614,6 +642,7 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
         let (turn, up) = (step as f32 * 0.3, step as f32 * 0.05);
         is_at(&mut harness, &scene, [2.0 * turn.cos(), 2.0 * turn.sin(), up]);
     }
+    fit(&mut harness);
     harness.remove_cursor();
     harness.run_steps(2);
     match harness.render() {
@@ -755,29 +784,32 @@ fn how_far_out_a_point_is_drawn_says_how_much_further_away_a_chart_must_be_to_sh
 }
 
 #[test]
-fn the_ground_of_a_chart_in_space_is_the_floor_of_what_it_shows() {
+fn the_ground_of_a_chart_in_space_is_a_part_of_the_world_ten_times_as_large_as_what_is_on_it() {
+    // The ground reaches as far from where every axis is 0 as ten times the furthest that any
+    // point is from there along an axis, as a round number. It does not depend on how the chart
+    // is looked at: it is as large from near by as from far away.
+    assert_eq!(charts::ground_reach([[-6.83, 5.15, 2.54]].into_iter()), 100.0);
+    assert_eq!(charts::ground_reach([[0.0, 0.0, 2.54], [1.0, -2.0, 0.0]].into_iter()), 50.0);
+    assert_eq!(charts::ground_reach([[0.3, 0.0, 0.0]].into_iter()), 5.0);
+    // With nothing away from there, it reaches as far as if something were 1 away.
+    assert_eq!(charts::ground_reach([[0.0; 3]].into_iter()), 10.0);
+    assert_eq!(charts::ground_reach(std::iter::empty()), 10.0);
+
     // A room whose shorter side is as long as the diagonal of a box that is 200 points along every edge.
     let room = Rect::from_center_size(pos2(500.0, 400.0), vec2(600.0, 200.0 * 3f32.sqrt()));
     let frame = Frame { middle: [10.0, 20.0, 5.0], spans: [2.0, 4.0, 1.0] };
     let near = |found: (f64, f64), expected: (f64, f64)| {
         assert!((found.0 - expected.0).abs() < 1e-4 && (found.1 - expected.1).abs() < 1e-4, "{found:?}");
     };
-    // What the chart shows is a box that is as long along each axis as the chart reaches. The
-    // ground under it is as large as its floor.
-    let lens = Lens::space(frame, room, false, (0.0, 0.5), Ground::Xy);
-    near(lens.floor(0), (9.0, 11.0));
-    near(lens.floor(1), (18.0, 22.0));
-    // With one scale for every axis the box is as long along all of them as along the longest.
-    let equal = Lens::space(frame, room, true, (0.0, 0.5), Ground::Xy);
-    near(equal.floor(0), (8.0, 12.0));
-    near(equal.floor(1), (18.0, 22.0));
-
-    // An axis that is seen from the side is drawn at its full scale. One that points towards the
-    // eye is drawn shorter, and one that points straight at it is not drawn at all.
-    let level = Lens::space(frame, room, false, (0.0, 0.0), Ground::Xy);
+    // How far apart its lines are goes by how long a unit is on the screen. An axis that is
+    // seen from the side is drawn at its full scale. One that points towards the eye is drawn
+    // shorter, and one that points straight at it is not drawn at all.
+    let (level, above) = ((0.0, 0.0), (0.0, 0.5));
+    let level = Lens::space(frame, room, false, level, Ground::Xy);
     near((level.on_screen(1), level.on_screen(2)), (50.0, 200.0));
     assert!(level.on_screen(0) < 1e-3);
-    near((lens.on_screen(1), lens.on_screen(0)), (50.0, 100.0 * 0.5f64.sin()));
+    let above = Lens::space(frame, room, false, above, Ground::Xy);
+    near((above.on_screen(1), above.on_screen(0)), (50.0, 100.0 * 0.5f64.sin()));
 }
 
 #[test]

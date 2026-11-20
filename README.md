@@ -514,9 +514,9 @@ is made:
   more see-through.
 - A curve has a past from when it was put on a chart. A number that is picked for an axis and was
   on no chart has none, so the trail begins again.
-- The chart shows everything there is, edge to edge. The wheel, or a pinch, zooms about the middle
-  of the chart, and dragging moves it. From then on it stays as it was left, until `Fit` has it
-  show everything again.
+- A chart shows everything there is, edge to edge, when it first has something to show and when
+  you press `Fit`. Otherwise it stays where it is, and the point moves over it. The wheel, or a
+  pinch, zooms about the middle of the chart, and dragging moves it.
 - A chart does not lose sight of where a curve is now. By hand it cannot be zoomed or moved past
   the point where the newest point of a curve would leave it: the wheel and the drag stop there.
   When the curve itself goes where the chart does not reach, the chart is seen from just as much
@@ -528,16 +528,20 @@ is made:
 - `1:1` gives every axis one scale, so that shapes are as they are. Click it again to have each
   axis fill the chart. A 3D chart starts with it on, and a 2D chart with it off.
 - On a 3D chart the grid is the ground: the plane where the axis that is up is 0. `Ground` says
-  which two axes it is along, `xy`, `xz` or `yz`, and the third is up. Only a patch of the ground
-  is drawn, as large as the floor of what the chart shows and under the middle of that. When the
-  chart follows a curve the patch goes with it, and the lines pass through the patch. The values
-  are written outside the patch, along its two nearer edges, one edge for each axis, with the
-  letter of the axis beyond them. Where all three axes are 0, each is drawn one square long: x in
-  red, y in green and z in blue.
+  which two axes it is along, `xy`, `xz` or `yz`, and the third is up. The ground is a part of
+  the world, not of the chart. It is a square about the point where every axis is 0, and reaches
+  ten times as far from there as the furthest that anything on the chart is, as a round number:
+  with a point 7 away, to 100 either way. It stays where it is while a point moves over it, and
+  it is as large from near by as from far away: zoom out, and you see all of it.
+- The values of the ground are written along its axes: those of x along the line where y is 0,
+  and those of y along the line where x is 0, each with its letter after the last value. When
+  the chart does not show that line, they are written along the nearest line it does show.
+  Where all three axes are 0, each is drawn one square long: x in red, y in green and z in blue.
 - A curve on a 3D chart stands on the ground. A thin line goes from its newest point straight to
   the ground, to a ring there, and says how far that is: `z 16.5`. The ring is where the point is
   over the ground, and the line is how high: together they tell a point that is near and low from
-  one that is far and high. A 3D chart that shows everything shows the rings as well.
+  one that is far and high. A 3D chart that shows everything shows the rings as well, and the
+  point where every axis is 0.
 - Dragging a 3D chart turns it about its middle. To move it instead, hold Shift while dragging,
   or drag with the other button of the mouse. Nothing is drawn smaller for being further away, so
   a unit is as long at the back as at the front.
