@@ -147,14 +147,14 @@ impl Curve {
     }
 }
 
-/// Written over the chart of that number: a row for each curve. The colour is a button that
+/// Written over the chart of that number, which shows so many seconds: a row for each curve. The colour is a button that
 /// opens a picker, and the box beside it says whether the axes name the curve's numbers. The
 /// curve is taken by the name of its topic to be put down on another chart of the kind, or on
 /// another row here: it takes that row's place, and the curves are drawn in the order of their
 /// rows, the last over the others. A slot for each axis says which number is along it, and
 /// takes another that is dragged onto it. Of the three buttons at the end, the eye hides the
 /// curve, the next opens how it is drawn, and the last takes it off.
-pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curve>) {
+pub(super) fn names(ui: &mut Ui, (chart, shown): (usize, f64), kind: Kind, curves: &mut Vec<Curve>) {
     if curves.is_empty() {
         ui.weak(kind.hint());
         return;
@@ -181,7 +181,7 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
                 pen::more(ui, |ui| {
                     ui.checkbox(&mut curve.trail, "Draw its trail")
                         .on_hover_text("The path its point took over the time the chart shows");
-                    curve.pen.fading(ui);
+                    curve.pen.fading(ui, shown);
                     if ui.checkbox(&mut curve.follow, "Keep its newest point in the middle").changed() && curve.follow {
                         followed = Some(number);
                     }
@@ -320,7 +320,7 @@ pub(super) fn draw(
         let latest = path.last().map_or(now, |(at, _)| *at);
         let aged = |(at, point): &(f64, Point)| (lens.at(*point), ((latest - at) / (now - since)) as f32);
         let placed: Vec<(Pos2, f32)> = path.iter().map(aged).collect();
-        curve.pen.draw(&painter, &sparse(&placed), dark);
+        curve.pen.draw(&painter, &sparse(&placed), now - since, dark);
         let Some(newest) = *newest else { continue };
         if kind == Kind::Space {
             stand(ui, &painter, &lens, (newest, grounded(newest), lying[2]), (area, curve.pen.color(dark)));

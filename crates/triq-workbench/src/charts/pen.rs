@@ -8,10 +8,15 @@ use serde::{Deserialize, Serialize};
 
 /// How wide a line is drawn.
 const WIDTH: f32 = 2.0;
-/// How soon a line is gone when it is first told to fade: by the oldest moment its chart shows.
-const USUAL: f32 = 0.5;
+/// By when a line is gone when it is first told to fade: by the oldest moment its chart
+/// shows, which is all of the time that the chart shows.
+const USUAL: f32 = 1.0;
 /// In how many steps a line goes from unseen to its full colour.
 const STEPS: f32 = 32.0;
+/// The soonest that a line is gone: at this age, where 1 is as long as its chart shows.
+const SOONEST: f32 = 0.001;
+/// The most seconds a line that fades can be told to be seen for: as many as are kept.
+const LONGEST: f32 = crate::history::History::LONGEST as f32;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub(super) struct Pen {
@@ -19,10 +24,14 @@ pub(super) struct Pen {
     pub(super) shade: usize,
     /// The colour that was chosen for it instead.
     pub(super) chosen: Option<Color32>,
-    /// How soon the line is gone, from 0 to 1, if it fades into the past: see [`pieces`].
-    /// Where it is newest it has its full colour.
+    /// How much of the time its chart shows the line can be seen for, from 0 to 1, if it
+    /// fades into the past: by then it is gone. Where it is newest it has its full colour.
     #[serde(default)]
     pub(super) fade: Option<f32>,
+    /// How many seconds a line that fades can be seen for, if that was said in seconds: then
+    /// it does not go by how much of the past the chart shows.
+    #[serde(default)]
+    pub(super) seconds: Option<f32>,
     /// Whether the line is left out of the drawing, with its name still on the chart.
     #[serde(default)]
     pub(super) hidden: bool,
@@ -68,26 +77,47 @@ impl Pen {
         });
     }
 
-    /// Whether the line fades into the past, and how soon it is gone: a box to tick, and a slider under it.
-    pub(super) fn fading(&mut self, ui: &mut Ui) {
+    /// Whether the line fades into the past, and by when it is gone: a box to tick, and under
+    /// it two numbers that say the same. The first is how much of the time the chart shows,
+    /// `shown` seconds, in hundredths, and the second is that in seconds. Either can be typed
+    /// into, and the one that was is the one that holds when the chart shows more or less.
+    pub(super) fn fading(&mut self, ui: &mut Ui, shown: f64) {
         let mut fades = self.fade.is_some();
         if ui.checkbox(&mut fades, "Fade into the past").changed() {
-            self.fade = fades.then_some(USUAL);
+            (self.fade, self.seconds) = (fades.then_some(USUAL), None);
         }
-        if let Some(fade) = &mut self.fade {
-            let percent = |fade: f64, _| format!("{:.0} %", fade * 100.0);
-            let slider = egui::Slider::new(fade, 0.0..=1.0).custom_formatter(percent);
-            let about = "At 50 % it has faded to nothing by the oldest moment the chart shows. \
-                         Below that it never quite goes, and above it is gone sooner: at 100 %, almost at once.";
-            ui.add(slider.text("how soon it is gone")).on_hover_text(about);
-        }
+        let (Some(share), shown) = (self.fade, shown as f32) else { return };
+        let (mut percent, mut seconds) = match self.seconds {
+            Some(seconds) => (seconds / shown * 100.0, seconds),
+            None => (share * 100.0, share * shown),
+        };
+        // The one that holds is written plainly, and the other faintly.
+        let said = |ui: &mut Ui, holds: bool, words: &str| if holds { ui.label(words) } else { ui.weak(words) };
+        ui.horizontal(|ui| {
+            let label = said(ui, self.seconds.is_none(), "Gone after");
+            let number = egui::DragValue::new(&mut percent).range(1.0..=100.0).max_decimals(1).suffix(" %");
+            if ui.add(number).labelled_by(label.id).changed() {
+                (self.fade, self.seconds) = (Some(percent / 100.0), None);
+            }
+            said(ui, self.seconds.is_none(), "of the time shown");
+        });
+        ui.horizontal(|ui| {
+            let label = said(ui, self.seconds.is_some(), "or after");
+            let number = egui::DragValue::new(&mut seconds).range(0.01..=LONGEST).max_decimals(2).suffix(" s");
+            if ui.add(number).labelled_by(label.id).changed() {
+                self.seconds = Some(seconds);
+            }
+        });
     }
 
-    /// Draw a line through some places. Each comes with how old it is: 0 where the line is
-    /// newest, and 1 as long before that as the chart shows.
-    pub(super) fn draw(&self, painter: &Painter, line: &[(Pos2, f32)], dark: bool) {
+    /// Draw a line through some places, on a chart that shows so many seconds. Each place
+    /// comes with how old it is: 0 where the line is newest, and 1 as long before that as the
+    /// chart shows.
+    pub(super) fn draw(&self, painter: &Painter, line: &[(Pos2, f32)], shown: f64, dark: bool) {
+        // The age at which it is gone: so many seconds, or so much of what the chart shows.
+        let gone = self.fade.map(|share| self.seconds.map_or(share, |seconds| seconds / shown as f32));
         let color = self.color(dark);
-        for (piece, strength) in pieces(line, self.fade.unwrap_or(0.0)) {
+        for (piece, strength) in pieces(line, gone) {
             if strength > 0.0 {
                 painter.line(piece, Stroke::new(WIDTH, color.gamma_multiply(strength)));
             }
@@ -107,16 +137,15 @@ pub(super) fn more(ui: &mut Ui, contents: impl FnOnce(&mut Ui)) {
 /// unseen, to 1. `line` is the places it passes through, each with how old it is: 0 where it
 /// is newest, 1 as long before that as its chart shows.
 ///
-/// `fade` is how soon it is gone, from 0 to 1. Its strength falls evenly with its age. At 0
-/// it does not fall at all, and the line is one piece. At a half it has fallen to nothing at
-/// the age of 1. Above that the line is gone sooner, after `(1 - fade) / fade` of that time,
-/// and at 1 after a hundredth of it.
+/// `gone` is the age at which a line that fades has faded to nothing: its strength falls
+/// evenly from its newest point to there. At 1 that is the oldest moment the chart shows, at
+/// a half the middle of it. A line that does not fade is one piece.
 ///
 /// A piece begins where the one before it ends, and a long stretch between two places is cut
 /// where the strength changes: the line fades evenly however few points it has.
-pub fn pieces(line: &[(Pos2, f32)], fade: f32) -> Vec<(Vec<Pos2>, f32)> {
+pub fn pieces(line: &[(Pos2, f32)], gone: Option<f32>) -> Vec<(Vec<Pos2>, f32)> {
     // The strength at an age, counted in steps, as if it could fall below nothing.
-    let fall = fade / (1.0 - fade).max(0.01);
+    let fall = gone.map_or(0.0, |gone| 1.0 / gone.max(SOONEST));
     let level = |age: f32| (1.0 - fall * age) * STEPS;
     let mut pieces: Vec<(Vec<Pos2>, f32)> = Vec::new();
     for pair in line.windows(2) {

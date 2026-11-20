@@ -451,8 +451,8 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
             return;
         }
         match chart.kind {
-            Kind::Time => lines::names(ui, chart.number, &mut chart.lines, recorded),
-            kind => curves::names(ui, chart.number, kind, &mut chart.curves),
+            Kind::Time => lines::names(ui, (chart.number, chart.seconds), &mut chart.lines, recorded),
+            kind => curves::names(ui, (chart.number, chart.seconds), kind, &mut chart.curves),
         }
     });
 }

@@ -827,6 +827,10 @@ fn a_line_is_told_to_fade_into_the_past() -> triq::Result {
     // The button beside its name opens what can be said of how it is drawn. Told to fade, it is
     // weaker the further back it goes, in steps too small to see, and as strong as ever where it
     // is newest. To begin with it has faded to nothing by the oldest moment the chart shows.
+    let boxes = |harness: &Window<'_>| -> Vec<egui::Rect> {
+        harness.query_all_by_role(Role::SpinButton).map(|number| number.rect()).collect()
+    };
+    let before = boxes(&harness);
     harness.get_by_label(line.as_str()).parent().unwrap().get_by_label("…").click();
     harness.run_steps(3);
     harness.get_by_label("Fade into the past").click();
@@ -834,21 +838,42 @@ fn a_line_is_told_to_fade_into_the_past() -> triq::Result {
     let faded = strengths(&harness, "Chart 1");
     assert!(faded.len() > 20 && faded.is_sorted() && faded[faded.len() - 1] == 255, "{faded:?}");
     assert!(faded.windows(2).all(|pair| pair[1] - pair[0] < 12) && faded[0] < 20, "{faded:?}");
-    // The slider says how soon it is gone. At a quarter it is not gone at all in what the chart
-    // shows: where it is oldest, it has two thirds of its colour.
-    harness.get_by_role(Role::Slider).set_value_accesskit(0.25);
-    harness.run_steps(3);
-    let faded = strengths(&harness, "Chart 1");
-    assert!(faded[0].abs_diff(170) < 12 && faded[faded.len() - 1] == 255, "{faded:?}");
-    // That is kept with the chart, for the next run.
-    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
-    assert!(kept.contains(r#""fade":0.25"#), "{kept}");
-    // At the most, it is gone almost at once: all that is drawn of it is its newest end.
-    harness.get_by_role(Role::Slider).set_value_accesskit(1.0);
-    harness.run_steps(3);
-    let (drawn, width) = (pieces(&harness, "Chart 1"), room(&harness, "Chart 1").width());
-    let newest = drawn.iter().map(|(points, _)| points[points.len() - 1].x).fold(0.0, f32::max);
-    assert!(!drawn.is_empty() && drawn.iter().all(|(points, _)| points[0].x > newest - width * 0.02), "{drawn:?}");
+
+    // Two boxes say by when it is gone: the first as so much of the time the chart shows, in
+    // hundredths, and the second in seconds. A number is typed into either.
+    let typed = |harness: &mut Window<'_>, which: usize, value: f64| {
+        let mut new: Vec<egui::Rect> = boxes(harness).into_iter().filter(|number| !before.contains(number)).collect();
+        new.sort_by(|a, b| a.top().total_cmp(&b.top()));
+        let number = harness.query_all_by_role(Role::SpinButton).find(|number| number.rect() == new[which]);
+        number.expect("the box").set_value_accesskit(value);
+        harness.run_steps(3);
+    };
+    // How far back from its newest end the line can be seen, in widths of the chart.
+    let seen = |harness: &Window<'_>| {
+        let (drawn, width) = (pieces(harness, "Chart 1"), room(harness, "Chart 1").width());
+        let newest = drawn.iter().map(|(points, _)| points[points.len() - 1].x).fold(0.0, f32::max);
+        let oldest = drawn.iter().map(|(points, _)| points[0].x).fold(f32::INFINITY, f32::min);
+        (newest - oldest) / width
+    };
+    let kept = |harness: &Window<'_>| serde_json::to_string(&harness.state().charts).expect("charts as text");
+    // At 50, with five seconds shown, it is gone after two and a half: half the width of the chart.
+    typed(&mut harness, 0, 50.0);
+    assert!((seen(&harness) - 0.5).abs() < 0.04, "{}", seen(&harness));
+    assert!(kept(&harness).contains(r#""fade":0.5,"seconds":null"#), "{}", kept(&harness));
+    typed(&mut harness, 0, 10.0);
+    assert!((seen(&harness) - 0.1).abs() < 0.04, "{}", seen(&harness));
+
+    // In seconds, it is gone after so many, however much the chart shows: one second is a
+    // fifth of five, and a tenth of ten. What was said in hundredths is not looked at then.
+    typed(&mut harness, 1, 1.0);
+    assert!((seen(&harness) - 0.2).abs() < 0.04, "{}", seen(&harness));
+    assert!(kept(&harness).contains(r#""seconds":1.0"#), "{}", kept(&harness));
+    show_the_last(&mut harness, "Chart 1", 10.0);
+    assert!((seen(&harness) - 0.1).abs() < 0.04, "{}", seen(&harness));
+    // Said in hundredths again, it goes by how much the chart shows: half of ten seconds.
+    typed(&mut harness, 0, 50.0);
+    assert!((seen(&harness) - 0.5).abs() < 0.04, "{}", seen(&harness));
+    assert!(kept(&harness).contains(r#""fade":0.5,"seconds":null"#), "{}", kept(&harness));
 
     // Told not to fade any more, it is one piece again.
     harness.get_by_label("Fade into the past").click();
@@ -923,7 +948,8 @@ fn the_names_on_a_chart_are_put_in_order_and_hidden_and_so_is_each_line() -> tri
 
 #[test]
 fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
-    // A line from the oldest moment a chart shows to its newest point: its places, and how old each is.
+    // A line from the oldest moment a chart shows to its newest point: its places, and how old
+    // each is, where 1 is as long as the chart shows.
     let line: Vec<(egui::Pos2, f32)> =
         (0..=100).map(|step| (egui::pos2(step as f32, 0.0), 1.0 - step as f32 / 100.0)).collect();
     let ends = |pieces: &[(Vec<egui::Pos2>, f32)]| (pieces[0].0[0], *pieces[pieces.len() - 1].0.last().unwrap());
@@ -931,34 +957,34 @@ fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
     let seen_from = |pieces: &[(Vec<egui::Pos2>, f32)]| pieces.iter().find(|piece| piece.1 > 0.0).expect("some").0[0].x;
 
     // One that does not fade at all is one piece, at full strength.
-    let whole = charts::pieces(&line, 0.0);
+    let whole = charts::pieces(&line, None);
     assert_eq!((whole.len(), whole[0].0.len(), whole[0].1), (1, 101, 1.0));
 
-    // How soon a line is gone is said from 0 to 1. At a half, it has faded to nothing by the
-    // oldest moment the chart shows, and is at full strength where it is newest.
-    let faded = charts::pieces(&line, 0.5);
+    // One that fades is gone at an age, and is at full strength where it is newest. Gone at
+    // the oldest moment the chart shows, it begins at nothing there.
+    let faded = charts::pieces(&line, Some(1.0));
     assert!(faded.len() > 20 && faded.len() <= 40, "{} pieces", faded.len());
     assert!(faded.windows(2).all(|pair| pair[0].1 < pair[1].1), "each stronger than the one before it");
     assert!(faded.windows(2).all(|pair| pair[0].0.last() == pair[1].0.first()), "and beginning where that ends");
     assert_eq!(ends(&faded), (line[0].0, line[100].0), "from end to end");
     assert!(faded[0].1 < 0.05 && faded[faded.len() - 1].1 == 1.0);
-    // Below a half it is never gone: at a quarter, its oldest point has two thirds of its colour.
-    assert!((charts::pieces(&line, 0.25)[0].1 - 2.0 / 3.0).abs() < 0.05);
-    // Above a half it is gone sooner: at nine tenths after a ninth of the time, and at the most
-    // almost at once. What cannot be seen is one piece, however long.
-    let (sooner, soonest) = (charts::pieces(&line, 0.9), charts::pieces(&line, 1.0));
-    assert!((seen_from(&sooner) - 88.9).abs() < 1.0 && sooner[0].1 == 0.0 && sooner[0].0.len() > 80);
-    assert!(seen_from(&soonest) > 98.5 && soonest[soonest.len() - 1].1 == 1.0, "{}", seen_from(&soonest));
-    assert_eq!(ends(&soonest), (line[0].0, line[100].0));
+    // Gone at half that age, it cannot be seen before the middle, and at a tenth, before the
+    // last tenth. What cannot be seen is one piece, however long.
+    let (half, tenth) = (charts::pieces(&line, Some(0.5)), charts::pieces(&line, Some(0.1)));
+    assert!((seen_from(&half) - 50.0).abs() < 2.0 && half[0].1 == 0.0 && half[0].0.len() > 40);
+    assert!((seen_from(&tenth) - 90.0).abs() < 1.0 && tenth[tenth.len() - 1].1 == 1.0, "{}", seen_from(&tenth));
+    assert_eq!(ends(&tenth), (line[0].0, line[100].0));
+    // Gone at twice the age of the oldest moment shown, it has half its strength there.
+    assert!((charts::pieces(&line, Some(2.0))[0].1 - 0.5).abs() < 0.05);
 
     // A line of two points far apart fades as evenly as one of many, and is gone as soon.
-    let sparse = charts::pieces(&[line[0], line[100]], 0.5);
+    let sparse = charts::pieces(&[line[0], line[100]], Some(1.0));
     assert!(sparse.len() > 20 && sparse.windows(2).all(|pair| pair[0].1 < pair[1].1));
     assert_eq!(ends(&sparse), (line[0].0, line[100].0));
     let middle = &sparse[sparse.len() / 2];
     assert!((middle.0[0].x - 50.0).abs() < 5.0 && (middle.1 - 0.5).abs() < 0.05, "half as strong halfway");
-    let sparse = charts::pieces(&[line[0], line[100]], 0.9);
-    assert!((seen_from(&sparse) - 88.9).abs() < 1.0 && sparse.len() <= 40, "{} pieces", sparse.len());
+    let sparse = charts::pieces(&[line[0], line[100]], Some(0.1));
+    assert!((seen_from(&sparse) - 90.0).abs() < 1.0 && sparse.len() <= 40, "{} pieces", sparse.len());
 }
 
 #[test]

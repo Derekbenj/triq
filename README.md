@@ -466,10 +466,12 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   tall with ten lines as with one.
 - Each line has a colour of its own. The button beside its name shows that colour and opens a picker.
 - The `…` button beside a line opens how the line is drawn. With `Fade into the past` ticked, the
-  line is more see-through the older it is, and the slider says how soon it is gone. At 50 % it
-  has faded to nothing by the oldest moment the chart shows. Below that it never quite goes, and
-  above it is gone sooner: at 100 %, almost at once. Where a line is newest it always has its
-  full colour.
+  line is more see-through the older it is, and two numbers under it say by when it is gone.
+  The first is a share of the time the chart shows: at 50 %, on a chart that shows the last 30
+  seconds, the line is gone after 15, and at 10 % after 3. The second is the same in seconds.
+  Type into either. A number of seconds holds however much the chart shows, and may be more
+  than that: then the line never quite goes. A share goes with the chart. Where a line is
+  newest it always has its full colour.
 - The eye beside a name hides that line and shows it again. A hidden line keeps its name on the
   chart, written faintly, and the chart no longer reaches for its values.
 - `Legend`, on each chart, hides all the names at once to leave the lines the room, and shows them

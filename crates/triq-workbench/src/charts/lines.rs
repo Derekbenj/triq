@@ -89,13 +89,13 @@ impl Line {
     }
 }
 
-/// Written over the chart of that number: the colour, name and newest value of
-/// each line. The colour is a button that opens a picker, and the line is taken
+/// Written over the chart of that number, which shows so many seconds: the
+/// colour, name and newest value of each line. The colour is a button that opens a picker, and the line is taken
 /// by its name to be put down on another chart, or on another row here: it
 /// takes that row's place, and the lines are drawn in the order of their rows,
 /// the last over the others. Of the three buttons after the value, the eye
 /// hides the line, the next opens how it is drawn, and the last takes it off.
-pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
+pub(super) fn names(ui: &mut Ui, (chart, shown): (usize, f64), lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
         ui.weak(Kind::Time.hint());
         return;
@@ -123,7 +123,7 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
                     None => ui.weak("nothing yet"),
                 };
                 line.pen.eye(ui);
-                pen::more(ui, |ui| line.pen.fading(ui));
+                pen::more(ui, |ui| line.pen.fading(ui, shown));
                 ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
             })
         });
@@ -182,7 +182,7 @@ pub(super) fn lines(
         // A point is as old as it is far to the left of the newest, in widths of the chart.
         let newest = placed.last().map_or(inside.right(), |newest| newest.x);
         let aged: Vec<(Pos2, f32)> = placed.into_iter().map(|at| (at, (newest - at.x) / inside.width())).collect();
-        line.pen.draw(&painter, &aged, dark);
+        line.pen.draw(&painter, &aged, seconds, dark);
     }
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));
