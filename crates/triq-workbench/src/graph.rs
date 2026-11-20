@@ -444,7 +444,9 @@ pub fn show(snarl: &mut Snarl<Card>, cards: Vec<Card>, places: &mut Places, now:
     }
 
     // A wire for every connection whose two ends are on the drawing. Not for one between the two
-    // cards that stand for the outside of a group: that connects nothing of the group.
+    // cards that stand for the outside of a group: that connects nothing of the group. And not
+    // for one between two pins of the card of a group: that wire is inside the group, and its
+    // ends are pins only because a draft cuts it.
     let mut leaving: HashMap<String, Vec<OutPinId>> = HashMap::new();
     for (node, drawn) in snarl.nodes_ids_data() {
         for (output, pin) in drawn.value.right.iter().enumerate() {
@@ -454,10 +456,12 @@ pub fn show(snarl: &mut Snarl<Card>, cards: Vec<Card>, places: &mut Places, now:
     let entry = |node: NodeId| matches!(snarl[node].kind, Kind::Entry { .. });
     let mut wires: HashSet<(OutPinId, InPinId)> = HashSet::new();
     for (node, drawn) in snarl.nodes_ids_data() {
-        let exit = matches!(drawn.value.kind, Kind::Exit { .. });
+        let (exit, group) =
+            (matches!(drawn.value.kind, Kind::Exit { .. }), matches!(drawn.value.kind, Kind::Group { .. }));
         for (input, pin) in drawn.value.left.iter().enumerate() {
             let from = pin.heard().filter_map(|name| leaving.get(name)).flatten();
-            wires.extend(from.filter(|from| !(exit && entry(from.node))).map(|from| (*from, InPinId { node, input })));
+            let drawn = from.filter(|from| !(exit && entry(from.node)) && !(group && from.node == node));
+            wires.extend(drawn.map(|from| (*from, InPinId { node, input })));
         }
     }
     let drawn: HashSet<(OutPinId, InPinId)> = snarl.wires().collect();

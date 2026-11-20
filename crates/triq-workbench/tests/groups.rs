@@ -239,6 +239,12 @@ fn a_port_whose_last_connection_a_draft_cuts_is_offered_as_one_that_is_connected
     let mut snarl = Snarl::new();
     graph::show(&mut snarl, cards, &mut Places::new(), 0);
     assert!(wires(&snarl).contains(&"imu pose -> smoother raw".to_owned()));
+    // From outside, both its ends are pins of the one card. The wire is inside the group, and
+    // is not drawn there: no wire leaves the card to come back to it.
+    let cards = graph::cards_with(&scene.inventories(), &sensing, None, &inner);
+    let mut snarl = Snarl::new();
+    graph::show(&mut snarl, cards, &mut Places::new(), 0);
+    assert_eq!(wires(&snarl), ["sensing smooth -> viewer pose"]);
 
     // The same goes for what is outside a group. With the wire to the viewer cut, the viewer's
     // input is still on Group Output, where its wire is, and stays there as one that is free.
