@@ -516,20 +516,30 @@ is made:
   on no chart has none, so the trail begins again.
 - The chart shows everything there is, edge to edge. The wheel, or a pinch, zooms about the middle
   of the chart, and dragging moves it. From then on it stays as it was left, until `Fit` has it
-  show everything again.
+  show everything again. It does not lose sight of where a curve is now, though: when the newest
+  point would leave the chart, the chart is seen from further away, about the same middle.
+- Under the curves is a grid. Its lines are at round values and stay where those values are, so
+  when the chart follows a curve it moves over the grid, and the squares that pass show how far.
+  Each line says its value where it leaves the chart, at the bottom or at the right, and the line
+  where an axis is 0 is stronger.
 - `1:1` gives every axis one scale, so that shapes are as they are. Click it again to have each
   axis fill the chart. A 3D chart starts with it on, and a 2D chart with it off.
-- A 3D chart is drawn with z up, as a box that is as large as what the chart shows. Dragging turns
-  it about its middle. To move it instead, hold Shift while dragging, or drag with the other
-  button of the mouse. Nothing is drawn smaller for being further away, so a unit is as long at
-  the back of the box as at the front.
+- On a 3D chart the grid is the ground: the plane where the axis that is up is 0. `Ground` says
+  which two axes it is along, `xy`, `xz` or `yz`, and the third is up. Each line of the ground
+  says its axis with its value, such as `x 20`. Where all three axes are 0, each is drawn one
+  square long: x in red, y in green and z in blue.
+- A curve on a 3D chart stands on the ground. A thin line goes from its newest point straight to
+  the ground, to a ring there, and says how far that is: `z 16.5`. The ring is where the point is
+  over the ground, and the line is how high: together they tell a point that is near and low from
+  one that is far and high. A 3D chart that shows everything shows the rings as well.
+- Dragging a 3D chart turns it about its middle. To move it instead, hold Shift while dragging,
+  or drag with the other button of the mouse. Nothing is drawn smaller for being further away, so
+  a unit is as long at the back as at the front.
 - In `…`, `Keep its newest point in the middle` has the chart follow one curve: zooming is then
   about that point. Dragging the chart lets go of it.
-- The edges of a 2D chart say what values they are at, and the numbers along its axes are named
-  under the chart and at its right edge. On a 3D chart each axis is named beside the edge of the
-  box that is furthest out, and the row under the chart says how far the box reaches along each.
-  The names are in the colours of their curves. The box beside the colour of a curve says whether
-  its numbers are named on the axes: untick it for all but one curve when they are in the same units.
+- The row under a chart says which numbers are along x, y and z, in the colours of their curves.
+  The box beside the colour of a curve says whether its numbers are named there: untick it for all
+  but one curve when they are in the same units.
 - A curve is dragged by the name of its topic onto another chart of the same kind to move it
   there. What a runtime counts for a connection or an output is not inside a message, and has no
   place on a 2D or 3D chart.

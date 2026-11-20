@@ -8,7 +8,7 @@ mod window;
 use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use shown::*;
-use triq_workbench::charts::{self, Charts, Frame, Lens};
+use triq_workbench::charts::{self, Charts, Frame, Ground, Lens};
 use triq_workbench::egui::{self, Rect, accesskit::Role, pos2, vec2};
 use window::{alone, click_holding, drag, drag_with, drawn};
 
@@ -78,7 +78,10 @@ fn is_at(harness: &mut Window<'_>, scene: &Scene, place: [f32; 3]) {
 fn boxes<'a>(harness: &'a Window<'_>, chart: &str) -> Vec<egui_kittest::Node<'a>> {
     let room = room(harness, chart);
     let boxes = harness.query_all_by_role(Role::ComboBox).filter(|axis| room.contains(axis.rect().center()));
-    let mut boxes: Vec<_> = boxes.collect();
+    // A chart in space has one more box, on the row above, which says what its ground is.
+    let grounds = Ground::ALL.map(Ground::name);
+    let mut boxes: Vec<_> =
+        boxes.filter(|axis| !grounds.contains(&axis.value().unwrap_or_default().as_str())).collect();
     boxes.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
     boxes
 }
@@ -152,22 +155,29 @@ fn two_numbers_of_one_message_are_drawn_against_each_other() -> triq::Result {
     let (from, to) = ends(&harness, "Chart 2");
     assert!(to.x > from.x + 300.0 && to.y < from.y - 200.0, "from {from:?} to {to:?}");
     assert_eq!(dots(&harness, "Chart 2"), [to]);
-    // The edges say what they are: x along the foot, and y at the right edge.
+    // Under the curve is a grid, with its lines at round values. Each says its value where it
+    // leaves the chart: those of x along the bottom, and those of y at the right.
     let written = |harness: &Window<'_>, value: &str| {
         let found = harness.query_all_by_label(value).find(|written| place.contains(written.rect().center()));
         found.unwrap_or_else(|| panic!("{value} is written on the chart")).rect().center()
     };
-    let [left, right, bottom, top] = ["1.00", "3.00", "5.00", "9.00"].map(|value| written(&harness, value));
-    assert!(left.x < from.x + 30.0 && right.x > to.x - 30.0 && (left.y - right.y).abs() < 1.0 && left.y > from.y);
-    assert!(top.y < bottom.y - 200.0 && top.x > to.x - 40.0 && bottom.x > to.x - 40.0);
+    let lines = |harness: &Window<'_>| {
+        let lines = drawn(harness).0.into_iter().filter(|line| line.width == 1.0 && place.contains_rect(line.within));
+        lines.count()
+    };
+    let [left, right, low, high] = ["1.0", "3.0", "6.0", "9.0"].map(|value| written(&harness, value));
+    assert!((left.x - from.x).abs() < 16.0 && (right.x - to.x).abs() < 16.0, "{left:?} and {right:?}");
+    assert!((left.y - right.y).abs() < 1.0 && left.y > from.y - 16.0, "along the bottom: {left:?} and {right:?}");
+    assert!(low.x > to.x - 30.0 && high.x > to.x - 30.0 && (high.y - to.y).abs() < 16.0 && low.y > high.y + 400.0);
+    assert_eq!(lines(&harness), 5 + 9, "from 1 to 3 and from 5 to 9, half a unit apart");
 
     // A box is told which number is along its axis. One that was along the other axis trades
     // places with the one that was here: both keep their past, and the trail goes on, the
     // other way up.
     along(&mut harness, "Chart 2", 0, "translation[1]");
     assert_eq!(axes(&harness, "Chart 2"), ["translation[1]", "translation[0]"]);
-    let [left, right, bottom, top] = ["5.00", "9.00", "1.00", "3.00"].map(|value| written(&harness, value));
-    assert!(left.x < right.x - 300.0 && (left.y - right.y).abs() < 1.0 && top.y < bottom.y - 200.0);
+    let [left, right, low, high] = ["5", "9", "2.0", "3.0"].map(|value| written(&harness, value));
+    assert!(left.x < right.x - 300.0 && (left.y - right.y).abs() < 1.0 && high.y < low.y - 200.0);
     assert_eq!(pieces(&harness, "Chart 2").len(), 1);
     // A number that was on no chart has no past. The trail begins again with the next messages.
     along(&mut harness, "Chart 2", 1, "translation[2]");
@@ -185,21 +195,29 @@ fn a_chart_of_numbers_against_each_other_is_zoomed_moved_and_fitted() -> triq::R
     let scene = Scene::new()?;
     let (mut harness, sensor) = plane(&scene)?;
     told(&mut harness, &sensor, "Chart 2", "Draw its trail");
-    is_at(&mut harness, &scene, [0.0, 0.0, 0.0]);
-    is_at(&mut harness, &scene, [4.0, 2.0, 0.0]);
-    // To begin with it shows all there is, from edge to edge.
-    let (from, to) = ends(&harness, "Chart 2");
+    // The sensor goes from one place to another, and then back to halfway between them.
+    for place in [[0.0, 0.0, 0.0], [4.0, 2.0, 0.0], [2.0, 1.0, 0.0]] {
+        is_at(&mut harness, &scene, place);
+    }
+    // Where the first two of those places are drawn.
+    let corners = |harness: &Window<'_>| {
+        let trail = &pieces(harness, "Chart 2")[0].0;
+        (trail[0], trail[1])
+    };
+    // To begin with the chart shows all there is, from edge to edge. The dot is in the middle of it.
+    let (from, to) = corners(&harness);
     let (all, middle) = (to - from, from + (to - from) / 2.0);
     assert!(all.x > 300.0 && all.y < -200.0, "{all:?}");
+    assert!((dots(&harness, "Chart 2")[0] - middle).length() < 1.0);
 
     // With one scale for both axes, a unit is as long across as up: the trail goes 4 across and 2 up.
     harness.get_by_label("1:1").click();
     harness.run_steps(3);
-    let (from, to) = ends(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
     assert!(((to.x - from.x) / 4.0 + (to.y - from.y) / 2.0).abs() < 0.5, "from {from:?} to {to:?}");
     harness.get_by_label("1:1").click();
     harness.run_steps(3);
-    let (from, to) = ends(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
     assert!((from + all / 2.0 - middle).length() < 0.5 && (to - from - all).length() < 0.5, "edge to edge again");
 
     // The wheel zooms, about the middle of the chart.
@@ -212,24 +230,31 @@ fn a_chart_of_numbers_against_each_other_is_zoomed_moved_and_fitted() -> triq::R
         modifiers: egui::Modifiers::NONE,
     });
     harness.run_steps(6);
-    let (from, to) = ends(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
     let nearer = to - from;
     assert!(nearer.x > all.x * 1.2 && nearer.y < all.y * 1.2, "{nearer:?} was {all:?}");
     assert!((from + nearer / 2.0 - middle).length() < 1.0, "what was in the middle still is");
-    // From then on the chart stays as it was left: a point further out does not make it show more.
+    // From then on the chart stays as it was left, while it shows where the curve is now.
+    is_at(&mut harness, &scene, [2.5, 1.0, 0.0]);
+    assert!((corners(&harness).1 - to).length() < 1.0);
+    // It does not lose sight of that. When the point goes where the chart does not reach, the
+    // chart is seen from further away, about the same middle: the point is still on it.
     is_at(&mut harness, &scene, [8.0, 4.0, 0.0]);
-    assert!((pieces(&harness, "Chart 2")[0].0[1] - to).length() < 1.0);
+    let (from, to) = corners(&harness);
+    assert!((to - from).length() < all.length() * 0.6, "{:?} was {nearer:?}", to - from);
+    assert!((from + (to - from) / 2.0 - middle).length() < 1.0, "what was in the middle still is");
+    assert!(room(&harness, "Chart 2").contains(dots(&harness, "Chart 2")[0]));
 
     // Dragged, it moves with the pointer.
     let grip = room(&harness, "Chart 2").center() + vec2(0.0, 60.0);
     drag(&mut harness, grip, grip + vec2(-60.0, 40.0));
-    assert!((pieces(&harness, "Chart 2")[0].0[1] - to - vec2(-60.0, 40.0)).length() < 1.5);
+    assert!((corners(&harness).1 - to - vec2(-60.0, 40.0)).length() < 1.5);
 
-    // `Fit` has it show all there is again: three points now, from edge to edge.
+    // `Fit` has it show all there is again, from edge to edge: twice as far now as at first.
     harness.get_by_label("Fit").click();
     harness.run_steps(3);
-    let (from, to) = ends(&harness, "Chart 2");
-    assert!((to - from - all).length() < 1.0 && (from + all / 2.0 - middle).length() < 1.0);
+    let (from, to) = corners(&harness);
+    assert!((to - from - all / 2.0).length() < 1.0 && (from + all / 2.0 - middle).length() < 1.0);
 
     // Told to keep the newest point of the curve in the middle, the chart does, wherever it goes.
     told(&mut harness, &sensor, "Chart 2", "Keep its newest point in the middle");
@@ -269,17 +294,17 @@ fn the_axes_say_which_numbers_are_along_them_unless_told_not_to() -> triq::Resul
         names.map(|name| name.rect().center()).find(|name| place.contains(*name))
     };
 
-    // The number along x is named under the chart, and the one along y at its right edge.
-    let (x, y) = (named(&harness, "translation[0]").expect("x"), named(&harness, "translation[1]").expect("y"));
+    // Under the chart, each axis says which number is along it, in the colour of the curve.
+    let (x, y) = (named(&harness, "x  translation[0]").expect("x"), named(&harness, "y  translation[1]").expect("y"));
     let place = room(&harness, "Chart 2");
-    assert!(x.y > place.bottom() - 20.0 && (x.x - place.center().x).abs() < 60.0, "{x:?} in {place:?}");
-    assert!(y.x > place.right() - 80.0 && (y.y - place.center().y).abs() < 40.0, "{y:?} in {place:?}");
+    assert!(x.y > place.bottom() - 20.0 && (x.y - y.y).abs() < 1.0 && y.x > x.x, "{x:?} and {y:?} in {place:?}");
 
     // The box beside the colour of a curve says whether the axes name its numbers.
     let name = harness.query_all_by_label(sensor.as_str()).find(|name| place.contains(name.rect().center()));
     name.expect("the curve").parent().expect("its row").get_by_role(Role::CheckBox).click();
     harness.run_steps(3);
-    assert_eq!((named(&harness, "translation[0]"), named(&harness, "translation[1]")), (None, None));
+    assert_eq!((named(&harness, "x  translation[0]"), named(&harness, "y  translation[1]")), (None, None));
+    assert!(named(&harness, "x").is_some() && named(&harness, "y").is_some(), "the axes are still told apart");
     assert_eq!(dots(&harness, "Chart 2").len(), 1, "the curve is drawn as before");
     Ok(())
 }
@@ -327,11 +352,13 @@ fn several_curves_share_a_chart_each_with_its_own_numbers() -> triq::Result {
     assert!(both.len() == 2 && both[1].x > both[0].x + 100.0 && (both[1].y - both[0].y).abs() < 1.0, "{both:?}");
     assert_ne!(colour_of(&harness, &sensor), colour_of(&harness, &filtered));
     // The axes name the numbers of both, until one is told not to be named there.
-    assert!(written_on(&harness, "Chart 2", "translation[0]  translation[0]"));
+    assert!(written_on(&harness, "Chart 2", "x  translation[0]  translation[0]"));
     let name = harness.query_all_by_label(filtered.as_str()).find(|name| place.contains(name.rect().center()));
     name.expect("the curve").parent().expect("its row").get_by_role(Role::CheckBox).click();
     harness.run_steps(3);
-    assert!(written_on(&harness, "Chart 2", "translation[0]") && written_on(&harness, "Chart 2", "translation[1]"));
+    assert!(
+        written_on(&harness, "Chart 2", "x  translation[0]") && written_on(&harness, "Chart 2", "y  translation[1]")
+    );
 
     // A chart keeps the newest point of one curve in its middle: told to follow another, it lets go of the first.
     let middle = both[0] + (both[1] - both[0]) / 2.0;
@@ -477,21 +504,44 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     put_down(&mut harness, &sensor, &["translation[0]", "translation[1]", "translation[2]"], "Chart 2");
     assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[2]"]);
     told(&mut harness, &sensor, "Chart 2", "Draw its trail");
-    is_at(&mut harness, &scene, [0.0, 0.0, 0.0]);
-    is_at(&mut harness, &scene, [4.0, 2.0, 1.0]);
-
-    // The trail is drawn from the first place to the second, with the dot at its newest end, in
-    // a box that says how far the chart reaches along each axis.
-    let place = room(&harness, "Chart 2");
-    let (from, to) = ends(&harness, "Chart 2");
-    let (across, middle) = (to - from, from + (to - from) / 2.0);
-    assert!(across.length() > 100.0 && dots(&harness, "Chart 2") == [to], "from {from:?} to {to:?}");
-    let edges = drawn(&harness).0.into_iter().filter(|line| line.width == 1.0 && place.contains_rect(line.within));
-    assert_eq!(edges.count(), 12, "the edges of a box");
-    for reach in ["x 0.00 to 4.00", "y 0.00 to 2.00", "z 0.00 to 1.00"] {
-        assert!(harness.query_by_label_contains(reach).is_some(), "{reach}");
+    // The sensor goes from where every axis is 0 to another place, and then back to halfway between them.
+    for place in [[0.0, 0.0, 0.0], [4.0, 2.0, 1.0], [2.0, 1.0, 0.5]] {
+        is_at(&mut harness, &scene, place);
     }
-    // The ends of the axes say which they are, and which number is along them.
+    // Where the first two of those places are drawn.
+    let corners = |harness: &Window<'_>| {
+        let trail = &pieces(harness, "Chart 2")[0].0;
+        (trail[0], trail[1])
+    };
+
+    // The trail is drawn from the first place to the second, and back to the dot, in the middle.
+    let place = room(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
+    let (across, middle) = (to - from, from + (to - from) / 2.0);
+    assert!(across.length() > 100.0 && (dots(&harness, "Chart 2")[0] - middle).length() < 1.0, "{from:?} to {to:?}");
+    // Under it is the ground, where z is 0: a grid of lines a unit apart. Each says its axis and
+    // its value where it leaves the chart.
+    let lines = |harness: &Window<'_>, width: f32| {
+        let lines = drawn(harness).0.into_iter().filter(|line| line.width == width && place.contains_rect(line.within));
+        lines.collect::<Vec<_>>()
+    };
+    assert!(lines(&harness, 1.0).len() > 8, "{} lines", lines(&harness, 1.0).len());
+    assert!(written_on(&harness, "Chart 2", "x 2") && written_on(&harness, "Chart 2", "y 1"));
+    // Where every axis is 0, each of them is drawn, a unit long: that is where the trail began.
+    let axes_drawn = lines(&harness, 1.5);
+    assert_eq!(axes_drawn.len(), 3);
+    assert!(axes_drawn.iter().all(|axis| (axis.points[0] - from).length() < 0.5), "all three leave the origin");
+    // The curve stands on the ground: a thin line goes straight down from the dot to a ring
+    // there, and says how high the dot is.
+    let ring = |harness: &Window<'_>| {
+        let rings =
+            drawn(harness).1.into_iter().filter(|(_, size, within)| *size == 3.0 && place.contains_rect(*within));
+        rings.map(|(middle, ..)| middle).next().expect("a ring on the ground")
+    };
+    let stands = ring(&harness);
+    assert!((stands.x - middle.x).abs() < 0.5 && stands.y > middle.y + 10.0, "{stands:?} under {middle:?}");
+    assert!(written_on(&harness, "Chart 2", "z 0.50"));
+    // The row under the chart says which number is along each axis.
     for (letter, number) in ["x", "y", "z"].into_iter().zip(axes(&harness, "Chart 2")) {
         assert!(written_on(&harness, "Chart 2", &format!("{letter}  {number}")), "{letter}");
     }
@@ -500,13 +550,13 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     // the middle still is.
     let grip = place.center() + vec2(0.0, 150.0);
     drag(&mut harness, grip, grip + vec2(80.0, 0.0));
-    let (from, to) = ends(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
     assert!((to - from - across).length() > 20.0, "it was turned: {:?} was {across:?}", to - from);
     assert!((from + (to - from) / 2.0 - middle).length() < 1.0);
     let across = to - from;
     // With the other button of the mouse, it moves with the pointer instead.
     drag_with(&mut harness, egui::PointerButton::Secondary, grip, grip + vec2(-50.0, 30.0));
-    let moved = ends(&harness, "Chart 2");
+    let moved = corners(&harness);
     assert!((moved.0 - from - vec2(-50.0, 30.0)).length() < 1.5 && (moved.1 - moved.0 - across).length() < 0.5);
 
     // The wheel zooms about the middle, and `Fit` shows all there is again, from where it was turned to.
@@ -519,12 +569,27 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
         modifiers: egui::Modifiers::NONE,
     });
     harness.run_steps(6);
-    let nearer = ends(&harness, "Chart 2");
+    let nearer = corners(&harness);
     assert!((nearer.1 - nearer.0).length() > across.length() * 1.2);
     harness.get_by_label("Fit").click();
     harness.run_steps(3);
-    let (from, to) = ends(&harness, "Chart 2");
+    let (from, to) = corners(&harness);
     assert!((to - from - across).length() < 0.5 && (from + across / 2.0 - middle).length() < 1.0);
+
+    // Which two axes are the ground is said on the chart. With x and z, y is up: the curve
+    // stands as high as its y, straight over its ring still.
+    let ground = |harness: &mut Window<'_>, was: &str, is: &str| {
+        let said = harness.query_all_by_role(Role::ComboBox).find(|said| said.value().as_deref() == Some(was));
+        said.expect("the box that says what the ground is").click();
+        harness.run_steps(3);
+        harness.get_by_role_and_label(Role::Button, is).click();
+        harness.run_steps(3);
+    };
+    ground(&mut harness, "xy", "xz");
+    assert!(written_on(&harness, "Chart 2", "y 1.00") && !written_on(&harness, "Chart 2", "z 0.50"));
+    let (stands, dot) = (ring(&harness), dots(&harness, "Chart 2")[0]);
+    assert!((stands.x - dot.x).abs() < 0.5 && stands.y > dot.y + 10.0, "{stands:?} under {dot:?}");
+    ground(&mut harness, "xz", "xy");
 
     // A picture for a human to look at: the sensor goes round and upwards.
     told(&mut harness, &sensor, "Chart 2", "Fade into the past");
@@ -558,29 +623,110 @@ fn a_chart_in_space_is_looked_at_from_where_it_was_turned_to() {
 
     // What the chart reaches across fills the box, each axis along an edge. Looked at along x
     // and level, y is to the right and z is up. x points at the eye, and does not show.
-    let level = Lens::space(frame, room, false, (0.0, 0.0));
+    let level = Lens::space(frame, room, false, (0.0, 0.0), Ground::Xy);
     near(&level, [0.0, 0.0, 0.0], vec2(0.0, 0.0));
     near(&level, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
     near(&level, [0.0, 0.0, 0.5], vec2(0.0, -100.0));
     near(&level, [1.0, 0.0, 0.0], vec2(0.0, 0.0));
     // A quarter of the way round, the eye is along y, and x is to the left.
-    near(&Lens::space(frame, room, false, (quarter, 0.0)), [1.0, 0.0, 0.0], vec2(-100.0, 0.0));
+    near(&Lens::space(frame, room, false, (quarter, 0.0), Ground::Xy), [1.0, 0.0, 0.0], vec2(-100.0, 0.0));
     // From straight above, z points at the eye, and x down the screen.
-    let above = Lens::space(frame, room, false, (0.0, quarter));
+    let above = Lens::space(frame, room, false, (0.0, quarter), Ground::Xy);
     near(&above, [0.0, 0.0, 0.5], vec2(0.0, 0.0));
     near(&above, [1.0, 0.0, 0.0], vec2(0.0, 100.0));
     near(&above, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
     // With one scale for every axis, the longest of them fills its edge: 50 points to a unit.
-    let equal = Lens::space(frame, room, true, (0.0, 0.0));
+    let equal = Lens::space(frame, room, true, (0.0, 0.0), Ground::Xy);
     near(&equal, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
     near(&equal, [0.0, 0.0, 0.5], vec2(0.0, -25.0));
+
+    // Which two axes are the ground is said: the third is up. With x and z along the ground,
+    // y is up, and from the same place x is to the right. With y and z, x is up.
+    let upright = Lens::space(frame, room, false, (0.0, 0.0), Ground::Xz);
+    near(&upright, [0.0, 2.0, 0.0], vec2(0.0, -100.0));
+    near(&upright, [1.0, 0.0, 0.0], vec2(100.0, 0.0));
+    near(&upright, [0.0, 0.0, 0.5], vec2(0.0, 0.0));
+    let on_end = Lens::space(frame, room, false, (0.0, 0.0), Ground::Yz);
+    near(&on_end, [1.0, 0.0, 0.0], vec2(0.0, -100.0));
+    near(&on_end, [0.0, 0.0, 0.5], vec2(100.0, 0.0));
+    assert_eq!([Ground::Xy, Ground::Xz, Ground::Yz].map(Ground::axes), [[0, 1, 2], [2, 0, 1], [1, 2, 0]]);
 
     // Moved by hand, every point is that much further along on the screen: the middle moves
     // in the plane that the screen is, and not towards the eye.
     let moved = level.moved(vec2(100.0, -100.0));
     let off = |axis: usize| (moved.middle[axis] - [0.0, -2.0, -0.5][axis]).abs();
     assert!((0..3).all(|axis| off(axis) < 1e-6) && moved.spans == frame.spans, "{moved:?}");
-    near(&Lens::space(moved, room, false, (0.0, 0.0)), [0.0, 0.0, 0.0], vec2(100.0, -100.0));
+    near(&Lens::space(moved, room, false, (0.0, 0.0), Ground::Xy), [0.0, 0.0, 0.0], vec2(100.0, -100.0));
+}
+
+#[test]
+fn the_lines_of_a_grid_are_at_round_values() {
+    // The lines are no closer than asked, and 1, 2 or 5 times a power of ten apart.
+    let asked = [0.26, 0.5, 0.51, 3.0, 40.0, 1000.1];
+    assert_eq!(asked.map(charts::round_step), [0.5, 0.5, 1.0, 5.0, 50.0, 2000.0]);
+    // They are at every multiple of that between two values, and written with as many decimals as it takes.
+    assert_eq!(charts::marks(0.9, 3.1, 0.5), [1.0, 1.5, 2.0, 2.5, 3.0]);
+    assert_eq!(charts::marks(-1.2, 1.2, 1.0), [-1.0, 0.0, 1.0]);
+    assert!(charts::marks(0.0, 1e9, 1.0).is_empty(), "more lines than anyone could tell apart are not drawn");
+    let written = [(1.5, 0.5), (20.0, 5.0), (0.25, 0.05), (-0.0, 1.0), (1200.0, 200.0), (-3.0, 0.5)];
+    assert_eq!(written.map(|(value, step)| charts::tick(value, step)), ["1.5", "20", "0.25", "0", "1200", "-3.0"]);
+}
+
+#[test]
+fn a_place_on_the_screen_is_a_point_of_the_ground() {
+    let room = Rect::from_min_size(pos2(100.0, 50.0), vec2(400.0, 200.0));
+    let frame = Frame { middle: [2.0, 20.0, 7.0], spans: [4.0, 20.0, 2.0] };
+    let near = |found: Option<[f64; 3]>, expected: [f64; 3]| {
+        let found = found.expect("a point");
+        assert!((0..3).all(|axis| (found[axis] - expected[axis]).abs() < 1e-4), "{found:?}, not {expected:?}");
+    };
+    // On a plane, the ground is the chart itself: x across and y up, and the third axis at what is asked.
+    let flat = Lens::flat(frame, room, false);
+    near(flat.on_plane(room.center(), [0, 1, 2], 0.0), [2.0, 20.0, 0.0]);
+    near(flat.on_plane(room.left_bottom(), [0, 1, 2], 0.0), [0.0, 10.0, 0.0]);
+
+    // In space, it is where the eye sees the ground through that place: the point of it that is drawn there.
+    let space = Lens::space(frame, room, true, (-1.0, 0.5), Ground::Xy);
+    for place in [room.center(), room.left_top(), room.right_bottom() + vec2(30.0, 10.0)] {
+        let ground = space.on_plane(place, Ground::Xy.axes(), 0.0).expect("a point of the ground");
+        assert!(ground[2] == 0.0 && (space.at(ground) - place).length() < 0.01, "{ground:?} for {place:?}");
+    }
+    // The ground is whichever two axes it is told: with x and z along it, y is up, and 0 there.
+    let upright = Lens::space(frame, room, true, (-1.0, 0.5), Ground::Xz);
+    let ground = upright.on_plane(room.center(), Ground::Xz.axes(), 0.0).expect("a point of the ground");
+    assert!(ground[1] == 0.0 && (upright.at(ground) - room.center()).length() < 0.01, "{ground:?}");
+    // Seen from its own level, the ground is a line, and no place on the screen is one point of it.
+    assert_eq!(Lens::space(frame, room, true, (-1.0, 0.0), Ground::Xy).on_plane(room.center(), [0, 1, 2], 0.0), None);
+}
+
+#[test]
+fn a_line_is_cut_to_what_of_it_is_on_the_chart() {
+    let room = Rect::from_min_size(pos2(100.0, 50.0), vec2(400.0, 200.0));
+    // A line that crosses the room is cut at its edges, in the direction it had.
+    let cut = |line: [egui::Pos2; 2], expected: [egui::Pos2; 2]| {
+        let found = charts::clipped(line, room).expect("a part of it");
+        assert!((0..2).all(|end| (found[end] - expected[end]).length() < 0.01), "{found:?}, not {expected:?}");
+    };
+    cut([pos2(0.0, 150.0), pos2(600.0, 150.0)], [pos2(100.0, 150.0), pos2(500.0, 150.0)]);
+    cut([pos2(300.0, 400.0), pos2(300.0, 0.0)], [pos2(300.0, 250.0), pos2(300.0, 50.0)]);
+    cut([pos2(0.0, 0.0), pos2(600.0, 300.0)], [pos2(100.0, 50.0), pos2(500.0, 250.0)]);
+    // One that is inside is as it was, and one that passes the room by is not there.
+    cut([pos2(200.0, 100.0), pos2(300.0, 200.0)], [pos2(200.0, 100.0), pos2(300.0, 200.0)]);
+    assert_eq!(charts::clipped([pos2(0.0, 0.0), pos2(90.0, 300.0)], room), None);
+}
+
+#[test]
+fn a_chart_that_was_set_by_hand_is_seen_from_further_away_rather_than_lose_a_point() {
+    let frame = Frame { middle: [2.0, 20.0, 0.0], spans: [4.0, 20.0, 1.0] };
+    // A point that it shows leaves it as it is.
+    assert_eq!(frame.taking_in([3.9, 11.0, 0.0]), frame);
+    // One that is twice as far from the middle as the chart reaches is shown from twice as far
+    // away, with a little room to spare: about the same middle, and in the same shape.
+    let wider = frame.taking_in([6.0, 20.0, 0.0]);
+    assert_eq!(wider.middle, frame.middle);
+    let times = wider.spans[0] / frame.spans[0];
+    assert!(times > 2.0 && times < 2.3 && (wider.spans[1] / frame.spans[1] - times).abs() < 1e-9, "{wider:?}");
+    assert_eq!(wider.taking_in([6.0, 20.0, 0.0]), wider, "and then it is shown");
 }
 
 #[test]

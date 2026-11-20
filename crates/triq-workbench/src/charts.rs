@@ -42,7 +42,7 @@ mod view;
 pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
 pub use pen::{color, pieces};
-pub use view::{Frame, Lens, Point};
+pub use view::{Frame, Ground, Lens, Point, clipped, marks, round_step, tick};
 
 /// Where the numbers come from: what the runtimes report of their connections
 /// and outputs, and what is read out of the messages themselves.
@@ -408,6 +408,17 @@ fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
                 if ui.button("Fit").on_hover_text(about).clicked() {
                     chart.view.held = None;
                 }
+            }
+            if chart.kind == Kind::Space {
+                let label = ui.label("Ground");
+                let lying = egui::ComboBox::from_id_salt("ground").selected_text(chart.view.ground.name()).width(40.0);
+                let chosen = lying.show_ui(ui, |ui| {
+                    for ground in Ground::ALL {
+                        ui.selectable_value(&mut chart.view.ground, ground, ground.name());
+                    }
+                });
+                let about = "Which two axes are the ground, where the grid is. The third is up.";
+                chosen.response.labelled_by(label.id).on_hover_text(about);
             }
             let about = "Show or hide the names of what is drawn on this chart";
             ui.toggle_value(&mut chart.legend, "Legend").on_hover_text(about);
