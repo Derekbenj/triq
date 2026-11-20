@@ -90,47 +90,42 @@ impl Line {
     }
 }
 
-/// Written over the top of a chart: the colour, name and newest value of each
-/// line. The colour is a button that opens a picker, and the last button takes
-/// the line off.
+/// Written over a chart: the colour, name and newest value of each line. The
+/// colour is a button that opens a picker, and the last button takes the line off.
 pub(super) fn names(ui: &mut Ui, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
         ui.weak("Drag a number here.");
         return;
     }
     let mut taken_off = None;
-    // The lines pass behind the names, and show through what the names are written on.
-    let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
-    backing.show(ui, |ui| {
-        for (number, line) in lines.iter_mut().enumerate() {
-            // A row is known by what its line follows, and keeps its picker when the rows above it go.
-            let row = ui.push_id(egui::Id::unique(&line.trace), |ui| {
-                ui.horizontal(|ui| {
-                    let mut color = line.color(ui.visuals().dark_mode);
-                    let well = ui.scope(|ui| {
-                        ui.spacing_mut().interact_size = egui::vec2(16.0, 14.0);
-                        color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
-                    });
-                    if well.inner.on_hover_text("Choose the colour of this line").changed() {
-                        line.chosen = Some(color);
-                    }
-                    let name = ui.label(line.trace.name());
-                    if let Trace::Heard { connection, .. } = &line.trace {
-                        name.on_hover_text(format!("from {}", connection.from));
-                    }
-                    // A number may be on a chart before anything by its name is running.
-                    match line.trace.latest(recorded) {
-                        Some(value) => ui.weak(written(value) + line.trace.unit()),
-                        None => ui.weak("nothing yet"),
-                    };
-                    ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
-                })
-            });
-            if row.inner.inner {
-                taken_off = Some(number);
-            }
+    for (number, line) in lines.iter_mut().enumerate() {
+        // A row is known by what its line follows, and keeps its picker when the rows above it go.
+        let row = ui.push_id(egui::Id::unique(&line.trace), |ui| {
+            ui.horizontal(|ui| {
+                let mut color = line.color(ui.visuals().dark_mode);
+                let well = ui.scope(|ui| {
+                    ui.spacing_mut().interact_size = egui::vec2(16.0, 14.0);
+                    color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
+                });
+                if well.inner.on_hover_text("Choose the colour of this line").changed() {
+                    line.chosen = Some(color);
+                }
+                let name = ui.label(line.trace.name());
+                if let Trace::Heard { connection, .. } = &line.trace {
+                    name.on_hover_text(format!("from {}", connection.from));
+                }
+                // A number may be on a chart before anything by its name is running.
+                match line.trace.latest(recorded) {
+                    Some(value) => ui.weak(written(value) + line.trace.unit()),
+                    None => ui.weak("nothing yet"),
+                };
+                ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
+            })
+        });
+        if row.inner.inner {
+            taken_off = Some(number);
         }
-    });
+    }
     if let Some(number) = taken_off {
         lines.remove(number);
     }

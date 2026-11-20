@@ -67,10 +67,18 @@ fn empty(harness: &Window<'_>) -> Vec<egui::Pos2> {
     harness.query_all_by_label("Drag a number here.").map(|hint| hint.rect().center()).collect()
 }
 
-/// Type into the box that says how much of the past the charts show.
-fn show_the_last(harness: &mut Window<'_>, seconds: f64) {
-    harness.get_by_role(Role::SpinButton).set_value_accesskit(seconds);
+/// Type into the box on a chart that says how much of the past it shows.
+fn show_the_last(harness: &mut Window<'_>, chart: &str, seconds: f64) {
+    let room = room(harness, chart);
+    let past = harness.query_all_by_role(Role::SpinButton).find(|number| room.contains(number.rect().center()));
+    past.expect("a box on the chart").set_value_accesskit(seconds);
     harness.run_steps(3);
+}
+
+/// Whether something is written on a chart.
+fn written_on(harness: &Window<'_>, chart: &str, label: &str) -> bool {
+    let room = room(harness, chart);
+    harness.query_all_by_label(label).any(|written| room.contains(written.rect().center()))
 }
 
 /// The charts in a window. The list holds every topic on the machine, and they are first
@@ -181,7 +189,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
 
     // With only the last five seconds in view, the 80 of six seconds ago is not among them:
     // the line comes in at the left edge at 70, on its way down to 60.
-    show_the_last(&mut harness, 5.0);
+    show_the_last(&mut harness, "Chart 1", 5.0);
     assert!(shows(&harness, "70.0") && shows(&harness, "20.0") && shows(&harness, "5 s ago"));
     assert!(!shows(&harness, "80.0"));
 
@@ -193,7 +201,7 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     harness.state_mut().now -= 3.0;
 
     // A second number on the same chart: the chart reaches down to take it in.
-    show_the_last(&mut harness, 30.0);
+    show_the_last(&mut harness, "Chart 1", 30.0);
     let lost = grab(&mut harness, &filtered, "lost");
     drag(&mut harness, lost, chart);
     assert!(shows(&harness, &line) && shows(&harness, &format!("{filtered} lost")));
@@ -466,7 +474,7 @@ fn the_lines_have_the_whole_chart_and_each_a_colour_that_can_be_changed() -> tri
     let [rate, lost, gap, latency] = Stat::ALL.map(|stat| format!("{filtered} {}", stat.name()));
 
     // The names are written over the chart, not above it, so the lines have all of its height
-    // however many there are. The largest value in view is at the very top, level with the first name.
+    // however many there are. The largest value in view is at the very top, beside what is written there.
     let place = |harness: &Window<'_>, label: &str| harness.get_by_label(label).rect();
     let (first, last, top) = (place(&harness, &rate), place(&harness, &latency), place(&harness, "80.0"));
     assert!(last.top() > first.bottom(), "the names are one under another");
@@ -730,6 +738,61 @@ fn what_comes_with_every_message_is_drawn_up_to_the_present() -> triq::Result {
     harness.state_mut().now = sent + 0.05;
     harness.run_steps(2);
     assert!(shows(&harness, "5.00"), "a twentieth of a second after it was sent, the chart reaches up to it");
+    Ok(())
+}
+
+#[test]
+fn each_chart_shows_as_much_of_the_past_as_it_is_told() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (sensor, filtered) =
+        (format!("{}/imu/pose", scene.robot.name()), format!("{}/smoother/raw", scene.robot.name()));
+    // The rate of the filter's connection is on two charts.
+    let rate = Trace::Heard { connection: Connection { to: filtered, from: sensor }, stat: Stat::Rate };
+    let mut charts = Charts::default();
+    charts.add(1, rate.clone());
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let mut harness = open(Shown { charts, history, signals: Signals::start()?, now });
+    add(&mut harness);
+    harness.state_mut().charts.add(2, rate);
+    harness.run_steps(3);
+
+    // A chart begins with the last thirty seconds, which hold the 80 of six seconds ago.
+    for chart in ["Chart 1", "Chart 2"] {
+        assert!(written_on(&harness, chart, "30 s ago") && written_on(&harness, chart, "80.0"), "{chart}");
+    }
+    // The first is told to show five. The second goes on as it was.
+    show_the_last(&mut harness, "Chart 1", 5.0);
+    assert!(written_on(&harness, "Chart 1", "5 s ago") && written_on(&harness, "Chart 1", "70.0"));
+    assert!(!written_on(&harness, "Chart 1", "80.0"));
+    assert!(written_on(&harness, "Chart 2", "30 s ago") && written_on(&harness, "Chart 2", "80.0"));
+    // And a chart that is added begins with thirty, like the others did.
+    add(&mut harness);
+    assert!(written_on(&harness, "Chart 1", "5 s ago") && !shows(&harness, "5 s"), "only the first shows five");
+    Ok(())
+}
+
+#[test]
+fn charts_kept_by_an_older_workbench_are_still_drawn() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    // As the workbench kept its charts when they all showed the same stretch of the past,
+    // and drew nothing but lines over time.
+    let kept = r#"{"panes":{"id":14635840284022990772,"root":2,"tiles":{"next_tile_id":3,"tiles":{
+        "1":{"Pane":{"number":1,"lines":[
+            {"trace":{"Heard":{"connection":{"to":"robot/smoother/raw","from":"robot/imu/pose"},"stat":"Rate"}},
+             "shade":0,"chosen":null},
+            {"trace":{"Inside":{"topic":"robot/imu/pose","number":"translation[0]"}},"shade":1,"chosen":[255,0,255,255]}]}},
+        "2":{"Container":{"Tabs":{"children":[1],"active":1}}}},"invisible":[]},"height":null,"width":null},
+        "made":1,"seconds":45.0,"listed":true}"#;
+    let charts: Charts = serde_json::from_str(kept).expect("charts");
+    let mut harness = arranging(&scene, charts)?;
+    harness.run_steps(3);
+    for line in ["robot/smoother/raw rate", "robot/imu/pose translation[0]"] {
+        assert!(written_on(&harness, "Chart 1", line), "{line}");
+    }
+    assert_eq!(colour(&harness, "robot/imu/pose translation[0]"), "#ff00ffff", "in the colour that was chosen");
     Ok(())
 }
 

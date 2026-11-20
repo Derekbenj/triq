@@ -44,16 +44,24 @@ pub struct Recorded<'a> {
 const NARROWEST_LIST: f32 = 180.0;
 const NARROWEST_CHARTS: f32 = 260.0;
 
-/// One chart: the number it is called by, and the lines drawn on it.
+/// One chart: the number it is called by, how much of the past it shows, and the lines drawn on it.
 #[derive(Serialize, Deserialize)]
 struct Chart {
     number: usize,
+    /// How many seconds of the past it shows. A chart that was kept before each had its own shows the usual.
+    #[serde(default = "Chart::usual")]
+    seconds: f64,
     lines: Vec<Line>,
 }
 
 impl Chart {
     fn new(number: usize) -> Self {
-        Self { number, lines: Vec::new() }
+        Self { number, seconds: Self::usual(), lines: Vec::new() }
+    }
+
+    /// How many seconds of the past a chart shows until it is told otherwise.
+    fn usual() -> f64 {
+        30.0
     }
 
     fn name(&self) -> String {
@@ -80,8 +88,6 @@ pub struct Charts {
     panes: Tree<Chart>,
     /// How many charts there have been. The next is called by the next number.
     made: usize,
-    /// How many seconds of the past a chart shows.
-    seconds: f64,
     /// Whether the list of numbers is shown beside the charts.
     listed: bool,
 }
@@ -89,7 +95,7 @@ pub struct Charts {
 impl Default for Charts {
     fn default() -> Self {
         let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1)]);
-        Self { panes, made: 1, seconds: 30.0, listed: true }
+        Self { panes, made: 1, listed: true }
     }
 }
 
@@ -127,17 +133,12 @@ impl Charts {
             ui.horizontal_wrapped(|ui| {
                 ui.toggle_value(&mut self.listed, "Numbers").on_hover_text("Show or hide the list of numbers");
                 ui.separator();
-                // How much of the past every chart shows.
-                let label = ui.label("Show the last");
-                let seconds = egui::DragValue::new(&mut self.seconds).range(5.0..=History::LONGEST).suffix(" s");
-                ui.add(seconds).labelled_by(label.id);
-                ui.separator();
                 let about = "An empty chart, beside the others. Take it by its name to put it where it should be.";
                 if ui.button("New chart").on_hover_text(about).clicked() {
                     self.new_chart();
                 }
             });
-            let mut drawn = Drawn { recorded, since: now - self.seconds, now, forward: None };
+            let mut drawn = Drawn { recorded, now, forward: None };
             let carried = self.panes.dragged_id(ui.ctx());
             self.panes.ui(&mut drawn, ui);
             if panes::tidy(&mut self.panes, carried) {
@@ -188,13 +189,27 @@ impl Charts {
     }
 }
 
+/// Written over the top of a chart: how much of the past it shows, and under
+/// that what is drawn on it, by name.
+fn written_over(ui: &mut Ui, chart: &mut Chart, recorded: Recorded<'_>) {
+    // The lines pass behind what is written, and show through what it is written on.
+    let backing = egui::Frame::new().fill(ui.visuals().extreme_bg_color.gamma_multiply(0.7)).inner_margin(2);
+    backing.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            let label = ui.label("Show the last");
+            let seconds = egui::DragValue::new(&mut chart.seconds).range(5.0..=History::LONGEST).suffix(" s");
+            ui.add(seconds).labelled_by(label.id).on_hover_text("How much of the past this chart shows");
+        });
+        lines::names(ui, &mut chart.lines, recorded);
+    });
+}
+
 /// How the panes are drawn. Each is a chart, under a bar that has its name on
 /// it: the chart is taken by its name to be put down elsewhere, and closed by
 /// the cross beside it.
 struct Drawn<'a> {
     recorded: Recorded<'a>,
-    /// The times at the left and the right edge of every chart.
-    since: f64,
+    /// The present: the time at the right edge of every chart.
     now: f64,
     /// A chart to bring in front of those it shares its place with.
     forward: Option<TileId>,
@@ -206,8 +221,8 @@ impl Behavior<Chart> for Drawn<'_> {
             ui.set_min_size(ui.available_size());
             // The lines have the whole chart. Their names are written over them.
             let whole = ui.available_rect_before_wrap();
-            lines::lines(ui, &chart.name(), &chart.lines, self.recorded, self.since, self.now);
-            ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| lines::names(ui, &mut chart.lines, self.recorded));
+            lines::lines(ui, &chart.name(), &chart.lines, self.recorded, self.now - chart.seconds, self.now);
+            ui.scope_builder(UiBuilder::new().max_rect(whole), |ui| written_over(ui, chart, self.recorded));
         });
         if let Some(trace) = landed {
             chart.add(Trace::clone(&trace));

@@ -74,7 +74,8 @@ fn the_workbench_is_as_it_was_when_it_was_last_closed() -> triq::Result {
     // from inside its messages on the first.
     switch(&harness, "Details").click();
     harness.get_by_label("New chart").click();
-    harness.get_by_role(Role::SpinButton).set_value_accesskit(10.0);
+    harness.run_steps(3);
+    harness.query_all_by_role(Role::SpinButton).for_each(|past| past.set_value_accesskit(10.0));
     harness.run_steps(3);
     let (from, onto) = (grab(&mut harness, &sensor, "rate"), room(&harness, "Chart 2"));
     drag(&mut harness, from, onto);

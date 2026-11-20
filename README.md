@@ -475,7 +475,8 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   remembered from one run to the next: it says `nothing yet` while nothing with those names is
   running, and is drawn as soon as something is. Anything new that is running appears in the list
   as usual, and on no chart until it is dragged onto one. The `×` beside a name removes that line.
-- `Show the last` sets how many seconds of the past every chart shows, up to the one hour that is kept.
+- `Show the last`, written on every chart, sets how many seconds of the past that chart shows, up
+  to the one hour that is kept. A new chart shows thirty.
 - The top and bottom of a chart are always the largest and the smallest value in view, written at
   its right edge. Hover over a chart to read the value of every line at that moment.
 - A chart ends at the present and moves on with every frame the window draws. A number from inside
