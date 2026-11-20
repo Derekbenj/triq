@@ -15,15 +15,21 @@ use window::{alone, click_holding, drag, drag_with, drawn};
 /// Open the sensor's output in the list, so that the numbers inside its messages are listed.
 fn opened(harness: &mut Window<'_>, scene: &Scene) -> String {
     let sensor = format!("{}/imu/pose", scene.robot.name());
-    grab(harness, &sensor, "numbers inside");
-    number(harness, &sensor, "numbers inside").click();
+    inside(harness, scene, &sensor);
+    sensor
+}
+
+/// Open an output of the robot in the list, so that the numbers inside its messages are listed.
+fn inside(harness: &mut Window<'_>, scene: &Scene, output: &str) {
+    grab(harness, output, "numbers inside");
+    number(harness, output, "numbers inside").click();
     let listed = wait_for(|| {
         scene.imu.pose.send(Pose::default()).expect("send");
         harness.step();
-        shows(harness, "translation[0]")
+        let entry = number(harness, output, "numbers inside").parent().and_then(|inside| inside.parent());
+        entry.is_some_and(|entry| entry.query_all_by_label("translation[0]").next().is_some())
     });
-    assert!(listed, "the numbers inside the sensor's messages are listed");
-    sensor
+    assert!(listed, "the numbers inside the messages of {output} are listed");
 }
 
 /// Choose some of the sensor's numbers in the list, in that order, and put them down on a chart.
@@ -235,6 +241,19 @@ fn a_chart_of_numbers_against_each_other_is_zoomed_moved_and_fitted() -> triq::R
     assert!((dots(&harness, "Chart 2")[0] - middle - vec2(-60.0, 40.0)).length() < 1.5);
     is_at(&mut harness, &scene, [21.0, -3.0, 0.0]);
     assert!((dots(&harness, "Chart 2")[0] - middle).length() > 10.0);
+
+    // Whatever its scale, a chart is given more room as ever, by dragging the line between it
+    // and its neighbour. With one scale for both axes, it has one still.
+    harness.get_by_label("Fit").click();
+    harness.get_by_label("1:1").click();
+    harness.run_steps(3);
+    let (before, border) = (room(&harness, "Chart 2"), name(&harness, "Chart 2").left_center() - vec2(2.0, 0.0));
+    drag(&mut harness, border, border - vec2(150.0, 0.0));
+    let wider = room(&harness, "Chart 2");
+    assert!((wider.width() - before.width() - 150.0).abs() < 8.0, "{wider:?} was {before:?}");
+    let trail = &pieces(&harness, "Chart 2")[0].0;
+    let (from, to) = (trail[0], trail[1]);
+    assert!(((to.x - from.x) / 4.0 + (to.y - from.y) / 2.0).abs() < 0.5, "from {from:?} to {to:?}");
     Ok(())
 }
 
@@ -263,6 +282,76 @@ fn the_axes_say_which_numbers_are_along_them_unless_told_not_to() -> triq::Resul
     assert_eq!((named(&harness, "translation[0]"), named(&harness, "translation[1]")), (None, None));
     assert_eq!(dots(&harness, "Chart 2").len(), 1, "the curve is drawn as before");
     Ok(())
+}
+
+#[test]
+fn several_curves_share_a_chart_each_with_its_own_numbers() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (mut harness, sensor) = plane(&scene)?;
+    // The filter passes on where the sensor is, with half of its first number.
+    let filtered = format!("{}/smoother/smooth", scene.robot.name());
+    inside(&mut harness, &scene, &filtered);
+    let place = room(&harness, "Chart 2");
+    let rows = |harness: &Window<'_>| [&sensor, &filtered].map(|curve| written_on(harness, "Chart 2", curve));
+
+    // A number that is put down alone begins a curve of its topic, along x. There is no point to
+    // draw until a number is along y as well: the next of the topic that is put down.
+    put_down(&mut harness, &filtered, &["translation[0]"], "Chart 2");
+    assert_eq!(rows(&harness), [true, true]);
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[0]", "choose"]);
+    is_at(&mut harness, &scene, [4.0, 2.0, 0.0]);
+    assert_eq!(dots(&harness, "Chart 2").len(), 1);
+    put_down(&mut harness, &filtered, &["translation[1]"], "Chart 2");
+    assert_eq!(axes(&harness, "Chart 2")[2..], ["translation[0]", "translation[1]"]);
+    // The curve of the sensor has a number along each of its axes. One more of its numbers begins another curve.
+    put_down(&mut harness, &sensor, &["translation[2]"], "Chart 2");
+    assert_eq!(axes(&harness, "Chart 2")[4..], ["translation[2]", "choose"]);
+    let last = harness.query_all_by_label("×").rfind(|cross| place.contains(cross.rect().center()));
+    last.expect("the cross of the last curve").click();
+    harness.run_steps(3);
+    assert_eq!(axes(&harness, "Chart 2").len(), 4);
+
+    // Each curve is a dot where it is now, in a colour of its own: the filter's is at half the
+    // sensor's x, and level with it.
+    let read = |harness: &mut Window<'_>, x: f64| {
+        let read = wait_for(|| harness.state().signals.latest(&filtered, "translation[0]") == Some(x));
+        assert!(read, "the workbench reads what the filter passes on");
+        harness.state_mut().now = present();
+        harness.run_steps(2);
+    };
+    is_at(&mut harness, &scene, [8.0, 2.0, 0.0]);
+    read(&mut harness, 4.0);
+    let mut both = dots(&harness, "Chart 2");
+    both.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert!(both.len() == 2 && both[1].x > both[0].x + 100.0 && (both[1].y - both[0].y).abs() < 1.0, "{both:?}");
+    assert_ne!(colour_of(&harness, &sensor), colour_of(&harness, &filtered));
+    // The axes name the numbers of both, until one is told not to be named there.
+    assert!(written_on(&harness, "Chart 2", "translation[0]  translation[0]"));
+    let name = harness.query_all_by_label(filtered.as_str()).find(|name| place.contains(name.rect().center()));
+    name.expect("the curve").parent().expect("its row").get_by_role(Role::CheckBox).click();
+    harness.run_steps(3);
+    assert!(written_on(&harness, "Chart 2", "translation[0]") && written_on(&harness, "Chart 2", "translation[1]"));
+
+    // A chart keeps the newest point of one curve in its middle: told to follow another, it lets go of the first.
+    let middle = both[0] + (both[1] - both[0]) / 2.0;
+    told(&mut harness, &filtered, "Chart 2", "Keep its newest point in the middle");
+    let mut followed = dots(&harness, "Chart 2");
+    followed.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert!((followed[0] - middle).length() < 1.0 && followed[1].x > middle.x + 50.0, "{followed:?}");
+    told(&mut harness, &sensor, "Chart 2", "Keep its newest point in the middle");
+    let mut followed = dots(&harness, "Chart 2");
+    followed.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert!((followed[1] - middle).length() < 1.0 && followed[0].x < middle.x - 50.0, "{followed:?}");
+    Ok(())
+}
+
+/// The colour a curve on the second chart is drawn in, as the button beside its name says it.
+fn colour_of(harness: &Window<'_>, curve: &str) -> String {
+    let place = room(harness, "Chart 2");
+    let name = harness.query_all_by_label(curve).find(|name| place.contains(name.rect().center()));
+    let row = name.expect("the curve's name").parent().expect("its row");
+    row.get_by_role(Role::ColorWell).value().expect("a colour")
 }
 
 #[test]
