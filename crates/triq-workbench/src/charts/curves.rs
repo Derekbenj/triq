@@ -8,9 +8,10 @@ use super::lines::written;
 use super::pen::{self, Pen};
 use super::view::{Frame, Lens, Point, View};
 use super::{Carried, Kind, Recorded, carried};
-use eframe::egui::WidgetInfo;
 use eframe::egui::text::{LayoutJob, TextFormat};
-use eframe::egui::{self, Align, Layout, Painter, PointerButton, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder};
+use eframe::egui::{
+    self, Align, Layout, Painter, PointerButton, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo,
+};
 use serde::{Deserialize, Serialize};
 
 /// How large the dot at the newest point of a curve is.
@@ -173,7 +174,12 @@ pub(super) fn draw(
         Kind::Space => Lens::space(frame, room, view.equal, view.from),
         _ => Lens::flat(frame, room, view.equal),
     };
+    // What is said of the axes is under the curves, which are drawn over it.
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
+    match kind {
+        Kind::Space => boxed(ui, &painter, (&lens, frame), curves, (area, foot)),
+        _ => edged(ui, &lens, curves, (area, foot)),
+    }
     for ((curve, path), newest) in curves.iter().zip(&paths).zip(&newest) {
         // A point is as old as it is far back in the time the chart shows.
         let aged = |(at, point): &(f64, Point)| (lens.at(*point), ((now - at) / (now - since)) as f32);
@@ -182,10 +188,6 @@ pub(super) fn draw(
         if let Some(newest) = newest {
             painter.circle_filled(lens.at(*newest), DOT, curve.pen.color(dark));
         }
-    }
-    match kind {
-        Kind::Space => boxed(ui, &painter, (&lens, frame), curves, (area, foot)),
-        _ => edged(ui, &lens, curves, (area, foot)),
     }
 
     // Moved with the pointer, the chart lets go of the point it kept in its middle. The wheel
