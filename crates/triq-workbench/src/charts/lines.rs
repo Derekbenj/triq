@@ -1,9 +1,8 @@
 //! A chart of numbers over time: the lines on it, their names, and how they are drawn.
+use super::pen::{self, Pen};
 use super::{Carried, Recorded, carried};
-use crate::colors;
 use crate::history::{Connection, Stat};
-use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
-use eframe::egui::{self, Align, Color32, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
+use eframe::egui::{self, Align, Layout, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder, WidgetInfo};
 use serde::{Deserialize, Serialize};
 
 /// How far behind the present the lines of what runtimes report end, in
@@ -74,30 +73,26 @@ impl Trace {
     }
 }
 
-/// One line on a chart: the number it follows, and the colour it is drawn in.
+/// One line on a chart: the number it follows, and what it is drawn with.
 #[derive(Serialize, Deserialize)]
 pub(super) struct Line {
     pub(super) trace: Trace,
-    /// Which of the colours that lines take in turn it was given.
-    pub(super) shade: usize,
-    /// The colour that was chosen for it instead.
-    pub(super) chosen: Option<Color32>,
+    /// Kept as the line's own, as charts were kept before a line had more than a colour.
+    #[serde(flatten)]
+    pub(super) pen: Pen,
 }
 
 impl Line {
     /// A line that follows a number. The chart it is put on gives it a colour.
     pub(super) fn new(trace: Trace) -> Self {
-        Self { trace, shade: 0, chosen: None }
-    }
-
-    fn color(&self, dark: bool) -> Color32 {
-        self.chosen.unwrap_or_else(|| color(self.shade, dark))
+        Self { trace, pen: Pen::default() }
     }
 }
 
 /// Written over the chart of that number: the colour, name and newest value of
-/// each line. The colour is a button that opens a picker, the line is taken by
-/// its name to be put down on another chart, and the last button takes it off.
+/// each line. The colour is a button that opens a picker, and the line is taken
+/// by its name to be put down on another chart. Of the two buttons after the
+/// value, the first opens how the line is drawn, and the last takes it off.
 pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: Recorded<'_>) {
     if lines.is_empty() {
         ui.weak("Drag a number here.");
@@ -108,15 +103,8 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
         // A row is known by what its line follows, and keeps its picker when the rows above it go.
         let row = ui.push_id(egui::Id::unique(&line.trace), |ui| {
             ui.horizontal(|ui| {
-                let mut color = line.color(ui.visuals().dark_mode);
-                let well = ui.scope(|ui| {
-                    ui.spacing_mut().interact_size = egui::vec2(16.0, 14.0);
-                    color_edit_button_srgba(ui, &mut color, Alpha::Opaque)
-                });
-                if well.inner.on_hover_text("Choose the colour of this line").changed() {
-                    line.chosen = Some(color);
-                }
-                let taken = Carried::Line { chart, shade: line.shade };
+                line.pen.well(ui);
+                let taken = Carried::Line { chart, shade: line.pen.shade };
                 let name = carried(ui, ui.scope_id().with("name"), taken, |ui| ui.label(line.trace.name()));
                 let name = name.on_hover_text("Drag it onto another chart to move it there");
                 if let Trace::Heard { connection, .. } = &line.trace {
@@ -127,6 +115,7 @@ pub(super) fn names(ui: &mut Ui, chart: usize, lines: &mut Vec<Line>, recorded: 
                     Some(value) => ui.weak(written(value) + line.trace.unit()),
                     None => ui.weak("nothing yet"),
                 };
+                pen::more(ui, |ui| line.pen.fading(ui));
                 ui.small_button("×").on_hover_text("Take this line off the chart").clicked()
             })
         });
@@ -160,9 +149,12 @@ pub(super) fn lines(ui: &mut Ui, name: &str, drawn: &[Line], recorded: Recorded<
         egui::pos2(egui::lerp(inside.x_range(), across as f32), egui::lerp(inside.bottom()..=inside.top(), up as f32))
     };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
+    // A point is as old as it is far from the right edge, where the present is.
+    let aged = |place: Pos2| (place, (inside.right() - place.x) / inside.width());
     for (line, points) in drawn.iter().zip(&lines) {
         let placed: Vec<Pos2> = points.iter().map(place).collect();
-        painter.line(thinned(&placed), Stroke::new(2.0, line.color(dark)));
+        let placed: Vec<(Pos2, f32)> = thinned(&placed).into_iter().map(aged).collect();
+        line.pen.draw(&painter, &placed, dark);
     }
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, text: String| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(text));
@@ -225,9 +217,4 @@ pub fn written(value: f64) -> String {
         size if size >= 10.0 => format!("{value:.1}"),
         _ => format!("{value:.2}"),
     }
-}
-
-/// The colour the first, second, third line on a chart is given.
-pub fn color(line: usize, dark: bool) -> Color32 {
-    colors::shade(line, dark)
 }

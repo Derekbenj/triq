@@ -14,7 +14,7 @@ use triq_workbench::charts::{self, Charts, Recorded, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::{alone, click, click_holding, drag, drag_by_way_of};
+use window::{alone, click, click_holding, drag, drag_by_way_of, strokes};
 
 struct Shown {
     charts: Charts,
@@ -865,6 +865,87 @@ fn several_numbers_are_chosen_and_dragged_onto_a_chart_together() -> triq::Resul
     put(&mut harness, "lost", "Chart 1");
     assert_eq!(lines(&harness, &scene)[..4], [latency, rate, gap, lost]);
     Ok(())
+}
+
+/// The pieces that the lines of a chart are drawn in, from left to right: how strong the colour of each is.
+fn strengths(harness: &Window<'_>, chart: &str) -> Vec<u8> {
+    let room = room(harness, chart).expand(1.0);
+    let lines = strokes(harness).into_iter().filter(|(points, _, width)| {
+        *width == 2.0 && points.len() > 1 && points.iter().all(|point| room.contains(*point))
+    });
+    let mut pieces: Vec<(f32, u8)> = lines.map(|(points, color, _)| (points[0].x, color.a())).collect();
+    pieces.sort_by(|a, b| a.0.total_cmp(&b.0));
+    pieces.into_iter().map(|(_, strength)| strength).collect()
+}
+
+#[test]
+fn a_line_is_told_to_fade_into_the_past() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let (sensor, filtered) =
+        (format!("{}/imu/pose", scene.robot.name()), format!("{}/smoother/raw", scene.robot.name()));
+    let mut charts = Charts::default();
+    charts.add(1, Trace::Heard { connection: Connection { to: filtered.clone(), from: sensor }, stat: Stat::Rate });
+    let history = history(&scene)?;
+    let now = history.newest().expect("points");
+    let mut harness = open(Shown { charts, history, signals: Signals::start()?, now });
+    // The chart shows five seconds, and the line crosses all of it.
+    show_the_last(&mut harness, "Chart 1", 5.0);
+    let line = format!("{filtered} rate");
+    assert_eq!(strengths(&harness, "Chart 1"), [255], "a line is drawn in one piece, in its colour");
+
+    // The button beside its name opens what can be said of how it is drawn. Told to fade, it is
+    // weaker the further back it goes, in steps too small to see, and as strong as ever at the present.
+    harness.get_by_label(line.as_str()).parent().unwrap().get_by_label("…").click();
+    harness.run_steps(3);
+    harness.get_by_label("Fade into the past").click();
+    harness.run_steps(3);
+    let faded = strengths(&harness, "Chart 1");
+    assert!(faded.len() > 20 && faded.is_sorted() && faded[faded.len() - 1] > 240, "{faded:?}");
+    assert!(faded.windows(2).all(|pair| pair[1] - pair[0] < 12) && faded[0] < 64, "{faded:?}");
+    // The slider says how see-through its oldest point is: half.
+    harness.get_by_role(Role::Slider).set_value_accesskit(0.5);
+    harness.run_steps(3);
+    let faded = strengths(&harness, "Chart 1");
+    assert!(faded[0].abs_diff(128) < 10 && faded[faded.len() - 1] > 240, "{faded:?}");
+    // That is kept with the chart, for the next run.
+    let kept = serde_json::to_string(&harness.state().charts).expect("charts as text");
+    assert!(kept.contains(r#""fade":0.5"#), "{kept}");
+
+    // Told not to fade any more, it is one piece again.
+    harness.get_by_label("Fade into the past").click();
+    harness.run_steps(3);
+    assert_eq!(strengths(&harness, "Chart 1"), [255]);
+    Ok(())
+}
+
+#[test]
+fn a_line_that_fades_is_drawn_in_pieces_each_stronger_than_the_one_before_it() {
+    // A line from the oldest moment a chart shows to the present: its places, and how old each is.
+    let line: Vec<(egui::Pos2, f32)> =
+        (0..=100).map(|step| (egui::pos2(step as f32, 0.0), 1.0 - step as f32 / 100.0)).collect();
+    let ends = |pieces: &[(Vec<egui::Pos2>, f32)]| (pieces[0].0[0], *pieces[pieces.len() - 1].0.last().unwrap());
+
+    // One that does not fade at all is one piece, at full strength.
+    let whole = charts::pieces(&line, 0.0);
+    assert_eq!((whole.len(), whole[0].0.len(), whole[0].1), (1, 101, 1.0));
+
+    // One that fades to nothing begins at nothing and is at full strength at the present.
+    let faded = charts::pieces(&line, 1.0);
+    assert!(faded.len() > 20 && faded.len() <= 40, "{} pieces", faded.len());
+    assert!(faded.windows(2).all(|pair| pair[0].1 < pair[1].1), "each stronger than the one before it");
+    assert!(faded.windows(2).all(|pair| pair[0].0.last() == pair[1].0.first()), "and beginning where that ends");
+    assert_eq!(ends(&faded), (line[0].0, line[100].0), "from end to end");
+    assert!(faded[0].1 < 0.05 && faded[faded.len() - 1].1 == 1.0);
+    // Halfway, its oldest point is at half strength.
+    assert!((charts::pieces(&line, 0.5)[0].1 - 0.5).abs() < 0.05);
+
+    // A line of two points far apart fades as evenly as one of many.
+    let sparse = charts::pieces(&[line[0], line[100]], 1.0);
+    assert!(sparse.len() > 20 && sparse.windows(2).all(|pair| pair[0].1 < pair[1].1));
+    assert_eq!(ends(&sparse), (line[0].0, line[100].0));
+    let middle = &sparse[sparse.len() / 2];
+    assert!((middle.0[0].x - 50.0).abs() < 5.0 && (middle.1 - 0.5).abs() < 0.05, "half as strong halfway");
 }
 
 #[test]

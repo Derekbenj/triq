@@ -109,6 +109,26 @@ pub fn pin(harness: &Bench<'_>, label: &str, after: bool) -> egui::Pos2 {
     nearest.unwrap_or_else(|| panic!("no pin beside {label:?}"))
 }
 
+/// Every line that was drawn in the last frame and is not closed to a shape: the places it
+/// passes through, its colour and how wide it is.
+pub fn strokes<State>(harness: &Harness<'_, State>) -> Vec<(Vec<egui::Pos2>, egui::Color32, f32)> {
+    fn lines(shape: &egui::Shape, found: &mut Vec<(Vec<egui::Pos2>, egui::Color32, f32)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| lines(shape, found)),
+            egui::Shape::Path(path) if !path.closed => {
+                if let egui::epaint::ColorMode::Solid(color) = &path.stroke.color {
+                    found.push((path.points.clone(), *color, path.stroke.width));
+                }
+            }
+            egui::Shape::LineSegment { points, stroke } => found.push((points.to_vec(), stroke.color, stroke.width)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    harness.output().shapes.iter().for_each(|clipped| lines(&clipped.shape, &mut found));
+    found
+}
+
 /// Where on screen something drawn on the graph is.
 pub fn seen(harness: &Bench<'_>, drawn: &Node<'_>) -> egui::Pos2 {
     view(harness) * drawn.rect().center()

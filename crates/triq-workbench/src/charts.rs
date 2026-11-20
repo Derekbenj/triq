@@ -28,8 +28,10 @@ use triq_views::panes;
 
 mod lines;
 mod list;
+mod pen;
 
-pub use lines::{Trace, color, extent, thinned, written};
+pub use lines::{Trace, extent, thinned, written};
+pub use pen::{color, pieces};
 
 /// Where the numbers come from: what the runtimes report of their connections
 /// and outputs, and what is read out of the messages themselves.
@@ -74,14 +76,14 @@ impl Chart {
         if self.lines.iter().any(|drawn| drawn.trace == line.trace) {
             return;
         }
-        let free = (0..).find(|shade| self.lines.iter().all(|line| line.shade != *shade));
-        line.shade = free.unwrap_or_default();
+        let free = (0..).find(|shade| self.lines.iter().all(|line| line.pen.shade != *shade));
+        line.pen.shade = free.unwrap_or_default();
         self.lines.push(line);
     }
 
     /// Take off the line that was given that colour.
     fn take(&mut self, shade: usize) -> Option<Line> {
-        let line = self.lines.iter().position(|line| line.shade == shade)?;
+        let line = self.lines.iter().position(|line| line.pen.shade == shade)?;
         Some(self.lines.remove(line))
     }
 }

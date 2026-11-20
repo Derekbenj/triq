@@ -463,6 +463,9 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   Their names are written over the top of the chart, and the lines pass behind them: a chart is as
   tall with ten lines as with one.
 - Each line has a colour of its own. The button beside its name shows that colour and opens a picker.
+- The `…` button beside a line opens how the line is drawn. With `Fade into the past` ticked, the
+  line is more see-through the older it is, and the slider sets how see-through it is at the
+  oldest moment the chart shows.
 - Drag a line by its name onto another chart to move it there. It keeps a colour that was chosen
   for it, and otherwise takes the first that is free on that chart.
 - Click a number in the list to choose it, and hold Ctrl (Cmd on a Mac) while clicking to choose
