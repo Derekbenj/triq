@@ -323,9 +323,11 @@ In `Runtimes`, `Graph` and `Details`:
   runtime it runs in: its card, its pins, and the wires that leave it. Click the colour to choose
   another with a picker; `auto` beside it gives the runtime a colour of the workbench's choosing
   again. A chosen colour belongs to the runtime's name, and is kept.
-- Click a node, and it keeps its colour together with everything that wires join to it, directly
-  or by way of other nodes. Every other card goes grey, with its wires. A click beside the cards
-  brings the colours back.
+- Click a node, and it keeps its colour together with everything that feeds it and everything
+  that it feeds, directly or by way of other nodes: where its data comes from, and where it goes.
+  Every other card goes grey, with its wires. A node that merely hears the same output is one of
+  those: with two rigs on one controller, a click on one rig greys the other and what hangs on
+  it. A click beside the cards brings the colours back.
 - Click a kind in `Runtimes` to create a node: name, thread or pool, settings. The form stays after
   `Create`, under the next name that is free, for another node of the kind. A kind that is a group
   of nodes asks only for a name, and says which nodes it creates.
@@ -393,7 +395,7 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 
 - The card of a group is outlined in white, or in black on a light background. Its header fades
   through the colours of the runtimes its nodes run in, and has a dot for each of them. It is never
-  grey: grey is what a card is that is not wired to the selected one.
+  grey: grey is what a card is that neither feeds the selected one nor is fed by it.
 - The card of a group shows the ports of its nodes that are connected to nothing, or to something
   outside the group, each as `node.port`. Wires between the nodes of a group are not shown from
   outside. A pin of a group is the port of its node: wire it as you would the node's own pin.

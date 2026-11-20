@@ -102,25 +102,6 @@ fn fading(harness: &Bench<'_>) -> usize {
     harness.output().shapes.iter().map(|clipped| meshes(&clipped.shape)).sum()
 }
 
-/// Where the pin of a port is on screen: the circle on the edge of a card, in the row where
-/// `label` is written. `after` is whether the pin is to the right of that, as an output's is.
-fn pin(harness: &Bench<'_>, label: &str, after: bool) -> egui::Pos2 {
-    fn circles(shape: &egui::Shape, found: &mut Vec<egui::Pos2>) {
-        match shape {
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| circles(shape, found)),
-            egui::Shape::Circle(circle) => found.push(circle.center),
-            _ => {}
-        }
-    }
-    let mut found = Vec::new();
-    harness.output().shapes.iter().for_each(|clipped| circles(&clipped.shape, &mut found));
-    let written = seen(harness, &text(harness, label));
-    let level = 6.0 * view(harness).scaling;
-    let in_row = found.into_iter().filter(|pin| (pin.y - written.y).abs() < level && (pin.x > written.x) == after);
-    let nearest = in_row.min_by(|a, b| (a.x - written.x).abs().total_cmp(&(b.x - written.x).abs()));
-    nearest.unwrap_or_else(|| panic!("no pin beside {label:?}"))
-}
-
 fn sorted<const N: usize>(mut names: [String; N]) -> Vec<String> {
     names.sort();
     names.to_vec()

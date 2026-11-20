@@ -2,6 +2,7 @@
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
+use std::collections::BTreeSet;
 use std::time::Duration;
 use triq::prelude::*;
 use triq_workbench::egui::{Rect, pos2};
@@ -326,22 +327,38 @@ fn only_the_cards_seen_last_are_remembered() {
 }
 
 #[test]
-fn the_cards_that_wires_join_to_a_card_are_found_also_through_others() -> triq::Result {
+fn the_cards_that_feed_a_card_and_those_it_feeds_are_found_also_through_others() -> triq::Result {
     let scene = Scene::new()?;
     let (robot, desk) = (scene.robot.name(), scene.desk.name());
-    // A node that is wired to nothing.
+    // A node that is wired to nothing, and a second filter that hears the sensor as the first does.
     let _spare: ImuPorts = scene.desk.attach("spare")?;
-    let mut snarl = Snarl::new();
-    graph::sync(&mut snarl, &scene.inventories());
-    let joined = |key: &str| graph::joined(&snarl, key).into_iter().collect::<Vec<_>>();
+    scene.robot.spawn_kind("filter", "beside", triq::Placement::Dedicated, serde_json::json!(null))?;
+    scene.robot.connect("imu/pose", "beside/raw")?;
+    // The viewer and the node without wires are at the desk, the others in the robot.
+    let key = |name: &str| format!("{}/{name}", if ["viewer", "spare"].contains(&name) { desk } else { robot });
+    let cards = |names: &[&str]| -> BTreeSet<String> { names.iter().map(|name| key(name)).collect() };
+    let flow = |name: &str| {
+        let mut snarl = Snarl::new();
+        graph::sync(&mut snarl, &scene.inventories());
+        graph::flow(&snarl, &key(name))
+    };
 
-    // The sensor feeds the filter and the filter the viewer: whichever is asked about, it is the three.
-    let chain = sorted([format!("{robot}/imu"), format!("{robot}/smoother"), format!("{desk}/viewer")]);
-    for card in &chain {
-        assert_eq!(joined(card), chain, "from {card}");
-    }
-    // A card with no wire is joined to itself alone, and what is not on the drawing to nothing.
-    assert_eq!(joined(&format!("{desk}/spare")), [format!("{desk}/spare")]);
-    assert_eq!(joined(&format!("{desk}/nobody")), Vec::<String>::new());
+    // The sensor feeds the filter and the filter the viewer: data passes through all three.
+    // The second filter is not on that way: it only hears the same sensor.
+    assert_eq!(flow("smoother"), cards(&["imu", "smoother", "viewer"]));
+    assert_eq!(flow("viewer"), cards(&["imu", "smoother", "viewer"]));
+    assert_eq!(flow("beside"), cards(&["imu", "beside"]));
+    // What the sensor sends goes on to all of them.
+    assert_eq!(flow("imu"), cards(&["imu", "smoother", "beside", "viewer"]));
+    // A card with no wire is alone, and what is not on the drawing is nothing.
+    assert_eq!(flow("spare"), cards(&["spare"]));
+    assert_eq!(flow("nobody"), cards(&[]));
+
+    // The second filter now feeds the first: it is on the way to the viewer.
+    scene.robot.connect("beside/smooth", "smoother/raw")?;
+    assert_eq!(flow("viewer"), cards(&["imu", "beside", "smoother", "viewer"]));
+    // And the first feeds the second: wires that go round in a ring are followed once.
+    scene.robot.connect("smoother/smooth", "beside/raw")?;
+    assert_eq!(flow("beside"), cards(&["imu", "beside", "smoother", "viewer"]));
     Ok(())
 }

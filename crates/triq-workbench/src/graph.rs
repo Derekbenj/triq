@@ -481,26 +481,32 @@ pub fn show(snarl: &mut Snarl<Card>, cards: Vec<Card>, places: &mut Places, now:
     }
 }
 
-/// The cards that wires join to the card called `key`, also by way of other
-/// cards, and that card itself. Which way a wire carries data does not
-/// matter. Nothing, if no card on the drawing is called that.
-pub fn joined(snarl: &Snarl<Card>, key: &str) -> BTreeSet<String> {
+/// The cards that data passes through on its way to the card called `key`,
+/// and on its way on from there: every card that feeds it, every card that it
+/// feeds, each also by way of other cards, and that card itself. A card that
+/// merely hears the same output, or feeds the same input, is not among them.
+/// Nothing, if no card on the drawing is called that.
+pub fn flow(snarl: &Snarl<Card>, key: &str) -> BTreeSet<String> {
     let called = snarl.nodes_ids_data().filter(|(_, drawn)| drawn.value.key() == key);
-    let mut reached: HashSet<NodeId> = called.map(|(id, _)| id).collect();
-    let wires: Vec<[NodeId; 2]> = snarl.wires().map(|(from, to)| [from.node, to.node]).collect();
-    // Each round takes in the cards one wire further out, until there is none.
-    loop {
-        let before = reached.len();
-        for ends in &wires {
-            if ends.iter().any(|end| reached.contains(end)) {
-                reached.extend(ends);
+    let card: HashSet<NodeId> = called.map(|(id, _)| id).collect();
+    // Every wire as the card it leaves and the card it leads to, and the same wires the other way round.
+    let wires: Vec<(NodeId, NodeId)> = snarl.wires().map(|(from, to)| (from.node, to.node)).collect();
+    let back: Vec<(NodeId, NodeId)> = wires.iter().map(|(from, to)| (*to, *from)).collect();
+    // The cards that are reached from the card along some wires: each round takes in the cards
+    // one wire further on, until there is none.
+    let reached = |wires: &[(NodeId, NodeId)]| {
+        let mut reached = card.clone();
+        loop {
+            let before = reached.len();
+            let further = wires.iter().filter(|(here, _)| reached.contains(here)).map(|(_, there)| *there);
+            reached.extend(further.collect::<Vec<_>>());
+            if reached.len() == before {
+                return reached;
             }
         }
-        if reached.len() == before {
-            break;
-        }
-    }
-    reached.into_iter().map(|id| snarl[id].key()).collect()
+    };
+    let (fed, feeding) = (reached(&wires), reached(&back));
+    fed.union(&feeding).map(|id| snarl[*id].key()).collect()
 }
 
 const LEFT: f32 = 40.0;

@@ -184,8 +184,8 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     assert_eq!(keys(&cards), sorted(["/filtering".to_owned(), format!("{desk}/viewer"), format!("{robot}/imu")]));
     graph::show(&mut snarl, cards, &mut places, 3);
     assert_eq!(wires(&snarl), ["filtering smooth -> viewer pose", "imu pose -> filtering raw"]);
-    // Wires join the cards that are wired to a group as they join any others.
-    let lit: Vec<String> = graph::joined(&snarl, "/filtering").into_iter().collect();
+    // Data passes through the card of a group as through any other: the sensor feeds it, and it the viewer.
+    let lit: Vec<String> = graph::flow(&snarl, "/filtering").into_iter().collect();
     assert_eq!(lit, sorted(["/filtering".to_owned(), format!("{desk}/viewer"), format!("{robot}/imu")]));
 
     // A group that is all there is to its own wiring has no outside to stand for.

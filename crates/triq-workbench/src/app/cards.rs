@@ -5,8 +5,8 @@
 //! the wires that leave it. The card of a group is outlined in white, or in
 //! black on a light background. Its header fades through the colours of the
 //! runtimes its nodes run in, with a dot for each, and each of its pins is
-//! the colour of its node. When a card is clicked, every card
-//! that no wire joins to it goes grey. What is only drafted is a light grey,
+//! the colour of its node. When a card is clicked, every card that neither
+//! feeds it nor is fed by it goes grey. What is only drafted is a light grey,
 //! with a glow around it.
 use super::details::{rate, toggle};
 use super::{Asking, Focus, Rates, Wish, awaits};
@@ -29,8 +29,8 @@ pub(super) struct Viewer<'a> {
     /// Whether the window is drawn light on dark.
     pub dark: bool,
     pub focus: &'a mut Focus,
-    /// The cards that keep their colour while one is selected: that one, and
-    /// all that wires join to it. `None` while none is: then every card does.
+    /// The cards that keep their colour while one is selected: that one, all
+    /// that feed it and all that it feeds. `None` while none is: then every card does.
     pub lit: Option<BTreeSet<String>>,
     pub rates: &'a Rates,
     /// A view to switch to this frame.
@@ -46,7 +46,7 @@ pub(super) struct Viewer<'a> {
 }
 
 impl Viewer<'_> {
-    /// Whether a card is greyed: another is selected, and no wire joins this one to it.
+    /// Whether a card is greyed: another is selected, which this one neither feeds nor is fed by.
     fn dimmed(&self, card: &Card) -> bool {
         self.lit.as_ref().is_some_and(|lit| !lit.contains(&card.key()))
     }
@@ -167,7 +167,7 @@ impl SnarlPin for Pin {
     }
 }
 
-/// The grey of a card that no wire joins to the one that is selected.
+/// The grey of a card that neither feeds the one that is selected nor is fed by it.
 fn grey(dark: bool) -> Color32 {
     Color32::from_gray(if dark { 105 } else { 150 })
 }
@@ -397,7 +397,8 @@ impl SnarlViewer<Card> for Viewer<'_> {
         match self.marks.wire(&source.output(from.output), &sink.input(to.input)) {
             Some(Mark::New) => drafted(self.dark),
             Some(_) => sender.gamma_multiply(0.3),
-            None if self.dimmed(source) => grey(self.dark),
+            // A wire keeps its colour between two cards that keep theirs.
+            None if self.dimmed(source) || self.dimmed(sink) => grey(self.dark),
             None => sender,
         }
     }

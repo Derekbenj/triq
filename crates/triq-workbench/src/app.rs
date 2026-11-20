@@ -592,7 +592,7 @@ impl Contents {
                     ui.weak("Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.");
                     ui.weak("Pause a node with the button on its card. Its details have the rest.");
                     ui.weak(
-                        "A node that is clicked keeps its colour, with all that wires join to it. The rest goes grey.",
+                        "A node that is clicked keeps its colour, with all that feeds it and all that it feeds. The rest goes grey.",
                     );
                     ui.weak(format!(
                         "Hold Shift and click nodes, or drag across them, to select several. A click beside the \
@@ -722,10 +722,10 @@ impl Contents {
         if let Some(wish) = self.typed(ui, canvas) {
             self.wish = Some(wish);
         }
-        // With a card selected, only what wires join to it keeps its colour. A node that is
-        // inside a group is the card of that group, where the graph shows the group from outside.
+        // With a card selected, only what feeds it and what it feeds keep their colour. A node that
+        // is inside a group is the card of that group, where the graph shows the group from outside.
         let lit = self.card(self.inside.as_deref());
-        let lit = lit.map(|card| graph::joined(&self.snarl, &card)).filter(|lit| !lit.is_empty());
+        let lit = lit.map(|card| graph::flow(&self.snarl, &card)).filter(|lit| !lit.is_empty());
         let double = ui.input(|input| input.pointer.button_double_clicked(egui::PointerButton::Primary));
         let mut viewer = Viewer {
             asking: Asking { feed: &self.feed, draft: self.draft.as_mut(), real: &self.real },
