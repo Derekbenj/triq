@@ -379,7 +379,9 @@ fn a_node_is_put_into_a_group_that_is_there_and_a_node_made_inside_a_group_is_in
     click(&mut harness, empty, PointerButton::Primary);
     let card = header(&harness, "viewer");
     click(&mut harness, card, PointerButton::Primary);
-    harness.get_by_role(Role::ComboBox).click();
+    // The list of numbers beside the charts has a box of the same kind: this is the one in the details.
+    let groups = harness.query_all_by_role(Role::ComboBox).find(|list| list.value().as_deref() == Some("Move into"));
+    groups.expect("the groups it can be moved into").click();
     harness.run_steps(3);
     harness.get_all_by_label(&made).last().expect("the group, among those it can be moved into").click();
     harness.run_steps(4);
@@ -450,6 +452,12 @@ fn a_group_that_a_runtime_offers_as_a_kind_is_created_whole() -> triq::Result {
     assert!(!shows(&harness, "pair1.fine.raw: Pose"));
 
     // Created while the graph shows the inside of a group, another is a group inside that one.
+    // The graph draws whatever else runs on the machine as well: it is tidied and shown whole
+    // first, so that the card is in view and under no other.
+    for button in ["Tidy", "Fit"] {
+        harness.get_by_label(button).click();
+        harness.run_steps(4);
+    }
     let card = header(&harness, "pair1");
     double_click(&mut harness, card);
     assert_eq!(harness.state().inside(), Some("pair1"));
