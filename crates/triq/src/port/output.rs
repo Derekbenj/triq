@@ -160,7 +160,8 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
         let name = ServiceName::new(service)?;
         let subscribers = options.subscribers.unwrap_or(DEFAULT_SUBSCRIBERS);
         // The wake-up service comes first, so an input that finds the data service finds both.
-        // A restarted node reopens the services its subscribers kept alive.
+        // A node that takes the name of another reopens the services that the inputs of the
+        // other still hold, for the moment it takes them to let go.
         let events = ipc
             .service_builder(&name)
             .event()

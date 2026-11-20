@@ -126,34 +126,6 @@ struct Poses {
 }
 
 #[derive(Ports)]
-struct Source {
-    out: Output<u64>,
-}
-
-#[derive(Ports)]
-struct Sink {
-    input: Input<u64>,
-}
-
-#[test]
-fn an_input_follows_an_output_through_its_runtimes_restarts() -> triq::Result {
-    let consumer = Runtime::new(&unique("consumer"))?;
-    let sink: Sink = consumer.attach("sink")?;
-    let producer_name = unique("producer");
-    consumer.connect(&format!("{producer_name}/source/out"), "sink/input")?;
-
-    for round in 1..=3 {
-        // The producing runtime does not exist yet, or was shut down in the previous round.
-        let producer = Runtime::new(&producer_name)?;
-        let source: Source = producer.attach("source")?;
-        assert!(wait_for(|| source.out.subscribers() == 1), "round {round}: the waiting input links by itself");
-        source.out.send(round)?;
-        assert_eq!(collect(&sink.input, 1), [round]);
-    }
-    Ok(())
-}
-
-#[derive(Ports)]
 struct CameraPorts {
     trigger: Input<u64>,
     frames: Output<u64>,

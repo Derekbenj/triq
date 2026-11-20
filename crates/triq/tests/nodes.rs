@@ -179,7 +179,7 @@ fn a_paused_node_does_not_run_until_resumed() -> triq::Result {
 }
 
 #[test]
-fn removing_a_node_frees_its_name_and_its_connections() -> triq::Result {
+fn removing_a_node_frees_its_name_and_ends_its_connections() -> triq::Result {
     let rt = Runtime::new(&unique("remove"))?;
     rt.spawn::<Doubler>("doubler", Placement::Dedicated, ())?;
     let bench = around(&rt, "doubler")?;
@@ -189,11 +189,19 @@ fn removing_a_node_frees_its_name_and_its_connections() -> triq::Result {
     assert!(rt.inventory().nodes.iter().all(|node| node.name != "doubler"));
     assert_eq!(bench.feed.subscribers(), 0);
     assert!(matches!(rt.remove("doubler"), Err(Error::Unknown(_))));
+    // The probe heard the node. It lets go of it: nothing is left that waits for a node of that name.
+    let probing = || rt.inventory().nodes[0].inputs[0].sources.len();
+    assert!(wait_for(|| probing() == 0), "the probe's connection is gone with the node it pointed at");
 
+    // A node that takes the name is wired like any new node: to and from.
     rt.spawn::<Doubler>("doubler", Placement::Dedicated, ())?;
     rt.connect("bench-doubler/feed", "doubler/input")?;
     bench.feed.send(21)?;
-    assert_eq!(collect(&bench.probe, 1), [42], "the probe's connection outlived the node it points at");
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(bench.probe.recv()?.is_none(), "nobody hears the new node yet");
+    rt.connect("doubler/output", "bench-doubler/probe")?;
+    bench.feed.send(21)?;
+    assert_eq!(collect(&bench.probe, 1), [42]);
     Ok(())
 }
 

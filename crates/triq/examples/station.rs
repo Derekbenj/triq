@@ -14,7 +14,8 @@
 //! cargo run --bin triq -- connect right/twice/output right/log/input
 //! ```
 //!
-//! Stop and restart `left`, spawn `ticks` again, and `right` carries on by itself.
+//! Remove `ticks`, or stop `left`, and `twice` lets go of it: a connection ends
+//! with the node it is to. Spawn `ticks` again and connect it again to carry on.
 //!
 //! A station also offers the three as one kind, `chain`: a counter, a
 //! doubler and a logger, wired one to the next, and drawn as one by a tool

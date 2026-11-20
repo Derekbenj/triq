@@ -265,8 +265,10 @@ impl Runtime {
     /// Make the input `to` receive from the output `from`.
     ///
     /// Names are `node/port` within this runtime or `runtime/node/port`.
-    /// `to` must belong to this runtime. The output may not exist yet; the
-    /// input links to it when it appears, and again whenever it reappears.
+    /// `to` must belong to this runtime. The output may not exist yet: the
+    /// input waits, and links to it when it appears. The connection is to
+    /// the node that sends then. When that node is removed, or its program
+    /// stops, the connection is gone with it.
     pub fn connect(&self, from: &str, to: &str) -> Result {
         self.inner.connect(from, to)
     }
@@ -275,8 +277,9 @@ impl Runtime {
         self.inner.disconnect(from, to)
     }
 
-    /// Stop a node and forget it. Other nodes' connections to its outputs
-    /// stay in place and resume if a node of that name returns.
+    /// Stop a node and forget it. Its connections go with it: an input that
+    /// heard one of its outputs, in any runtime, lets go of that output, and
+    /// does not hear a node that takes the name later.
     pub fn remove(&self, node: &str) -> Result {
         self.inner.remove(node)
     }
@@ -457,7 +460,7 @@ impl Inner {
         drop(ipc);
         self.changed();
         // Inputs that were connected early may have been waiting for these outputs.
-        self.link_pending();
+        self.follow_outputs();
         Ok((ports, inputs))
     }
 
@@ -510,8 +513,9 @@ impl Inner {
         Ok(())
     }
 
-    /// Link inputs whose outputs have appeared, and let their threads know.
-    pub(crate) fn link_pending(&self) {
+    /// Bring every input up to date with the outputs it wants: let go of those that are gone,
+    /// link to those that have appeared, and let the inputs' threads know.
+    pub(crate) fn follow_outputs(&self) {
         let inputs: Vec<Wired> = {
             let state = self.state.lock().unwrap();
             let per_node = |record: &Record| {
@@ -522,7 +526,8 @@ impl Inner {
         };
         let ipc = self.ipc.lock().unwrap();
         for (input, executor) in inputs {
-            if input.link_pending(&ipc) {
+            // Both are done, whatever the first finds.
+            if input.drop_gone() | input.link_pending(&ipc) {
                 executor.inspect(|executor| _ = executor.refresh());
                 self.changed();
             }

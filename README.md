@@ -166,9 +166,14 @@ also the name of its iceoryx2 service, so iceoryx2's own tools list it.
 
 - **Fan-out:** connect one output to many inputs.
 - **Fan-in:** connect many outputs to one input; `sample.source()` says which.
-- A connection is remembered by the receiving runtime as "this input wants
-  that output". The output need not exist yet, and when its program stops and
-  comes back, even after a crash, data flows again without anything being reconnected.
+- A connection is kept by the receiving runtime as "this input wants that
+  output". The output need not exist yet: the input waits, and is linked when
+  the output appears, so programs can start in any order.
+- A connection ends with the node it is to. When the node behind an output is
+  removed, or its program stops or crashes, every input that heard it lets go
+  of that output within a quarter of a second, with whatever of it the input
+  had not yet taken. A node that takes the name later is another node: it is
+  heard once it is connected, and not before, not even for that quarter second.
 - iceoryx2 refuses a connection whose message types differ.
 
 ## Groups of nodes
@@ -344,6 +349,9 @@ In `Runtimes`, `Graph` and `Details`:
   stops and runs again, also in a later run of the workbench, the card is back in its place. `Tidy`
   forgets where cards were put. The places of the last 500 cards are kept.
 - An input whose output does not exist yet says "waiting", and gets its wire when the output appears.
+- A wire ends with the node at either end of it. Remove a node, or stop its program, and the
+  wires to what heard it are gone: nothing waits for a node that was there and went, and a node
+  that is later given its name starts with no wires.
 - Beside every pin is the rate of what passes through it, such as `120/s`, or `0/s` when nothing
   does: what a node takes in is on its left, and what it sends is on its right. `Details` adds how
   much was received and lost, the latency of the newest sample, the longest recent gap between two
@@ -405,9 +413,9 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   around the group: those of the group that this one is inside of, or of the whole machine if it
   is inside none. So a group is wired to its surroundings without leaving it: every wire in there
   is one connection, drawn and cut like any other.
-- An input that only waits, for an output that does not exist, counts as connected to nothing: it
-  is offered there too, and says "waiting". Wired to something else it hears that, and goes on
-  waiting for the other as well until that is disconnected, in the details of its node.
+- An input that only waits, for an output that has not been there yet, counts as connected to
+  nothing: it is offered there too, and says "waiting". Wired to something else it hears that,
+  and goes on waiting for the other as well until that is disconnected, in the details of its node.
 - A pin on one of those two cards is the port of a node outside the group, written `node.port`.
   Hover over it to see it in full, with its runtime. A wire from `Group Input` straight to
   `Group Output` is refused: it would connect nothing of the group.
@@ -500,7 +508,7 @@ per runtime), `history.rs` (what connections and outputs did, as plain data),
 `signals.rs` (the numbers inside messages), `charts.rs` (the charts),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 4,340 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 4,440 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
@@ -747,17 +755,17 @@ of a message.
 | --- | ---: | --- |
 | `message.rs` | 220 | message types, headers, the stamp on every sample |
 | `fields.rs` | 132 | the numbers a message lists, and reading one from bytes |
-| `port.rs`, `port/output.rs`, `port/input.rs` | 744 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
+| `port.rs`, `port/output.rs`, `port/input.rs` | 807 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
 | `node.rs` | 279 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 220 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 691 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime.rs` | 696 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 176 | factories whose nodes the application runs |
 | `runtime/group.rs` | 122 | which group a node is in, and kinds that create a group of nodes |
 | `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 386 | report types, the error type, iceoryx2 type names |
 
-About 3,560 lines including comments, plus the derive macros (108) and the command-line tool (190).
+About 3,630 lines including comments, plus the derive macros (108) and the command-line tool (190).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

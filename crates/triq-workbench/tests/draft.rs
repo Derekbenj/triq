@@ -144,10 +144,13 @@ fn the_machine_is_shown_as_it_would_be_with_the_changes_made() -> triq::Result {
     assert_eq!(marks.card(&format!("{desk}/viewer")), None);
     assert_eq!(marks.wire(&pose, &second), Some(Mark::New));
     assert_eq!(marks.wire(&smooth, &viewer), Some(Mark::Going));
-    assert_eq!(marks.wire(&pose, &format!("{robot}/smoother/raw")), None);
+    // A node that is to go takes its wires with it: so the one from the sensor to the first filter is going.
+    let raw = format!("{robot}/smoother/raw");
+    assert_eq!(marks.wire(&pose, &raw), Some(Mark::Going));
+    assert_eq!(marks.wire(&format!("{robot}/camera/image"), &format!("{desk}/viewer/image")), None);
     // The ports at the ends of such wires are marked too.
-    assert!(marks.port(&pose) && marks.port(&second) && marks.port(&smooth) && marks.port(&viewer));
-    assert!(!marks.port(&format!("{robot}/smoother/raw")));
+    assert!(marks.port(&pose) && marks.port(&second) && marks.port(&smooth) && marks.port(&viewer) && marks.port(&raw));
+    assert!(!marks.port(&format!("{desk}/viewer/image")));
 
     // The machine itself is as it was.
     assert_eq!(heard(&scene.inventories(), &desk, "viewer"), [smooth]);

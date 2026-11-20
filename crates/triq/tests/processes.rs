@@ -30,7 +30,7 @@ fn received(runtime: &str, name: &str) -> u64 {
 }
 
 #[test]
-fn a_third_program_wires_two_others_and_the_wiring_survives_a_crash() {
+fn a_third_program_wires_two_others_and_a_crash_takes_its_wiring_with_it() {
     let (left, right) = (unique("left"), unique("right"));
     let mut producer = station(&left);
     let _consumer = station(&right);
@@ -60,18 +60,23 @@ fn a_third_program_wires_two_others_and_the_wiring_survives_a_crash() {
     let fields = triq(&["fields", &format!("{left}/ticks/output")]).unwrap();
     assert!(fields.contains("value") && fields.contains("U64"), "`triq fields` lists the numbers:\n{fields}");
 
-    // The producing program crashes. The consumer keeps its side of the connection.
+    // The producing program crashes. What the consumer was connected to is gone, and the
+    // consumer lets go of it.
     producer.0.kill().unwrap();
     producer.0.wait().unwrap();
     assert!(wait_for(|| inventory(&left).is_none()));
-    assert!(wait_for(|| !node(&right, "twice").unwrap().inputs[0].sources[0].connected));
+    assert!(wait_for(|| node(&right, "twice").unwrap().inputs[0].sources.is_empty()), "the connection is gone");
 
-    // It comes back under the same name; nobody reconnects anything.
+    // It comes back under the same name, with a node of the same name. That is another node:
+    // nothing hears it until it is connected.
     let _producer = station(&left);
     assert!(wait_for(|| inventory(&left).is_some()));
     triq(&["spawn", &left, "counter", "ticks", "--params", r#"{"period_ms":2}"#]).unwrap();
     let before = received(&right, "log");
-    assert!(wait_for(|| received(&right, "log") > before + 50), "data flows again by itself");
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert_eq!((received(&right, "log"), node(&left, "ticks").unwrap().outputs[0].subscribers), (before, 0));
+    triq(&["connect", &format!("{left}/ticks/output"), &format!("{right}/twice/input")]).unwrap();
+    assert!(wait_for(|| received(&right, "log") > before + 50), "connected again, data flows again");
 
     // Requests the owner refuses come back as errors.
     assert!(triq(&["spawn", &left, "nope", "x"]).unwrap_err().contains("unknown"));

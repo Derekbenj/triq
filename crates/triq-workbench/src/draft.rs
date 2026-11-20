@@ -184,7 +184,13 @@ impl Draft {
                         marks.wires.insert(wire, Mark::New);
                     }
                 }
-                Request::Remove { runtime, node } => _ = marks.cards.insert(format!("{runtime}/{node}"), Mark::Going),
+                Request::Remove { runtime, node } => {
+                    marks.cards.insert(format!("{runtime}/{node}"), Mark::Going);
+                    // A connection ends with the node it is to: its wires go with it.
+                    for wire in wired(real, runtime, node) {
+                        marks.wires.entry(wire).or_insert(Mark::Going);
+                    }
+                }
                 Request::SetParams { runtime, node, .. }
                 | Request::SetGroup { runtime, node, .. }
                 | Request::Pause { runtime, node }
@@ -328,6 +334,22 @@ fn ghost(runtime: &str, factory: &FactoryInfo, group: &str, node: Member) -> Nod
         outputs: ports(Direction::Output).map(output).collect(),
         name: node.name,
     }
+}
+
+/// Every connection of the machine to or from a node, as its output and its input.
+fn wired(machine: &[Inventory], runtime: &str, node: &str) -> Vec<(String, String)> {
+    let its = |port: &str| parts(port).is_some_and(|[home, name, _]| (home, name) == (runtime, node));
+    let mut wired = Vec::new();
+    for inventory in machine {
+        for hearer in &inventory.nodes {
+            for input in &hearer.inputs {
+                let to = format!("{}/{}/{}", inventory.runtime, hearer.name, input.port.name);
+                let heard = input.sources.iter().map(|source| (source.output.clone(), to.clone()));
+                wired.extend(heard.filter(|(from, to)| its(from) || its(to)));
+            }
+        }
+    }
+    wired
 }
 
 /// `runtime/node/port` as its three parts.

@@ -83,9 +83,17 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
 
     feed.ask(Request::Disconnect { from, to });
     assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().inputs[0].sources.is_empty()));
+    // A node that is removed takes its wires with it: what heard it, here from another runtime, lets go of it.
+    let heard = format!("{robot_name}/extra/smooth");
+    feed.ask(Request::Connect { from: heard.clone(), to: format!("{desk_name}/viewer/pose") });
+    let hears = |feed: &Feed| {
+        let viewer = node(feed, &desk_name, "viewer").expect("the viewer");
+        viewer.inputs[0].sources.iter().any(|source| source.output == heard)
+    };
+    assert!(wait_for(|| hears(&feed)));
     let (runtime, name) = on("extra");
     feed.ask(Request::Remove { runtime, node: name });
-    assert!(wait_for(|| node(&feed, &robot_name, "extra").is_none()));
+    assert!(wait_for(|| node(&feed, &robot_name, "extra").is_none() && !hears(&feed)));
     assert_eq!(feed.problem(), None);
 
     // A request the owner refuses is reported until it is dismissed.

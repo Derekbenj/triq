@@ -1,11 +1,17 @@
 //! The receiving end of a connection: one iceoryx2 subscriber per connected output.
+//!
+//! A connection is to the node that sends, not to its name. An input waits
+//! for an output that is not there yet. Once it has linked to one, and that
+//! one goes, the connection is gone with it: a node that later takes the
+//! name is not heard unless it is connected.
 use super::{NodeGuard, PortOptions};
 use crate::inventory::SourceInfo;
 use crate::message::Headed;
 use crate::message::now_ns;
 use crate::raw::{IpcNode, Listener, PubSub, RawSample, Subscriber, any_alive};
 use crate::{Error, Header, Payload, Result, Stamp};
-use iceoryx2::prelude::{CallbackProgression, PortFactory, PortName, ServiceName};
+use iceoryx2::identifiers::UniquePublisherId;
+use iceoryx2::prelude::{CallbackProgression, NodeState, PortFactory, PortName, ServiceName};
 use iceoryx2::service::builder::event::EventOpenError;
 use iceoryx2::service::builder::publish_subscribe::PublishSubscribeOpenError;
 use std::ops::Deref;
@@ -30,6 +36,9 @@ pub(crate) trait InputPort: Send + Sync {
     fn disconnect(&self, output: &str);
     /// Subscribe to wanted outputs that have appeared since. True if any did.
     fn link_pending(&self, ipc: &IpcNode) -> bool;
+    /// Let go of the outputs that were linked and are gone: their node was
+    /// removed, or their program stopped. True if any was.
+    fn drop_gone(&self) -> bool;
     /// One per linked output; a thread waiting on them wakes when data arrives.
     fn listeners(&self) -> Vec<Arc<Listener>>;
     fn info(&self) -> Vec<SourceInfo>;
@@ -60,7 +69,7 @@ struct Sources<T: Payload + ?Sized, H: Header> {
 /// One output this input wants to hear from.
 struct Source<T: Payload + ?Sized, H: Header> {
     output: Arc<str>,
-    /// `None` while the output does not exist yet.
+    /// `None` while the output is not there yet.
     link: Option<Link<T, H>>,
     /// Why the last attempt to link failed, other than the output not existing.
     problem: Option<String>,
@@ -111,16 +120,37 @@ struct Link<T: Payload + ?Sized, H: Header> {
     subscriber: Subscriber<T, H>,
     listener: Arc<Listener>,
     service: Arc<PubSub<T, H>>,
+    /// The sending port of the node that was there when the link was made.
+    sender: UniquePublisherId,
 }
 
-/// Whether the node behind an output is running.
-fn has_sender<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>) -> bool {
+/// The sending port of the node behind an output, if that node is running.
+fn sender<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>) -> Option<UniquePublisherId> {
     let mut publishers = Vec::new();
     service.dynamic_config().list_publishers(|publisher| {
-        publishers.push(publisher.node_id);
+        publishers.push((publisher.publisher_id, publisher.node_id));
         CallbackProgression::Continue
     });
-    any_alive(&publishers, service)
+    publishers.into_iter().find(|(_, owner)| any_alive(&[*owner], service)).map(|(sender, _)| sender)
+}
+
+/// Whether a sending port is gone for good: it was closed, or the program it
+/// was in is dead. Anything less certain than that is not gone.
+fn gone<T: Payload + ?Sized, H: Header>(service: &PubSub<T, H>, sender: UniquePublisherId) -> bool {
+    let mut owner = None;
+    service.dynamic_config().list_publishers(|publisher| {
+        if publisher.publisher_id == sender {
+            owner = Some(publisher.node_id);
+        }
+        CallbackProgression::Continue
+    });
+    let Some(owner) = owner else { return true };
+    let mut dead = false;
+    let _ = service.nodes(|node| {
+        dead |= matches!(node, NodeState::Dead(_)) && *node.node_id() == owner;
+        CallbackProgression::Continue
+    });
+    dead
 }
 
 enum LinkError {
@@ -141,7 +171,12 @@ impl<T: Payload + ?Sized, H: Header> Input<T, H> {
             let index = (sources.next + offset) % count;
             let source = &mut sources.list[index];
             let Some(link) = &source.link else { continue };
-            if let Some(raw) = T::receive(&link.subscriber)? {
+            while let Some(raw) = T::receive(&link.subscriber)? {
+                // A node that took the name of the one this input is linked to is not heard:
+                // what it sends before the link is let go of is passed over.
+                if raw.origin() != link.sender {
+                    continue;
+                }
                 source.count(raw.user_header().stamp);
                 let output = source.output.clone();
                 sources.next = index + 1;
@@ -258,6 +293,7 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
     }
 
     /// Open the output's services and subscribe. iceoryx2 refuses a different message type.
+    /// An output whose services are still held by others, but which nobody sends on, is absent.
     fn link(&self, ipc: &IpcNode, output: &str) -> std::result::Result<Link<T, H>, LinkError> {
         let failed = |error: Error| LinkError::Failed(error);
         let name = ServiceName::new(output).map_err(|error| failed(error.into()))?;
@@ -274,6 +310,7 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
             }
             Err(error) => return Err(failed(error.into())),
         };
+        let sender = sender(&service).ok_or(LinkError::Absent)?;
         let events = match ipc.service_builder(&name).event().open() {
             Ok(events) => events,
             Err(EventOpenError::DoesNotExist) => return Err(LinkError::Absent),
@@ -287,6 +324,7 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
             subscriber: subscriber.create().map_err(|error| failed(error.into()))?,
             listener: Arc::new(events.listener_builder().create().map_err(|error| failed(error.into()))?),
             service: Arc::new(service),
+            sender,
         })
     }
 }
@@ -296,6 +334,8 @@ impl<T: Payload + ?Sized, H: Header> Shared<T, H> {
 // services and look at other processes, are made without it.
 impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
     fn connect(&self, ipc: &IpcNode, output: &str) -> Result {
+        // A link to a node that is gone is no connection to the node that has its name now.
+        self.drop_gone();
         let wanted = |sources: &Sources<T, H>| sources.list.iter().any(|source| &*source.output == output);
         if wanted(&self.sources.lock().unwrap()) {
             return Ok(());
@@ -349,6 +389,28 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
         linked
     }
 
+    fn drop_gone(&self) -> bool {
+        // The services are looked at after the lock is released.
+        let links: Vec<(Arc<PubSub<T, H>>, UniquePublisherId)> = {
+            let sources = self.sources.lock().unwrap();
+            let linked = sources.list.iter().filter_map(|source| source.link.as_ref());
+            linked.map(|link| (link.service.clone(), link.sender)).collect()
+        };
+        let lost: Vec<UniquePublisherId> =
+            links.into_iter().filter(|(service, sender)| gone(service, *sender)).map(|(_, sender)| sender).collect();
+        if lost.is_empty() {
+            return false;
+        }
+        let mut sources = self.sources.lock().unwrap();
+        // A source that was connected anew in the meantime has another sender, and stays.
+        let is_lost = |source: &Source<T, H>| source.link.as_ref().is_some_and(|link| lost.contains(&link.sender));
+        let (left, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut sources.list).into_iter().partition(is_lost);
+        sources.list = kept;
+        drop(sources);
+        // Unsubscribing happens here, after the lock is released.
+        !left.is_empty()
+    }
+
     fn listeners(&self) -> Vec<Arc<Listener>> {
         let sources = self.sources.lock().unwrap();
         sources.list.iter().filter_map(|source| source.link.as_ref()).map(|link| link.listener.clone()).collect()
@@ -385,7 +447,7 @@ impl<T: Payload + ?Sized, H: Header> InputPort for Shared<T, H> {
             sources.list.iter().map(|source| (describe(source), service(source))).unzip()
         };
         for (info, service) in infos.iter_mut().zip(services) {
-            info.connected = service.is_some_and(|service| has_sender(&service));
+            info.connected = service.is_some_and(|service| sender(&service).is_some());
         }
         infos
     }
