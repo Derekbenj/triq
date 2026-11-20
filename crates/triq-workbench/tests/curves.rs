@@ -1,4 +1,4 @@
-//! Charts of numbers against each other: two of one message on a plane.
+//! Charts of numbers against each other: two of one message on a plane, or three in space.
 #[path = "support/scene.rs"]
 mod scene;
 #[path = "support/charts.rs"]
@@ -10,7 +10,7 @@ use scene::*;
 use shown::*;
 use triq_workbench::charts::{self, Charts, Frame, Lens};
 use triq_workbench::egui::{self, Rect, accesskit::Role, pos2, vec2};
-use window::{alone, click_holding, drag};
+use window::{alone, click_holding, drag, drag_with, drawn};
 
 /// Open the sensor's output in the list, so that the numbers inside its messages are listed.
 fn opened(harness: &mut Window<'_>, scene: &Scene) -> String {
@@ -67,22 +67,24 @@ fn is_at(harness: &mut Window<'_>, scene: &Scene, place: [f32; 3]) {
     harness.run_steps(2);
 }
 
-/// What the boxes on a chart say is along its axes, from left to right.
-fn axes(harness: &Window<'_>, chart: &str) -> Vec<String> {
+/// The boxes on a chart that say what is along its axes, in the order they are read in: a row
+/// that the chart is too narrow for goes on in the next line.
+fn boxes<'a>(harness: &'a Window<'_>, chart: &str) -> Vec<egui_kittest::Node<'a>> {
     let room = room(harness, chart);
     let boxes = harness.query_all_by_role(Role::ComboBox).filter(|axis| room.contains(axis.rect().center()));
-    let mut boxes: Vec<_> = boxes.map(|axis| (axis.rect().left(), axis.value().unwrap_or_default())).collect();
-    boxes.sort_by(|a, b| a.0.total_cmp(&b.0));
-    boxes.into_iter().map(|(_, number)| number).collect()
+    let mut boxes: Vec<_> = boxes.collect();
+    boxes.sort_by(|a, b| (a.rect().top(), a.rect().left()).partial_cmp(&(b.rect().top(), b.rect().left())).unwrap());
+    boxes
+}
+
+/// What the boxes on a chart say is along its axes: x first.
+fn axes(harness: &Window<'_>, chart: &str) -> Vec<String> {
+    boxes(harness, chart).into_iter().map(|axis| axis.value().unwrap_or_default()).collect()
 }
 
 /// Tell the box of an axis of a chart which number is along it: 0 is the box of x.
 fn along(harness: &mut Window<'_>, chart: &str, axis: usize, number: &str) {
-    let room = room(harness, chart);
-    let boxes = harness.query_all_by_role(Role::ComboBox).filter(|axis| room.contains(axis.rect().center()));
-    let mut boxes: Vec<_> = boxes.collect();
-    boxes.sort_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
-    boxes[axis].click();
+    boxes(harness, chart)[axis].click();
     harness.run_steps(3);
     harness.get_by_role_and_label(Role::Button, number).click();
     harness.run_steps(3);
@@ -348,6 +350,126 @@ fn a_curve_is_moved_to_another_chart_of_its_kind_and_kept_for_the_next_run() -> 
     let (from, to) = ends(&harness, "Chart 3");
     assert!(((to.x - from.x) / 4.0 + (to.y - from.y) / 2.0).abs() < 0.5, "with one scale for both axes");
     Ok(())
+}
+
+#[test]
+fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let mut harness = arranging(&scene, Charts::default())?;
+
+    // A chart in space is made with a button of its own, and takes three numbers of a message.
+    harness.get_by_label("New 3D chart").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label_contains("three numbers of one message").is_some());
+    let sensor = opened(&mut harness, &scene);
+    put_down(&mut harness, &sensor, &["translation[0]", "translation[1]", "translation[2]"], "Chart 2");
+    assert_eq!(axes(&harness, "Chart 2"), ["translation[0]", "translation[1]", "translation[2]"]);
+    told(&mut harness, &sensor, "Chart 2", "Draw its trail");
+    is_at(&mut harness, &scene, [0.0, 0.0, 0.0]);
+    is_at(&mut harness, &scene, [4.0, 2.0, 1.0]);
+
+    // The trail is drawn from the first place to the second, with the dot at its newest end, in
+    // a box that says how far the chart reaches along each axis.
+    let place = room(&harness, "Chart 2");
+    let (from, to) = ends(&harness, "Chart 2");
+    let (across, middle) = (to - from, from + (to - from) / 2.0);
+    assert!(across.length() > 100.0 && dots(&harness, "Chart 2") == [to], "from {from:?} to {to:?}");
+    let edges = drawn(&harness).0.into_iter().filter(|line| line.width == 1.0 && place.contains_rect(line.within));
+    assert_eq!(edges.count(), 12, "the edges of a box");
+    for reach in ["x 0.00 to 4.00", "y 0.00 to 2.00", "z 0.00 to 1.00"] {
+        assert!(harness.query_by_label_contains(reach).is_some(), "{reach}");
+    }
+    // The ends of the axes say which they are, and which number is along them.
+    for (letter, number) in ["x", "y", "z"].into_iter().zip(axes(&harness, "Chart 2")) {
+        assert!(written_on(&harness, "Chart 2", &format!("{letter}  {number}")), "{letter}");
+    }
+
+    // Dragged, the chart turns about its middle: the trail points another way, and what was in
+    // the middle still is.
+    let grip = place.center() + vec2(0.0, 150.0);
+    drag(&mut harness, grip, grip + vec2(80.0, 0.0));
+    let (from, to) = ends(&harness, "Chart 2");
+    assert!((to - from - across).length() > 20.0, "it was turned: {:?} was {across:?}", to - from);
+    assert!((from + (to - from) / 2.0 - middle).length() < 1.0);
+    let across = to - from;
+    // With the other button of the mouse, it moves with the pointer instead.
+    drag_with(&mut harness, egui::PointerButton::Secondary, grip, grip + vec2(-50.0, 30.0));
+    let moved = ends(&harness, "Chart 2");
+    assert!((moved.0 - from - vec2(-50.0, 30.0)).length() < 1.5 && (moved.1 - moved.0 - across).length() < 0.5);
+
+    // The wheel zooms about the middle, and `Fit` shows all there is again, from where it was turned to.
+    harness.hover_at(grip);
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 100.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(6);
+    let nearer = ends(&harness, "Chart 2");
+    assert!((nearer.1 - nearer.0).length() > across.length() * 1.2);
+    harness.get_by_label("Fit").click();
+    harness.run_steps(3);
+    let (from, to) = ends(&harness, "Chart 2");
+    assert!((to - from - across).length() < 0.5 && (from + across / 2.0 - middle).length() < 1.0);
+
+    // A picture for a human to look at: the sensor goes round and upwards.
+    told(&mut harness, &sensor, "Chart 2", "Fade into the past");
+    show_the_last(&mut harness, "Chart 2", 2.0);
+    for step in 0..60 {
+        let (turn, up) = (step as f32 * 0.3, step as f32 * 0.05);
+        is_at(&mut harness, &scene, [2.0 * turn.cos(), 2.0 * turn.sin(), up]);
+    }
+    harness.remove_cursor();
+    harness.run_steps(2);
+    match harness.render() {
+        Ok(picture) => {
+            let saved = picture.save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("space.png"));
+            saved.map_err(|error| triq::Error::Other(error.to_string()))?;
+        }
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
+    Ok(())
+}
+
+#[test]
+fn a_chart_in_space_is_looked_at_from_where_it_was_turned_to() {
+    // A room whose shorter side is as long as the diagonal of a box that is 200 points along every edge.
+    let room = Rect::from_center_size(pos2(500.0, 400.0), vec2(600.0, 200.0 * 3f32.sqrt()));
+    let frame = Frame { middle: [0.0; 3], spans: [2.0, 4.0, 1.0] };
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let near = |lens: &Lens, point: [f64; 3], expected: egui::Vec2| {
+        let found = lens.at(point) - room.center();
+        assert!((found - expected).length() < 0.01, "{point:?} is at {found:?}, not at {expected:?}");
+    };
+
+    // What the chart reaches across fills the box, each axis along an edge. Looked at along x
+    // and level, y is to the right and z is up. x points at the eye, and does not show.
+    let level = Lens::space(frame, room, false, (0.0, 0.0));
+    near(&level, [0.0, 0.0, 0.0], vec2(0.0, 0.0));
+    near(&level, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
+    near(&level, [0.0, 0.0, 0.5], vec2(0.0, -100.0));
+    near(&level, [1.0, 0.0, 0.0], vec2(0.0, 0.0));
+    // A quarter of the way round, the eye is along y, and x is to the left.
+    near(&Lens::space(frame, room, false, (quarter, 0.0)), [1.0, 0.0, 0.0], vec2(-100.0, 0.0));
+    // From straight above, z points at the eye, and x down the screen.
+    let above = Lens::space(frame, room, false, (0.0, quarter));
+    near(&above, [0.0, 0.0, 0.5], vec2(0.0, 0.0));
+    near(&above, [1.0, 0.0, 0.0], vec2(0.0, 100.0));
+    near(&above, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
+    // With one scale for every axis, the longest of them fills its edge: 50 points to a unit.
+    let equal = Lens::space(frame, room, true, (0.0, 0.0));
+    near(&equal, [0.0, 2.0, 0.0], vec2(100.0, 0.0));
+    near(&equal, [0.0, 0.0, 0.5], vec2(0.0, -25.0));
+
+    // Moved by hand, every point is that much further along on the screen: the middle moves
+    // in the plane that the screen is, and not towards the eye.
+    let moved = level.moved(vec2(100.0, -100.0));
+    let off = |axis: usize| (moved.middle[axis] - [0.0, -2.0, -0.5][axis]).abs();
+    assert!((0..3).all(|axis| off(axis) < 1e-6) && moved.spans == frame.spans, "{moved:?}");
+    near(&Lens::space(moved, room, false, (0.0, 0.0)), [0.0, 0.0, 0.0], vec2(100.0, -100.0));
 }
 
 #[test]

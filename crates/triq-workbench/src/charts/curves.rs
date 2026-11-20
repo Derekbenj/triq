@@ -1,5 +1,5 @@
 //! A chart of numbers against each other: two numbers of one message, as a
-//! curve on a plane.
+//! curve on a plane, or three, as a curve in space.
 //!
 //! The newest point of a curve is drawn as a dot. Its trail, if that is asked
 //! for, is the path the point took over the time the chart shows. Like every
@@ -8,8 +8,9 @@ use super::lines::written;
 use super::pen::{self, Pen};
 use super::view::{Frame, Lens, Point, View};
 use super::{Carried, Kind, Recorded, carried};
+use eframe::egui::WidgetInfo;
 use eframe::egui::text::{LayoutJob, TextFormat};
-use eframe::egui::{self, Align, Layout, Pos2, Rect, Role, Sense, Ui, UiBuilder, WidgetInfo};
+use eframe::egui::{self, Align, Layout, Painter, PointerButton, Pos2, Rect, Role, Sense, Stroke, Ui, UiBuilder};
 use serde::{Deserialize, Serialize};
 
 /// How large the dot at the newest point of a curve is.
@@ -135,8 +136,10 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
 /// The curves of the chart of that name. Each is drawn as a dot where it is now and, if its
 /// trail is asked for, the path it took from the time `since` to the present, `now`.
 ///
-/// The chart shows all of that, edge to edge, until it is zoomed with the wheel or dragged,
-/// and from then on what it was left at: that is `view`. The edges say what they are.
+/// The chart shows all of that, edge to edge, until it is zoomed with the wheel or moved by
+/// hand, and from then on what it was left at: that is `view`. On a plane, a drag moves the
+/// chart. In space it turns the chart about its middle, and moves it with Shift held or with
+/// the other button of the mouse.
 pub(super) fn draw(
     ui: &mut Ui,
     (name, kind): (&str, Kind),
@@ -148,7 +151,7 @@ pub(super) fn draw(
     let (whole, chart) = ui.allocate_exact_size(ui.available_size(), Sense::drag());
     // The drawing is called by the chart's name, for whoever cannot see it.
     chart.widget_info(|| WidgetInfo::labeled(Role::Canvas, true, name));
-    // Under the curves, a row that says what the left and right edges are.
+    // Under the curves, a row that says how far the chart reaches.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     let axes = kind.axes();
     let path = |curve: &Curve| if curve.trail { curve.path(recorded, axes, since, now) } else { Vec::new() };
@@ -165,7 +168,11 @@ pub(super) fn draw(
     view.held = view.held.map(|_| frame);
 
     // A dot on the very edge of what is shown is drawn whole, not cut in half.
-    let lens = Lens::flat(frame, area.shrink(DOT + 2.0), view.equal);
+    let room = area.shrink(DOT + 2.0);
+    let lens = match kind {
+        Kind::Space => Lens::space(frame, room, view.equal, view.from),
+        _ => Lens::flat(frame, room, view.equal),
+    };
     let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
     for ((curve, path), newest) in curves.iter().zip(&paths).zip(&newest) {
         // A point is as old as it is far back in the time the chart shows.
@@ -176,6 +183,30 @@ pub(super) fn draw(
             painter.circle_filled(lens.at(*newest), DOT, curve.pen.color(dark));
         }
     }
+    match kind {
+        Kind::Space => boxed(ui, &painter, (&lens, frame), curves, (area, foot)),
+        _ => edged(ui, &lens, curves, (area, foot)),
+    }
+
+    // Moved with the pointer, the chart lets go of the point it kept in its middle. The wheel
+    // zooms, about the middle.
+    let (by, other) = (chart.drag_delta(), chart.dragged_by(PointerButton::Secondary));
+    let moves = kind != Kind::Space || other || ui.input(|input| input.modifiers.shift);
+    if chart.dragged() && by != egui::Vec2::ZERO && moves {
+        view.held = Some(lens.moved(by));
+        curves.iter_mut().for_each(|curve| curve.follow = false);
+    } else if chart.dragged() {
+        view.turn(by);
+    }
+    let zoom = ui.input(|input| input.zoom_delta() * (input.smooth_scroll_delta.y / ZOOM).exp());
+    if chart.contains_pointer() && zoom != 1.0 {
+        view.held = Some(view.held.unwrap_or(frame).zoomed(f64::from(zoom)));
+    }
+}
+
+/// What the edges of a chart on a plane say: the values they are at, and which numbers are
+/// along the axes. x is named in the middle under the chart, and y in the middle of its right edge.
+fn edged(ui: &mut Ui, lens: &Lens, curves: &[Curve], (area, foot): (Rect, Rect)) {
     let [(left, right), (bottom, top)] = lens.edges();
     let corner = |ui: &mut Ui, within: Rect, layout: Layout, value: f64| {
         ui.scope_builder(UiBuilder::new().max_rect(within).layout(layout), |ui| ui.weak(written(value)));
@@ -184,39 +215,58 @@ pub(super) fn draw(
     corner(ui, area, Layout::bottom_up(Align::Max), bottom);
     corner(ui, foot, Layout::left_to_right(Align::Center), left);
     corner(ui, foot, Layout::right_to_left(Align::Center), right);
-    // Which numbers are along the axes: x in the middle under the chart, y in the middle of its right edge.
-    let (across, up) = (along(ui, curves, 0, dark), along(ui, curves, 1, dark));
+    let (across, up) = (along(ui, curves, 0, None), along(ui, curves, 1, None));
     ui.put(Rect::from_center_size(foot.center(), across.size()), egui::Label::new(across));
-    ui.put(
-        Rect::from_min_size(area.right_center() - up.size() * egui::vec2(1.0, 0.5), up.size()),
-        egui::Label::new(up),
-    );
+    let beside = area.right_center() - up.size() * egui::vec2(1.0, 0.5);
+    ui.put(Rect::from_min_size(beside, up.size()), egui::Label::new(up));
+}
 
-    // Dragged, the chart moves with the pointer, and lets go of the point it kept in its
-    // middle. The wheel zooms, about the middle.
-    if chart.dragged() && chart.drag_delta() != egui::Vec2::ZERO {
-        view.held = Some(lens.moved(chart.drag_delta()));
-        curves.iter_mut().for_each(|curve| curve.follow = false);
+/// What a chart in space says of its axes. The part of space that it reaches across is drawn
+/// as a box, turned as the chart is. Four edges of the box run along each axis: beside the
+/// one that is furthest out on the screen is written which axis it is, and which numbers are
+/// along it. Under the chart is how far it reaches along each.
+fn boxed(ui: &mut Ui, painter: &Painter, (lens, frame): (&Lens, Frame), curves: &[Curve], (area, foot): (Rect, Rect)) {
+    // A corner is at the far end of some axes and at the near end of the others: a bit for each.
+    let end = |far: usize, axis: usize| if far >> axis & 1 == 1 { frame.reach(axis).1 } else { frame.reach(axis).0 };
+    let corner = |far: usize| lens.at(std::array::from_fn(|axis| end(far, axis)));
+    let (faint, middle) = (Stroke::new(1.0, ui.visuals().weak_text_color()), lens.at(frame.middle));
+    let mut reaches = Vec::new();
+    for (axis, letter) in ["x", "y", "z"].into_iter().enumerate() {
+        // An edge along this axis leaves each corner that is at its near end.
+        let edges: Vec<[Pos2; 2]> =
+            (0..8).filter(|near| near >> axis & 1 == 0).map(|near| [corner(near), corner(near | 1 << axis)]).collect();
+        for edge in &edges {
+            painter.line_segment(*edge, faint);
+        }
+        // How far the middle of an edge is out from the middle of the box, on the screen.
+        let out = |edge: &[Pos2; 2]| edge[0].lerp(edge[1], 0.5) - middle;
+        if let Some(outermost) = edges.iter().map(out).max_by(|a, b| a.length_sq().total_cmp(&b.length_sq())) {
+            // Clear of the edge, whichever way that is, and all of it on the chart.
+            let (names, way) = (along(ui, curves, axis, Some(letter)), outermost.normalized());
+            let clear = 8.0 + (way.x * names.size().x).abs() / 2.0 + (way.y * names.size().y).abs() / 2.0;
+            let (at, within) = (middle + outermost + way * clear, area.shrink2(names.size() / 2.0));
+            ui.put(Rect::from_center_size(at.clamp(within.min, within.max), names.size()), egui::Label::new(names));
+        }
+        let (least, most) = frame.reach(axis);
+        reaches.push(format!("{letter} {} to {}", written(least), written(most)));
     }
-    let zoom = ui.input(|input| input.zoom_delta() * (input.smooth_scroll_delta.y / ZOOM).exp());
-    if chart.contains_pointer() && zoom != 1.0 {
-        view.held = Some(view.held.unwrap_or(frame).zoomed(f64::from(zoom)));
-    }
+    let along_foot = UiBuilder::new().max_rect(foot).layout(Layout::left_to_right(Align::Center));
+    ui.scope_builder(along_foot, |ui| ui.weak(reaches.join("   ")));
 }
 
 /// Which numbers are along an axis, each in the colour of its curve: of the curves whose
-/// numbers the axes are to name.
-fn along(ui: &Ui, curves: &[Curve], axis: usize, dark: bool) -> std::sync::Arc<egui::Galley> {
+/// numbers the axes are to name. In space, the letter of the axis is written before them.
+fn along(ui: &Ui, curves: &[Curve], axis: usize, letter: Option<&str>) -> std::sync::Arc<egui::Galley> {
+    let (font, dark) = (egui::TextStyle::Body.resolve(ui.style()), ui.visuals().dark_mode);
+    let inked = |color| TextFormat { font_id: font.clone(), color, ..Default::default() };
     let mut names = LayoutJob::default();
-    let font = egui::TextStyle::Body.resolve(ui.style());
+    if let Some(letter) = letter {
+        names.append(letter, 0.0, inked(ui.visuals().weak_text_color()));
+    }
     for curve in curves.iter().filter(|curve| curve.labelled) {
         if let Some(number) = &curve.axes[axis] {
-            let apart = if names.is_empty() { 0.0 } else { 12.0 };
-            names.append(
-                number,
-                apart,
-                TextFormat { font_id: font.clone(), color: curve.pen.color(dark), ..Default::default() },
-            );
+            let apart = if names.is_empty() { "" } else { "  " };
+            names.append(&format!("{apart}{number}"), 0.0, inked(curve.pen.color(dark)));
         }
     }
     ui.painter().layout_job(names)

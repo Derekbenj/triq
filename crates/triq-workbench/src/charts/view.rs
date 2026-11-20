@@ -3,20 +3,46 @@
 //!
 //! A chart shows all of its points until it is zoomed or moved by hand. From
 //! then on it shows what it was left at, until it is told to show all again.
-//! Zooming is about the middle of the chart.
+//! Zooming is about the middle of the chart, and so is turning a chart in space.
+//!
+//! In space, z is up, and nothing is drawn smaller for being further away: a
+//! unit is as long at the back as at the front.
 use eframe::egui::{Pos2, Rect, Vec2, vec2};
 use serde::{Deserialize, Serialize};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_6};
+
+/// How far a chart in space is turned for each point of the screen it is dragged, in radians.
+const TURN: f32 = 0.01;
 
 /// A point of a curve: its numbers along x, y and z. On a plane, z is 0.
 pub type Point = [f64; 3];
 
 /// How a chart is looked at, as far as that was said by hand.
-#[derive(Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
 pub(super) struct View {
     /// Whether a unit is as long along one axis as along another, so that shapes are as they are.
     pub(super) equal: bool,
     /// What part of its points the chart shows, once that was set by hand.
     pub(super) held: Option<Frame>,
+    /// Where a chart in space is looked at from: how far round the upright axis, and from how
+    /// far above the level, both in radians.
+    pub(super) from: (f32, f32),
+}
+
+impl Default for View {
+    /// A chart in space is first looked at from the front and a little to the right, from above.
+    fn default() -> Self {
+        Self { equal: false, held: None, from: (-FRAC_PI_3, FRAC_PI_6) }
+    }
+}
+
+impl View {
+    /// Turn a chart in space as it is dragged by so much on the screen: what faces the eye
+    /// goes with the pointer. It is never turned further than to straight above or below.
+    pub(super) fn turn(&mut self, by: Vec2) {
+        self.from = (self.from.0 - by.x * TURN, (self.from.1 + by.y * TURN).clamp(-FRAC_PI_2, FRAC_PI_2));
+    }
 }
 
 /// What part of its points a chart shows: the point in its middle, and how
@@ -53,6 +79,11 @@ impl Frame {
     pub fn zoomed(self, by: f64) -> Frame {
         Frame { spans: self.spans.map(|span| span / by), ..self }
     }
+
+    /// The least and the most that it reaches to along an axis.
+    pub fn reach(&self, axis: usize) -> (f64, f64) {
+        (self.middle[axis] - self.spans[axis] / 2.0, self.middle[axis] + self.spans[axis] / 2.0)
+    }
 }
 
 /// Where the points of a chart are on the screen.
@@ -74,6 +105,21 @@ impl Lens {
         let (across, up) = (f64::from(room.width()) / frame.spans[0], f64::from(room.height()) / frame.spans[1]);
         let scales = if equal { [across.min(up), across.min(up), 0.0] } else { [across, up, 0.0] };
         Lens { frame, room, ways: [vec2(1.0, 0.0), vec2(0.0, -1.0), Vec2::ZERO], scales }
+    }
+
+    /// A chart in space, looked at from so far round its upright axis, z, and from so far
+    /// above the level: both in radians. What the frame reaches across is a box, with each
+    /// axis along an edge, that is turned about its middle and fits the room whichever way it
+    /// is turned. With `equal`, a unit is as long along every axis, and the longest fills its edge.
+    pub fn space(frame: Frame, room: Rect, equal: bool, (round, above): (f32, f32)) -> Lens {
+        // The box is never wider on the screen than from one of its corners to the opposite one.
+        let edge = f64::from(room.width().min(room.height())) / 3f64.sqrt();
+        let scales = frame.spans.map(|span| edge / span);
+        let scales = if equal { [scales.into_iter().fold(f64::INFINITY, f64::min); 3] } else { scales };
+        // Which way is right on the screen, and which way is up, as seen from there.
+        let ((sin_round, cos_round), (sin_above, cos_above)) = (round.sin_cos(), above.sin_cos());
+        let (right, up) = ([-sin_round, cos_round, 0.0], [-sin_above * cos_round, -sin_above * sin_round, cos_above]);
+        Lens { frame, room, ways: std::array::from_fn(|axis| vec2(right[axis], -up[axis])), scales }
     }
 
     /// Where a point is on the screen.

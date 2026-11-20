@@ -20,7 +20,8 @@
 //!
 //! A chart is of one kind from when it is made. Besides numbers over time
 //! (`lines.rs`), there are charts of numbers against each other (`curves.rs`):
-//! two numbers of one message, as a point that moves on a plane.
+//! two numbers of one message, as a point that moves on a plane, or three, as
+//! a point that moves in space.
 use crate::history::History;
 use crate::signals::{Signals, Wanted};
 use curves::Curve;
@@ -64,6 +65,8 @@ enum Kind {
     Time,
     /// Two numbers of one message against each other: a curve on a plane.
     Plane,
+    /// Three numbers of one message against each other: a curve in space.
+    Space,
 }
 
 impl Kind {
@@ -72,6 +75,7 @@ impl Kind {
         match self {
             Kind::Time => 1,
             Kind::Plane => 2,
+            Kind::Space => 3,
         }
     }
 
@@ -80,6 +84,7 @@ impl Kind {
         match self {
             Kind::Time => "Drag a number here.",
             Kind::Plane => "Drag two numbers of one message here: the one along x first, then the one along y.",
+            Kind::Space => "Drag three numbers of one message here: the ones along x, y and z, in that order.",
         }
     }
 }
@@ -106,7 +111,9 @@ struct Chart {
 
 impl Chart {
     fn new(number: usize, kind: Kind) -> Self {
-        Self { number, kind, seconds: Self::usual(), lines: Vec::new(), curves: Vec::new(), view: View::default() }
+        // In space a unit is as long along one axis as along another, until the chart is told otherwise.
+        let view = View { equal: kind == Kind::Space, ..View::default() };
+        Self { number, kind, seconds: Self::usual(), lines: Vec::new(), curves: Vec::new(), view }
     }
 
     /// How many seconds of the past a chart shows until it is told otherwise.
@@ -294,6 +301,10 @@ impl Charts {
                 let about = "An empty chart of two numbers of one message against each other: a point on a plane.";
                 if ui.button("New 2D chart").on_hover_text(about).clicked() {
                     self.new_chart(Kind::Plane);
+                }
+                let about = "An empty chart of three numbers of one message against each other: a point in space.";
+                if ui.button("New 3D chart").on_hover_text(about).clicked() {
+                    self.new_chart(Kind::Space);
                 }
             });
             let mut drawn = Drawn { recorded, now, forward: None, moved: None };

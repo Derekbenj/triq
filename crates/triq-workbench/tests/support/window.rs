@@ -181,6 +181,18 @@ pub fn drag_by_way_of<State>(harness: &mut Harness<'_, State>, places: &[egui::P
     press(harness, places[places.len() - 1], PointerButton::Primary, false);
 }
 
+/// Press a button of the mouse on something, move to somewhere else in a few steps, and let go.
+pub fn drag_with<State>(harness: &mut Harness<'_, State>, button: PointerButton, from: egui::Pos2, to: egui::Pos2) {
+    harness.hover_at(from);
+    harness.run_steps(2);
+    press(harness, from, button, true);
+    for step in 1..=6 {
+        harness.hover_at(from + (to - from) * (step as f32 / 6.0));
+        harness.run_steps(1);
+    }
+    press(harness, to, button, false);
+}
+
 /// Click with Shift held, as selects one more card in the graph.
 pub fn shift_click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2) {
     click_holding(harness, at, egui::Modifiers::SHIFT);

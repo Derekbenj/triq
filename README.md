@@ -491,15 +491,16 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   tenth of a second apart, so those lines end 0.15 s short of the edge and slide along evenly
   between one report and the next.
 
-`New 2D chart` adds a chart of numbers against each other. A chart is of one kind from when it is
-made:
+`New 2D chart` and `New 3D chart` add charts of numbers against each other: two numbers of one
+message as a point on a plane, or three as a point in space. A chart is of one kind from when it
+is made:
 
-- Drag two numbers of one message onto it, the one along x first and then the one along y, or
-  choose both in that order and drag them together. They are one curve, called by its topic.
-  Several curves can share a chart, each with its own numbers.
+- Drag the numbers of one message onto it one after another, the one along x first, then y, and
+  on a 3D chart z; or choose them in that order and drag them together. They are one curve,
+  called by its topic. Several curves can share a chart, each with its own numbers.
 - A box for each axis says which number is along it, and opens the numbers of the topic to pick
-  another. A number that is picked for the other axis trades places with the one that was there,
-  so x and y are swapped in one step.
+  another. A number that is picked for another axis of the curve trades places with the one that
+  was there, so x and y are swapped in one step.
 - The newest point of a curve is a dot. In `…`, `Draw its trail` also draws the path the point
   took over the time the chart shows, and `Fade into the past` makes the older part of that path
   more see-through.
@@ -508,16 +509,22 @@ made:
 - The chart shows everything there is, edge to edge. The wheel, or a pinch, zooms about the middle
   of the chart, and dragging moves it. From then on it stays as it was left, until `Fit` has it
   show everything again.
-- `1:1` gives both axes one scale, so that shapes are as they are. Click it again to have each
-  axis fill the chart.
+- `1:1` gives every axis one scale, so that shapes are as they are. Click it again to have each
+  axis fill the chart. A 3D chart starts with it on, and a 2D chart with it off.
+- A 3D chart is drawn with z up, as a box that is as large as what the chart shows. Dragging turns
+  it about its middle. To move it instead, hold Shift while dragging, or drag with the other
+  button of the mouse. Nothing is drawn smaller for being further away, so a unit is as long at
+  the back of the box as at the front.
 - In `…`, `Keep its newest point in the middle` has the chart follow one curve: zooming is then
   about that point. Dragging the chart lets go of it.
-- The edges say what values they are at. The numbers along the axes are named under the chart and
-  at its right edge, in the colours of their curves. The box beside the colour of a curve says
-  whether its numbers are named there.
-- A curve is dragged by the name of its topic onto another 2D chart to move it there. What a
-  runtime counts for a connection or an output is not inside a message, and has no place on a 2D
-  chart.
+- The edges of a 2D chart say what values they are at, and the numbers along its axes are named
+  under the chart and at its right edge. On a 3D chart each axis is named beside the edge of the
+  box that is furthest out, and the row under the chart says how far the box reaches along each.
+  The names are in the colours of their curves. The box beside the colour of a curve says whether
+  its numbers are named on the axes: untick it for all but one curve when they are in the same units.
+- A curve is dragged by the name of its topic onto another chart of the same kind to move it
+  there. What a runtime counts for a connection or an output is not inside a message, and has no
+  place on a 2D or 3D chart.
 
 The workbench measures none of this itself. A runtime reports counters for each of its connections,
 and the workbench reads them ten times a second and keeps what they say. So a line has ten points a
@@ -544,13 +551,13 @@ list of numbers, the lines over time, the curves of numbers against each other,
 how those are looked at and what a line is drawn with in `charts/`),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 4,410 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 5,250 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
 matters, and write pictures to `target/tmp`: `windows.png`, `workbench.png`,
 `graph.png`, `focus.png`, `draft.png`, `group.png`, `group-inside.png`,
-`charts.png`, `chart-colours.png` and `curves.png`.
+`charts.png`, `chart-colours.png`, `curves.png` and `space.png`.
 
 ## Programs with their own main loop
 
