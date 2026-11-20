@@ -14,8 +14,9 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_3, FRAC_PI_6};
 
 /// How far a chart in space is turned for each point of the screen it is dragged, in radians.
 const TURN: f32 = 0.01;
-/// How much further a chart reaches than to a point it is made to show, so that the point is not on its very edge.
-const SPARE: f64 = 1.1;
+/// How near a chart can be shown: until it reaches across this much of how far its middle is
+/// from where its values are 0. Nearer, the values of its grid could not be told apart.
+const NEAREST: f64 = 1e-6;
 /// How many lines of a grid are drawn at the most. More than that could not be told apart.
 const MOST: f64 = 200.0;
 
@@ -113,19 +114,19 @@ impl Frame {
         Some(Frame { middle, spans })
     }
 
-    /// The same middle from nearer by: at twice the size, half as much is shown.
+    /// The same middle from nearer by: at twice the size, half as much is shown. It is shown
+    /// no nearer than its values can be told apart at.
     pub fn zoomed(self, by: f64) -> Frame {
+        let least = NEAREST * self.middle.iter().fold(1.0, |furthest: f64, value| furthest.max(value.abs()));
+        let by = by.min(self.spans.iter().fold(f64::INFINITY, |least, span| least.min(*span)) / least);
         Frame { spans: self.spans.map(|span| span / by), ..self }
     }
+}
 
-    /// The same middle from far enough away to show a point as well, in the same shape and
-    /// with a little to spare. As it is, if it reaches the point already.
-    pub fn taking_in(self, point: Point) -> Frame {
-        // How far out the point is along each axis, where 1 is as far as the frame reaches.
-        let out = |axis: usize| 2.0 * (point[axis] - self.middle[axis]).abs() / self.spans[axis];
-        let furthest = (0..3).map(out).fold(0.0, f64::max);
-        if furthest <= 1.0 { self } else { self.zoomed(1.0 / (furthest * SPARE)) }
-    }
+/// How long the edges are of the box that a chart in space shows, on the screen. The box is
+/// never wider there than from one of its corners to the opposite one, and that fits the room.
+fn edge(room: Rect) -> f64 {
+    f64::from(room.width().min(room.height())) / 3f64.sqrt()
 }
 
 /// A round distance for the lines of a grid to be apart: the least of 1, 2 and 5 times a
@@ -199,9 +200,7 @@ impl Lens {
     /// along an edge, that is turned about its middle and fits the room whichever way it is
     /// turned. With `equal`, a unit is as long along every axis, and the longest fills its edge.
     pub fn space(frame: Frame, room: Rect, equal: bool, (round, above): (f32, f32), ground: Ground) -> Lens {
-        // The box is never wider on the screen than from one of its corners to the opposite one.
-        let edge = f64::from(room.width().min(room.height())) / 3f64.sqrt();
-        let scales = frame.spans.map(|span| edge / span);
+        let scales = frame.spans.map(|span| edge(room) / span);
         let scales = if equal { [scales.into_iter().fold(f64::INFINITY, f64::min); 3] } else { scales };
         // Which way each axis points on the screen, as seen from there: across, and up.
         let ((sin_round, cos_round), (sin_above, cos_above), [along, beside, up]) =
@@ -216,6 +215,30 @@ impl Lens {
     /// How many points of the screen a unit along an axis is, when the axis is seen from the side.
     pub fn scale(&self, axis: usize) -> f64 {
         self.scales[axis]
+    }
+
+    /// How many points of the screen a unit along an axis is as it is drawn: fewer, in space,
+    /// the more the axis points towards the eye.
+    pub fn on_screen(&self, axis: usize) -> f64 {
+        self.scales[axis] * f64::from(self.ways[axis].length())
+    }
+
+    /// In space: how far along an axis the box reaches that the chart shows, from its least to
+    /// its most. The box is as large on the screen whichever way it is turned, and the ground
+    /// that is drawn is as large as its floor.
+    pub fn floor(&self, axis: usize) -> (f64, f64) {
+        let half = edge(self.room) / 2.0 / self.scales[axis];
+        (self.frame.middle[axis] - half, self.frame.middle[axis] + half)
+    }
+
+    /// How far out from the middle of the room a point is drawn: 0 in the middle, 1 on the
+    /// edge of the room, and more beyond it. A chart that is shown from that many times
+    /// further away has the point on its edge.
+    pub fn out(&self, point: Point) -> f64 {
+        let from_middle = self.at(point) - self.room.center();
+        let (across, up) =
+            (from_middle.x.abs() / (self.room.width() / 2.0), from_middle.y.abs() / (self.room.height() / 2.0));
+        f64::from(across.max(up))
     }
 
     /// The point of a plane that is drawn at a place on the screen. The plane is where the

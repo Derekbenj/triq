@@ -245,8 +245,21 @@ fn a_chart_of_numbers_against_each_other_is_zoomed_moved_and_fitted() -> triq::R
     assert!((from + (to - from) / 2.0 - middle).length() < 1.0, "what was in the middle still is");
     assert!(room(&harness, "Chart 2").contains(dots(&harness, "Chart 2")[0]));
 
-    // Dragged, it moves with the pointer.
+    // By hand the chart goes no nearer, and is moved no further, than where it still shows that
+    // point, which is on its very edge now: the wheel and a drag that would lose it do nothing.
     let grip = room(&harness, "Chart 2").center() + vec2(0.0, 60.0);
+    harness.hover_at(grip);
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 100.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Unknown,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run_steps(6);
+    drag(&mut harness, grip, grip + vec2(60.0, -40.0));
+    assert!((corners(&harness).0 - from).length() < 0.5 && (corners(&harness).1 - to).length() < 0.5);
+    // Dragged the other way, it moves with the pointer.
     drag(&mut harness, grip, grip + vec2(-60.0, 40.0));
     assert!((corners(&harness).1 - to - vec2(-60.0, 40.0)).length() < 1.5);
 
@@ -519,14 +532,17 @@ fn three_numbers_of_one_message_are_drawn_in_space() -> triq::Result {
     let (from, to) = corners(&harness);
     let (across, middle) = (to - from, from + (to - from) / 2.0);
     assert!(across.length() > 100.0 && (dots(&harness, "Chart 2")[0] - middle).length() < 1.0, "{from:?} to {to:?}");
-    // Under it is the ground, where z is 0: a grid of lines a unit apart. Each says its axis and
-    // its value where it leaves the chart.
+    // Under it is the ground, where z is 0: a patch of it, as large as the floor of what the
+    // chart shows, with lines at round values. It does not reach the edges of the chart, and the
+    // values are written outside it, along its nearer edges: x runs from 0 to 4.
     let lines = |harness: &Window<'_>, width: f32| {
         let lines = drawn(harness).0.into_iter().filter(|line| line.width == width && place.contains_rect(line.within));
         lines.collect::<Vec<_>>()
     };
-    assert!(lines(&harness, 1.0).len() > 8, "{} lines", lines(&harness, 1.0).len());
-    assert!(written_on(&harness, "Chart 2", "x 2") && written_on(&harness, "Chart 2", "y 1"));
+    let ground = lines(&harness, 1.0);
+    assert!(ground.len() > 8 && ground.len() < 24, "{} lines", ground.len());
+    assert!(ground.iter().flat_map(|line| &line.points).all(|end| place.shrink(5.0).contains(*end)), "{place:?}");
+    assert!(written_on(&harness, "Chart 2", "0") && written_on(&harness, "Chart 2", "4"));
     // Where every axis is 0, each of them is drawn, a unit long: that is where the trail began.
     let axes_drawn = lines(&harness, 1.5);
     assert_eq!(axes_drawn.len(), 3);
@@ -716,17 +732,52 @@ fn a_line_is_cut_to_what_of_it_is_on_the_chart() {
 }
 
 #[test]
-fn a_chart_that_was_set_by_hand_is_seen_from_further_away_rather_than_lose_a_point() {
+fn how_far_out_a_point_is_drawn_says_how_much_further_away_a_chart_must_be_to_show_it() {
+    let room = Rect::from_min_size(pos2(100.0, 50.0), vec2(400.0, 200.0));
     let frame = Frame { middle: [2.0, 20.0, 0.0], spans: [4.0, 20.0, 1.0] };
-    // A point that it shows leaves it as it is.
-    assert_eq!(frame.taking_in([3.9, 11.0, 0.0]), frame);
-    // One that is twice as far from the middle as the chart reaches is shown from twice as far
-    // away, with a little room to spare: about the same middle, and in the same shape.
-    let wider = frame.taking_in([6.0, 20.0, 0.0]);
-    assert_eq!(wider.middle, frame.middle);
-    let times = wider.spans[0] / frame.spans[0];
-    assert!(times > 2.0 && times < 2.3 && (wider.spans[1] / frame.spans[1] - times).abs() < 1e-9, "{wider:?}");
-    assert_eq!(wider.taking_in([6.0, 20.0, 0.0]), wider, "and then it is shown");
+    let lens = Lens::flat(frame, room, false);
+    // In the middle of the room a point is not out at all, and on its edge it is as far out as it can be seen.
+    assert_eq!((lens.out(frame.middle), lens.out([4.0, 20.0, 0.0]), lens.out([2.0, 10.0, 0.0])), (0.0, 1.0, 1.0));
+    assert_eq!(lens.out([3.0, 25.0, 0.0]), 0.5);
+    // One that is twice as far from the middle as the edge is on the edge from twice as far away:
+    // about the same middle, and no further than it takes.
+    assert_eq!(lens.out([6.0, 20.0, 0.0]), 2.0);
+    assert_eq!(Lens::flat(frame.zoomed(1.0 / 2.0), room, false).out([6.0, 20.0, 0.0]), 1.0);
+    // The same goes in space, whichever way the chart is turned.
+    let turned = |frame: Frame| Lens::space(frame, room, true, (-1.0, 0.5), Ground::Xy);
+    let out = turned(frame).out([60.0, 20.0, 30.0]);
+    assert!(out > 1.0 && (turned(frame.zoomed(1.0 / out)).out([60.0, 20.0, 30.0]) - 1.0).abs() < 1e-4, "{out}");
+
+    // A chart is shown no nearer than its values can be told apart at: a millionth of how far
+    // its middle is from where they are 0.
+    let nearest = frame.zoomed(1e30);
+    assert!((nearest.spans[2] - 2e-5).abs() < 1e-12 && nearest.spans[0] == 4.0 * nearest.spans[2], "{nearest:?}");
+}
+
+#[test]
+fn the_ground_of_a_chart_in_space_is_the_floor_of_what_it_shows() {
+    // A room whose shorter side is as long as the diagonal of a box that is 200 points along every edge.
+    let room = Rect::from_center_size(pos2(500.0, 400.0), vec2(600.0, 200.0 * 3f32.sqrt()));
+    let frame = Frame { middle: [10.0, 20.0, 5.0], spans: [2.0, 4.0, 1.0] };
+    let near = |found: (f64, f64), expected: (f64, f64)| {
+        assert!((found.0 - expected.0).abs() < 1e-4 && (found.1 - expected.1).abs() < 1e-4, "{found:?}");
+    };
+    // What the chart shows is a box that is as long along each axis as the chart reaches. The
+    // ground under it is as large as its floor.
+    let lens = Lens::space(frame, room, false, (0.0, 0.5), Ground::Xy);
+    near(lens.floor(0), (9.0, 11.0));
+    near(lens.floor(1), (18.0, 22.0));
+    // With one scale for every axis the box is as long along all of them as along the longest.
+    let equal = Lens::space(frame, room, true, (0.0, 0.5), Ground::Xy);
+    near(equal.floor(0), (8.0, 12.0));
+    near(equal.floor(1), (18.0, 22.0));
+
+    // An axis that is seen from the side is drawn at its full scale. One that points towards the
+    // eye is drawn shorter, and one that points straight at it is not drawn at all.
+    let level = Lens::space(frame, room, false, (0.0, 0.0), Ground::Xy);
+    near((level.on_screen(1), level.on_screen(2)), (50.0, 200.0));
+    assert!(level.on_screen(0) < 1e-3);
+    near((lens.on_screen(1), lens.on_screen(0)), (50.0, 100.0 * 0.5f64.sin()));
 }
 
 #[test]

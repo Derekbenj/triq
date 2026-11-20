@@ -516,18 +516,24 @@ is made:
   on no chart has none, so the trail begins again.
 - The chart shows everything there is, edge to edge. The wheel, or a pinch, zooms about the middle
   of the chart, and dragging moves it. From then on it stays as it was left, until `Fit` has it
-  show everything again. It does not lose sight of where a curve is now, though: when the newest
-  point would leave the chart, the chart is seen from further away, about the same middle.
+  show everything again.
+- A chart does not lose sight of where a curve is now. By hand it cannot be zoomed or moved past
+  the point where the newest point of a curve would leave it: the wheel and the drag stop there.
+  When the curve itself goes where the chart does not reach, the chart is seen from just as much
+  further away as it takes, about the same middle. To zoom in on the point itself, follow it.
 - Under the curves is a grid. Its lines are at round values and stay where those values are, so
   when the chart follows a curve it moves over the grid, and the squares that pass show how far.
-  Each line says its value where it leaves the chart, at the bottom or at the right, and the line
-  where an axis is 0 is stronger.
+  The line where an axis is 0 is stronger. On a 2D chart the grid covers the chart, and each line
+  says its value where it leaves it: x at the bottom, y at the right.
 - `1:1` gives every axis one scale, so that shapes are as they are. Click it again to have each
   axis fill the chart. A 3D chart starts with it on, and a 2D chart with it off.
 - On a 3D chart the grid is the ground: the plane where the axis that is up is 0. `Ground` says
-  which two axes it is along, `xy`, `xz` or `yz`, and the third is up. Each line of the ground
-  says its axis with its value, such as `x 20`. Where all three axes are 0, each is drawn one
-  square long: x in red, y in green and z in blue.
+  which two axes it is along, `xy`, `xz` or `yz`, and the third is up. Only a patch of the ground
+  is drawn, as large as the floor of what the chart shows and under the middle of that. When the
+  chart follows a curve the patch goes with it, and the lines pass through the patch. The values
+  are written outside the patch, along its two nearer edges, one edge for each axis, with the
+  letter of the axis beyond them. Where all three axes are 0, each is drawn one square long: x in
+  red, y in green and z in blue.
 - A curve on a 3D chart stands on the ground. A thin line goes from its newest point straight to
   the ground, to a ring there, and says how far that is: `z 16.5`. The ring is where the point is
   over the ground, and the line is how high: together they tell a point that is near and low from

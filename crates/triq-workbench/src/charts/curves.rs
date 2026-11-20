@@ -170,8 +170,12 @@ pub(super) fn names(ui: &mut Ui, chart: usize, kind: Kind, curves: &mut Vec<Curv
 /// chart. In space it turns the chart about its middle, and moves it with Shift held or with
 /// the other button of the mouse.
 ///
+/// A chart does not lose sight of where a curve is now. By hand it goes no nearer and no
+/// further than where it still shows that, and when the curve itself goes where the chart
+/// does not reach, the chart is seen from just as much further away as it takes.
+///
 /// Under the curves is a grid, whose lines stay where they are while the chart moves over
-/// them. In space it is the ground, and a curve stands on it: see [`stand`].
+/// them. In space it is the ground, and a curve stands on it: see [`ground`] and [`stand`].
 pub(super) fn draw(
     ui: &mut Ui,
     (name, kind): (&str, Kind),
@@ -186,9 +190,9 @@ pub(super) fn draw(
     // Under the curves, a row that says which numbers are along the axes.
     let (area, foot) = whole.split_top_bottom_at_y(whole.bottom() - ui.spacing().interact_size.y);
     // The two axes that the grid is along, and the third. In space that is up, and 0 on the ground.
-    let (axes, ground) = (kind.axes(), if kind == Kind::Space { view.ground.axes() } else { [0, 1, 2] });
+    let (axes, lying) = (kind.axes(), if kind == Kind::Space { view.ground.axes() } else { [0, 1, 2] });
     let grounded = |mut point: Point| {
-        point[ground[2]] = 0.0;
+        point[lying[2]] = 0.0;
         point
     };
     // A curve that is hidden has no points here: it is not drawn, and the chart does not reach for it.
@@ -203,26 +207,50 @@ pub(super) fn draw(
     let stood = newest.iter().flatten().filter(|_| kind == Kind::Space).map(|point| grounded(*point));
     let shown = paths.iter().flatten().map(|(_, point)| *point).chain(newest.iter().flatten().copied()).chain(stood);
     let Some(all) = Frame::around(shown, followed) else { return };
-    let frame = match (view.held, followed) {
-        // What was set by hand stays as it was left, about the point that is followed if one is.
-        (Some(held), Some(middle)) => Frame { middle, ..held },
-        // Left where it was put, a chart is seen from further away rather than lose sight of where a curve is now.
-        (Some(held), None) => newest.iter().flatten().fold(held, |held, point| held.taking_in(*point)),
-        (None, _) => all,
-    };
-    view.held = view.held.map(|_| frame);
 
     // A dot on the very edge of what is shown is drawn whole, not cut in half.
     let room = area.shrink(DOT + 2.0);
-    let lens = match kind {
-        Kind::Space => Lens::space(frame, room, view.equal, view.from, view.ground),
-        _ => Lens::flat(frame, room, view.equal),
+    let looked = *view;
+    let lens = |frame: Frame| match kind {
+        Kind::Space => Lens::space(frame, room, looked.equal, looked.from, looked.ground),
+        _ => Lens::flat(frame, room, looked.equal),
     };
+    // How far out a chart that shows some part draws where the curves are now: beyond 1, it has lost sight of one.
+    let out = |frame: Frame| newest.iter().flatten().map(|point| lens(frame).out(*point)).fold(0.0, f64::max);
+    let frame = match (view.held, followed) {
+        // What was set by hand stays as it was left, about the point that is followed if one is.
+        (Some(held), Some(middle)) => Frame { middle, ..held },
+        (Some(held), None) => held.zoomed(1.0 / out(held).max(1.0)),
+        (None, _) => all,
+    };
+    // By hand: moved with the pointer, the chart lets go of the point it kept in its middle.
+    // It moves as far as it still shows where the curves are: across and up, or else one of the two.
+    let (by, other) = (chart.drag_delta(), chart.dragged_by(PointerButton::Secondary));
+    let moves = kind != Kind::Space || other || ui.input(|input| input.modifiers.shift);
+    let mut held = view.held.map(|_| frame);
+    if chart.dragged() && by != egui::Vec2::ZERO && moves {
+        let tried = [by, egui::vec2(by.x, 0.0), egui::vec2(0.0, by.y)].map(|by| lens(frame).moved(by));
+        held = tried.into_iter().find(|moved| out(*moved) <= 1.0).or(held);
+        curves.iter_mut().for_each(|curve| curve.follow = false);
+    } else if chart.dragged() {
+        view.turn(by);
+    }
+    // The wheel zooms about the middle: no nearer than where a curve would be lost sight of.
+    let zoom = ui.input(|input| input.zoom_delta() * (input.smooth_scroll_delta.y / ZOOM).exp());
+    if chart.contains_pointer() && zoom != 1.0 {
+        let shown = held.unwrap_or(frame);
+        held = Some(shown.zoomed(f64::from(zoom).min(1.0 / out(shown))));
+    }
+    view.held = held;
+
     // What is said of the axes is under the curves, which are drawn over it.
-    let (painter, dark) = (ui.painter_at(area), ui.visuals().dark_mode);
-    grid(ui, &painter, &lens, ground, area, kind == Kind::Space);
-    if kind == Kind::Space {
-        origin(ui, &painter, &lens);
+    let (lens, painter, dark) = (lens(frame), ui.painter_at(area), ui.visuals().dark_mode);
+    match kind {
+        Kind::Space => {
+            ground(ui, &painter, &lens, lying, area);
+            origin(ui, &painter, &lens, area);
+        }
+        _ => grid(ui, &painter, &lens, area),
     }
     ui.scope_builder(UiBuilder::new().max_rect(foot).layout(Layout::left_to_right(Align::Center)), |ui| {
         ui.spacing_mut().item_spacing.x = 16.0;
@@ -238,85 +266,115 @@ pub(super) fn draw(
         curve.pen.draw(&painter, &sparse(&placed), dark);
         let Some(newest) = *newest else { continue };
         if kind == Kind::Space {
-            stand(ui, &painter, &lens, (newest, grounded(newest), ground[2]), (area, curve.pen.color(dark)));
+            stand(ui, &painter, &lens, (newest, grounded(newest), lying[2]), (area, curve.pen.color(dark)));
         }
         painter.circle_filled(lens.at(newest), DOT, curve.pen.color(dark));
     }
-
-    // Moved with the pointer, the chart lets go of the point it kept in its middle. The wheel
-    // zooms, about the middle.
-    let (by, other) = (chart.drag_delta(), chart.dragged_by(PointerButton::Secondary));
-    let moves = kind != Kind::Space || other || ui.input(|input| input.modifiers.shift);
-    if chart.dragged() && by != egui::Vec2::ZERO && moves {
-        view.held = Some(lens.moved(by));
-        curves.iter_mut().for_each(|curve| curve.follow = false);
-    } else if chart.dragged() {
-        view.turn(by);
-    }
-    let zoom = ui.input(|input| input.zoom_delta() * (input.smooth_scroll_delta.y / ZOOM).exp());
-    if chart.contains_pointer() && zoom != 1.0 {
-        view.held = Some(view.held.unwrap_or(frame).zoomed(f64::from(zoom)));
-    }
 }
 
-/// The grid under the curves of a chart: lines at round values of two axes, as far as the
-/// chart shows the plane they are along. On a plane that is the chart itself. In space it is
-/// the ground, where the third axis is 0. The lines are where their values are, so the chart
-/// moves over them when it follows a curve.
-///
-/// Each line says its value where it leaves the chart: at the bottom, or else at the right.
-/// In space it says which axis that is of, too. Where an axis is 0, its line is stronger.
-fn grid(ui: &mut Ui, painter: &Painter, lens: &Lens, [along, beside, up]: [usize; 3], area: Rect, lettered: bool) {
-    // What of the plane the chart shows: the points of it that are drawn in the corners.
-    let corners = [area.left_top(), area.right_top(), area.right_bottom(), area.left_bottom()];
-    let Some(corners) =
-        corners.iter().map(|corner| lens.on_plane(*corner, [along, beside, up], 0.0)).collect::<Option<Vec<Point>>>()
-    else {
-        return;
-    };
-    let reach = |axis: usize| {
-        let values = corners.iter().map(|corner| corner[axis]);
-        values.fold((f64::INFINITY, f64::NEG_INFINITY), |(least, most), value| (least.min(value), most.max(value)))
-    };
+/// The grid under the curves of a chart on a plane: lines at round values of x and y, across
+/// the whole chart. The lines are where their values are, so the chart moves over them when
+/// it follows a curve. Each says its value where it leaves the chart: those of x at the
+/// bottom, and those of y at the right. Where an axis is 0, its line is stronger.
+fn grid(ui: &mut Ui, painter: &Painter, lens: &Lens, area: Rect) {
+    // What the chart shows: the values that are drawn in two opposite corners.
+    let corners = [area.left_bottom(), area.right_top()].map(|corner| lens.on_plane(corner, [0, 1, 2], 0.0));
+    let [Some(least), Some(most)] = corners else { return };
     let (faint, font) = (ui.visuals().weak_text_color(), egui::TextStyle::Small.resolve(ui.style()));
-    // Where values are written already: no value is written over another.
-    let mut taken: Vec<Rect> = Vec::new();
-    for (axis, other) in [(along, beside), (beside, along)] {
-        let ((least, most), (from, to), step) = (reach(axis), reach(other), round_step(SPACING / lens.scale(axis)));
-        for value in marks(least, most, step) {
+    for (axis, other) in [(0, 1), (1, 0)] {
+        let step = round_step(SPACING / lens.scale(axis));
+        for value in marks(least[axis], most[axis], step) {
             let end = |far: f64| {
                 let mut point = [0.0; 3];
                 (point[axis], point[other]) = (value, far);
                 lens.at(point)
             };
-            let Some([one, other_end]) = clipped([end(from), end(to)], area) else { continue };
+            // From the top to the bottom, or from the left to the right: the value is written at the end.
+            let (from, to) = (end(most[other]), end(least[other]));
+            let (from, to) = if axis == 0 { (from, to) } else { (to, from) };
             let strength = if value == 0.0 { 0.7 } else { 0.25 };
-            painter.line_segment([one, other_end], Stroke::new(1.0, faint.gamma_multiply(strength)));
-            // The lower end of the line, or of a level line the right one.
-            let level = (one.y - other_end.y).abs() < 0.5;
-            let low = if (level && one.x > other_end.x) || (!level && one.y > other_end.y) { one } else { other_end };
-            let written = if lettered { format!("{} {}", LETTERS[axis], tick(value, step)) } else { tick(value, step) };
-            let written = painter.layout_no_wrap(written, font.clone(), faint);
+            painter.line_segment([from, to], Stroke::new(1.0, faint.gamma_multiply(strength)));
+            let written = painter.layout_no_wrap(tick(value, step), font.clone(), faint);
             let within = area.shrink2(written.size() / 2.0 + egui::vec2(2.0, 1.0));
-            let place = Rect::from_center_size(low.clamp(within.min, within.max), written.size());
-            if !taken.iter().any(|other| other.expand(2.0).intersects(place)) {
+            ui.put(Rect::from_center_size(to.clamp(within.min, within.max), written.size()), egui::Label::new(written));
+        }
+    }
+}
+
+/// The ground of a chart in space: the plane where the axis that is up is 0, as a grid. Not
+/// all of it is drawn, only a patch as large as the floor of what the chart shows, under the
+/// middle of that. Its lines are at round values and stay where those are: when the chart
+/// follows a curve, the patch goes with the curve and the lines pass through it.
+///
+/// As in a drawing of a box, the values are written outside the patch, along one edge for
+/// each axis: the edge that is nearer on the screen. Beyond them is the letter of the axis.
+/// Where an axis is 0, its line is stronger.
+fn ground(ui: &mut Ui, painter: &Painter, lens: &Lens, [along, beside, _]: [usize; 3], area: Rect) {
+    let at = |axis: usize, value: f64, across: f64| {
+        let mut point = [0.0; 3];
+        (point[axis], point[along + beside - axis]) = (value, across);
+        lens.at(point)
+    };
+    let (faint, font) = (ui.visuals().weak_text_color(), egui::TextStyle::Small.resolve(ui.style()));
+    let reach = [lens.floor(along), lens.floor(beside)];
+    let middle = at(along, (reach[0].0 + reach[0].1) / 2.0, (reach[1].0 + reach[1].1) / 2.0);
+    // The lines are no closer on the screen than the lines of any grid: closer in data, the
+    // more an axis points towards the eye. With one scale for both axes they make squares,
+    // as large as the axis that is seen more from the side asks for.
+    let steps = [along, beside].map(|axis| round_step(SPACING / lens.on_screen(axis)));
+    let steps = if lens.scale(along) == lens.scale(beside) { [steps[0].min(steps[1]); 2] } else { steps };
+    // Where values are written already: none is written over another.
+    let mut taken: Vec<Rect> = Vec::new();
+    for (axis, ((least, most), (from, to)), step) in
+        [(along, (reach[0], reach[1]), steps[0]), (beside, (reach[1], reach[0]), steps[1])]
+    {
+        // The edges of the patch that end the lines of this axis, and the nearer of the two:
+        // the lower on the screen. Out from the middle of the patch is where its values go.
+        let edges = [from, to].map(|across| [at(axis, least, across), at(axis, most, across)]);
+        for seen in edges.iter().filter_map(|edge| clipped(*edge, area)) {
+            painter.line_segment(seen, Stroke::new(1.0, faint.gamma_multiply(0.5)));
+        }
+        let near = if edges[0][0].y + edges[0][1].y > edges[1][0].y + edges[1][1].y { from } else { to };
+        let outward = (at(axis, (least + most) / 2.0, near) - middle).normalized();
+        let beyond = |from: Pos2, size: egui::Vec2, by: f32| {
+            from + outward * (by + (outward.x * size.x).abs() / 2.0 + (outward.y * size.y).abs() / 2.0)
+        };
+        let mut write = |ui: &mut Ui, written: std::sync::Arc<egui::Galley>, middle: Pos2| {
+            let place = Rect::from_center_size(middle, written.size());
+            if area.contains_rect(place) && !taken.iter().any(|other| other.expand(2.0).intersects(place)) {
                 ui.put(place, egui::Label::new(written));
                 taken.push(place);
             }
+        };
+        if !step.is_finite() {
+            continue;
         }
+        for value in marks(least, most, step) {
+            let strength = if value == 0.0 { 0.7 } else { 0.25 };
+            if let Some(seen) = clipped([at(axis, value, from), at(axis, value, to)], area) {
+                painter.line_segment(seen, Stroke::new(1.0, faint.gamma_multiply(strength)));
+            }
+            let written = painter.layout_no_wrap(tick(value, step), font.clone(), faint);
+            let size = written.size();
+            write(ui, written, beyond(at(axis, value, near), size, 6.0));
+        }
+        let letter = painter.layout_no_wrap(LETTERS[axis].to_owned(), font.clone(), AXES[axis]);
+        let size = letter.size();
+        write(ui, letter, beyond(at(axis, (least + most) / 2.0, near), size, 26.0));
     }
 }
 
 /// Where every axis of a chart in space is 0: from there, a line along each axis, as long as
 /// the lines of the ground are apart, with the letter of the axis at its end.
-fn origin(ui: &Ui, painter: &Painter, lens: &Lens) {
+fn origin(ui: &Ui, painter: &Painter, lens: &Lens, area: Rect) {
     for (axis, letter) in LETTERS.into_iter().enumerate() {
         let mut end = [0.0; 3];
         end[axis] = round_step(SPACING / lens.scale(axis));
-        let (from, to, ink) = (lens.at([0.0; 3]), lens.at(end), AXES[axis]);
-        painter.line_segment([from, to], Stroke::new(AXIS, ink));
+        // Only if it is on the chart: seen from very near, it may be a long way off.
+        let Some([from, to]) = clipped([lens.at([0.0; 3]), lens.at(end)], area) else { continue };
+        painter.line_segment([from, to], Stroke::new(AXIS, AXES[axis]));
         let font = egui::TextStyle::Small.resolve(ui.style());
-        painter.text(to + (to - from).normalized() * 8.0, egui::Align2::CENTER_CENTER, letter, font, ink);
+        painter.text(to + (to - from).normalized() * 8.0, egui::Align2::CENTER_CENTER, letter, font, AXES[axis]);
     }
 }
 
@@ -331,7 +389,10 @@ fn stand(
     (area, ink): (Rect, Color32),
 ) {
     let (top, bottom, thin) = (lens.at(point), lens.at(foot), ink.gamma_multiply(0.6));
-    painter.line_segment([top, bottom], Stroke::new(1.0, thin));
+    // As much of the line as is on the chart: seen from very near, the ground may be a long way off.
+    if let Some(seen) = clipped([top, bottom], area) {
+        painter.line_segment(seen, Stroke::new(1.0, thin));
+    }
     painter.circle_stroke(bottom, DOT - 1.0, Stroke::new(1.0, thin));
     let font = egui::TextStyle::Small.resolve(ui.style());
     let height = painter.layout_no_wrap(format!("{} {}", LETTERS[up], written(point[up])), font, thin);
