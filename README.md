@@ -403,6 +403,9 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   around the group: those of the group that this one is inside of, or of the whole machine if it
   is inside none. So a group is wired to its surroundings without leaving it: every wire in there
   is one connection, drawn and cut like any other.
+- An input that only waits, for an output that does not exist, counts as connected to nothing: it
+  is offered there too, and says "waiting". Wired to something else it hears that, and goes on
+  waiting for the other as well until that is disconnected, in the details of its node.
 - A pin on one of those two cards is the port of a node outside the group, written `node.port`.
   Hover over it to see it in full, with its runtime. A wire from `Group Input` straight to
   `Group Output` is refused: it would connect nothing of the group.

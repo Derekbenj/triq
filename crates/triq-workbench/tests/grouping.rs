@@ -655,6 +655,9 @@ fn a_port_that_a_draft_frees_inside_a_group_is_offered_on_the_card_of_the_group(
     // Outside, the card of the group offers both ends already, as ports that nothing is connected
     // to: they will be so once the draft is applied. They are wired there in the same draft.
     assert!(shows(&harness, "imu.pose: Pose") && shows(&harness, "smoother.raw: Pose"));
+    // With two more pins the card is wider than it was, and reaches under the viewer's beside it.
+    harness.get_by_label("Tidy").click();
+    harness.run_steps(4);
     let (sensor, viewer) = (pin(&harness, "imu.pose: Pose", true), pin(&harness, "pose: Pose", false));
     drag(&mut harness, sensor, viewer);
     harness.run_steps(3);

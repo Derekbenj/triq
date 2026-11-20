@@ -73,8 +73,11 @@ fn show_the_last(harness: &mut Window<'_>, seconds: f64) {
     harness.run_steps(3);
 }
 
-/// The charts in a window.
+/// The charts in a window. The list holds every topic on the machine, and they are first
+/// read a moment after the start: the window opens after that, so that the topics of other
+/// programs do not come into the list, and move its rows, under a pointer that took aim.
 fn open(shown: Shown) -> Window<'static> {
+    assert!(wait_for(|| !shown.signals.topics().is_empty()), "the topics of the machine are listed");
     let mut harness = Harness::builder().with_size(egui::vec2(1300.0, 800.0)).wgpu().build_ui_state(
         |ui, shown: &mut Shown| {
             let recorded = Recorded { history: &shown.history, signals: &shown.signals };
@@ -637,7 +640,8 @@ fn the_list_of_numbers_is_hidden_to_give_the_charts_its_room() -> triq::Result {
     };
 
     // An output is opened in the list, and one of the numbers inside it is put on the chart.
-    harness.get_by_label(sensor.as_str()).parent().unwrap().get_by_label("numbers inside").click();
+    grab(&mut harness, &sensor, "numbers inside");
+    number(&harness, &sensor, "numbers inside").click();
     assert!(readers(&mut harness, 2), "an output that is open in the list is read");
     let listed = wait_for(|| {
         scene.imu.pose.send(Pose::default()).expect("send");

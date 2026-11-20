@@ -19,7 +19,7 @@ use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use triq::{Direction, InputInfo, Inventory, NodeInfo, OutputInfo, PortSpec};
+use triq::{Direction, InputInfo, Inventory, NodeInfo, OutputInfo, PortSpec, SourceInfo};
 
 /// One box on the drawing.
 #[derive(Debug, Clone, PartialEq)]
@@ -315,9 +315,15 @@ pub fn cards_with(inventories: &[Inventory], groups: &Groups, inside: Option<&st
             }
         }
     }
-    // Whether a port is connected to nothing, not counting the connections that are to go.
+    // Whether a port is connected to nothing, not counting the connections that are to go. An
+    // input that only waits, for outputs that are not there, is connected to nothing.
+    let there: HashSet<&str> =
+        nodes().flat_map(|(_, node)| &node.outputs).map(|output| output.service.as_str()).collect();
     let stays = |output: &str, input: &str| cut.is_empty() || !cut.contains(&(output.to_owned(), input.to_owned()));
-    let free_input = |name: &str, input: &InputInfo| !input.sources.iter().any(|source| stays(&source.output, name));
+    let free_input = |name: &str, input: &InputInfo| {
+        let hears = |source: &SourceInfo| there.contains(source.output.as_str()) && stays(&source.output, name);
+        !input.sources.iter().any(hears)
+    };
     let free_output = |output: &OutputInfo| {
         let heard = heard_by.get(output.service.as_str()).into_iter().flatten();
         !heard.into_iter().any(|(input, _)| stays(&output.service, input))

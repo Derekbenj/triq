@@ -4,7 +4,8 @@
 #[path = "support/scene.rs"]
 mod scene;
 use scene::*;
-use triq::{Placement, Remote};
+use triq::Remote;
+use triq::prelude::*;
 use triq_workbench::graph::{self, Card, Cut, Groups, Kind, Places};
 use triq_workbench::snarl::Snarl;
 
@@ -42,6 +43,13 @@ fn wires(snarl: &Snarl<Card>) -> Vec<String> {
 
 fn groups<const N: usize>(members: [(String, &str); N]) -> Groups {
     members.into_iter().map(|(node, group)| (node, group.to_owned())).collect()
+}
+
+/// The camera that the viewer waits for.
+#[derive(Ports)]
+#[allow(dead_code)]
+struct CameraPorts {
+    image: Output<[u8]>,
 }
 
 #[test]
@@ -131,9 +139,9 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     let (entry, exit) = (called(&cards, "//in/filtering"), called(&cards, "//out/filtering"));
     assert_eq!((entry.name(), exit.name()), ("Group Input", "Group Output"));
     // On them are the ports out there, as a group's ports are on its card: the output that the
-    // filter hears, and the input that hears the filter.
+    // filter hears, and the input that hears the filter. The viewer's other input hears nothing.
     assert_eq!(written(entry), [vec![], vec!["imu.pose: Pose".to_owned()]]);
-    assert_eq!(written(exit), [vec!["viewer.pose: Pose".to_owned()], vec![]]);
+    assert_eq!(written(exit), [vec!["viewer.pose: Pose".to_owned(), "viewer.image: u8[]".to_owned()], vec![]]);
     assert_eq!((entry.output(0), exit.input(0)), (format!("{robot}/imu/pose"), format!("{desk}/viewer/pose")));
     graph::show(&mut snarl, cards, &mut places, 2);
     // So every wire in here is a connection, as it is anywhere.
@@ -150,7 +158,7 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
     with_spare.insert(format!("{robot}/spare"), "filtering".to_owned());
     let cards = graph::cards(&scene.inventories(), &with_spare, Some("filtering"));
     assert_eq!(written(called(&cards, "//in/filtering"))[1], ["imu.pose: Pose"]);
-    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["viewer.pose: Pose"]);
+    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["viewer.pose: Pose", "viewer.image: u8[]"]);
     let cards = graph::cards(&scene.inventories(), &with_spare, None);
     let offered = written(called(&cards, "/filtering"));
     assert_eq!(offered[0], ["smoother.raw: Pose", "spare.raw: Pose"]);
@@ -165,7 +173,7 @@ fn inside_a_group_two_more_cards_stand_for_the_outside() -> triq::Result {
         pins
     };
     assert_eq!(on("//in/filtering", 1), ["imu.pose: Pose", "spare.smooth: Pose"]);
-    assert_eq!(on("//out/filtering", 0), ["spare.raw: Pose", "viewer.pose: Pose"]);
+    assert_eq!(on("//out/filtering", 0), ["spare.raw: Pose", "viewer.image: u8[]", "viewer.pose: Pose"]);
     // Nothing is wired to them yet.
     graph::show(&mut snarl, cards, &mut places, 2);
     assert_eq!(wires(&snarl), ["Group Input pose -> smoother raw", "smoother smooth -> Group Output pose"]);
@@ -212,10 +220,33 @@ fn the_ports_around_a_group_are_offered_one_group_out_and_no_further() -> triq::
         pins.sort();
         pins
     };
-    // In the inner group, the spare filter beside it is offered. The one outside both is two groups away.
+    // In the inner group, the spare filter beside it is offered. The one outside both is two groups
+    // away, and so is the viewer, of which only the input that hears the group is there.
     assert_eq!(free("sensing/filters"), ["near.raw: Pose", "viewer.pose: Pose"]);
-    // In the outer group, that one is offered.
-    assert_eq!(free("sensing"), ["spare.raw: Pose", "viewer.pose: Pose"]);
+    // In the outer group, those are offered: the other filter, and the viewer's input that hears nothing.
+    assert_eq!(free("sensing"), ["spare.raw: Pose", "viewer.image: u8[]", "viewer.pose: Pose"]);
+    Ok(())
+}
+
+#[test]
+fn an_input_that_only_waits_is_offered_as_one_that_is_connected_to_nothing() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    // The viewer's input for images waits for the output of a camera that does not exist: it
+    // hears nothing. Seen from inside a group beside the viewer it is on Group Output, to be wired.
+    let filtering = groups([(format!("{robot}/smoother"), "filtering")]);
+    let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
+    let exit = called(&cards, "//out/filtering");
+    assert_eq!(written(exit)[0], ["viewer.pose: Pose", "viewer.image: u8[]"]);
+    // Its pin says what it waits for, there as on the viewer's own card.
+    assert_eq!(exit.waiting(1), [format!("{robot}/camera/image")]);
+
+    // The camera starts. Now the input hears an output that is outside the group, which is no
+    // affair of the group's: neither end of that wire is on the two cards.
+    let _camera: CameraPorts = scene.robot.attach("camera")?;
+    let cards = graph::cards(&scene.inventories(), &filtering, Some("filtering"));
+    assert_eq!(written(called(&cards, "//out/filtering"))[0], ["viewer.pose: Pose"]);
+    assert_eq!(written(called(&cards, "//in/filtering"))[1], ["imu.pose: Pose"]);
     Ok(())
 }
 
@@ -245,7 +276,7 @@ fn a_port_whose_last_connection_a_draft_cuts_is_offered_as_one_that_is_connected
     // The same goes for what is outside a group. With the wire to the viewer cut, the viewer's
     // input is still on Group Output, where its wire is, and stays there as one that is free.
     let outer: Cut = [(format!("{robot}/smoother/smooth"), format!("{desk}/viewer/pose"))].into();
-    assert_eq!(pins(&outer, Some("sensing"), "//out/sensing")[0], ["viewer.pose: Pose"]);
+    assert_eq!(pins(&outer, Some("sensing"), "//out/sensing")[0], ["viewer.pose: Pose", "viewer.image: u8[]"]);
     Ok(())
 }
 
