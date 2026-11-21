@@ -26,10 +26,10 @@ pub(super) struct Form {
 pub(super) enum Filled {
     /// It is still being filled in.
     Open,
-    /// Something was asked for: these nodes, each `runtime/node`, which are
-    /// in a group of this name if the kind is a group. The form stays, for
-    /// another of the kind.
-    Created { nodes: Vec<String>, group: Option<String> },
+    /// Something was asked for: these nodes, each `runtime/node` with the
+    /// group it is made in, which is none unless the kind is a group. The
+    /// form stays, for another of the kind.
+    Created { nodes: Vec<(String, String)> },
     /// It is done with: closed, or its runtime or factory went away.
     Closed,
 }
@@ -113,12 +113,14 @@ impl Form {
             {
                 let placement = self.pool.as_deref().map_or(Placement::Dedicated, Placement::pool);
                 let (runtime, kind, name) = (self.runtime.clone(), self.kind.clone(), self.name.clone());
-                // One node by that name; or the nodes of a group, which are named after it.
+                // One node by that name, in no group; or the nodes of a group, which are named
+                // after it, each in it or in a group inside it.
+                let member = |node: &triq::Member| (format!("{runtime}/{}", node.named(&name)), node.group_in(&name));
                 let nodes = match &factory.group {
-                    Some(group) => group.nodes.iter().map(|node| format!("{runtime}/{}", node.named(&name))).collect(),
-                    None => vec![format!("{runtime}/{name}")],
+                    Some(group) => group.nodes.iter().map(member).collect(),
+                    None => vec![(format!("{runtime}/{name}"), String::new())],
                 };
-                filled = Filled::Created { nodes, group: factory.group.is_some().then(|| name.clone()) };
+                filled = Filled::Created { nodes };
                 asking.ask(Request::Spawn { runtime, kind, name: name.clone(), placement, params });
                 // The form stays as it is, for another node of the kind, under the next name that is free.
                 self.made.push(name);

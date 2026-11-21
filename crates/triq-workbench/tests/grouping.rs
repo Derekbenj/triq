@@ -483,6 +483,49 @@ fn a_group_that_a_runtime_offers_as_a_kind_is_created_whole() -> triq::Result {
 }
 
 #[test]
+fn a_kind_with_a_group_inside_it_is_created_with_that_group_inside() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    // The robot offers a filter, and after it another in a group inside the group, as one kind.
+    let nest = Group::new()
+        .spawn("filter", "coarse", Placement::Dedicated, json!({ "alpha": 0.9 }))
+        .group("deep", Group::new().spawn("filter", "fine", Placement::Dedicated, json!({ "alpha": 0.1 })))
+        .connect("coarse/smooth", "deep.fine/raw");
+    scene.robot.register_group("nest", nest)?;
+    let mut harness = open()?;
+    assert!(until(&mut harness, |harness| harness.query_by_label("raw: Pose").is_some()), "the cards appear");
+    harness.run_steps(4);
+    let node = |group: &str, node: &str| format!("{robot}/{group}.{node}");
+
+    // The form says what it is made of, and its nodes are in the group and in the group inside it.
+    create(&mut harness, "nest");
+    assert!(shows(&harness, "coarse, a filter") && shows(&harness, "deep.fine, a filter"));
+    let (coarse, fine) = (node("nest1", "coarse"), node("nest1", "deep.fine"));
+    becomes(&mut harness, [(&coarse, "nest1"), (&fine, "nest1/deep")]);
+    assert!(cards(&harness).contains(&"/nest1".to_owned()) && !cards(&harness).contains(&"/nest1/deep".to_owned()));
+
+    // Created while the graph shows the inside of a group, another is inside that one, and the
+    // group inside it is still inside it.
+    for button in ["Tidy", "Fit"] {
+        harness.get_by_label(button).click();
+        harness.run_steps(4);
+    }
+    let card = header(&harness, "nest1");
+    double_click(&mut harness, card);
+    assert_eq!(harness.state().inside(), Some("nest1"));
+    assert!(cards(&harness).contains(&"/nest1/deep".to_owned()), "{:?}", cards(&harness));
+    picture(&mut harness, "group-kind-inside.png");
+    create(&mut harness, "nest");
+    let inner = [node("nest2", "coarse"), node("nest2", "deep.fine")];
+    becomes(
+        &mut harness,
+        [(&coarse, "nest1"), (&fine, "nest1/deep"), (&inner[0], "nest1/nest2"), (&inner[1], "nest1/nest2/deep")],
+    );
+    Ok(())
+}
+
+#[test]
 fn a_wire_is_cut_with_a_right_click_wherever_it_is_drawn() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;

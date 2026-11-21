@@ -301,3 +301,35 @@ fn a_group_that_a_runtime_offers_as_a_kind_is_drafted_whole() -> triq::Result {
     assert_eq!(draft.changes(&scene.inventories()), []);
     Ok(())
 }
+
+#[test]
+fn a_kind_with_a_group_inside_it_is_drafted_with_that_group_inside() -> triq::Result {
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    // A filter, and after it another that is in a group inside the group.
+    let nest = Group::new()
+        .spawn("filter", "coarse", Placement::Dedicated, json!({ "alpha": 0.9 }))
+        .group("deep", Group::new().spawn("filter", "fine", Placement::Dedicated, json!({ "alpha": 0.1 })))
+        .connect("coarse/smooth", "deep.fine/raw");
+    scene.robot.register_group("nest", nest)?;
+    let real = scene.inventories();
+    let spawn = Request::Spawn {
+        runtime: robot.clone(),
+        kind: "nest".to_owned(),
+        name: "n".to_owned(),
+        placement: Placement::Dedicated,
+        params: json!(null),
+    };
+    let mut draft = Draft::default();
+    draft.record(spawn, &real);
+
+    // Its nodes are drawn where they will be: one in the group, the other in the group inside it.
+    let drafted = draft.over(&real);
+    let group = |name: &str| node(&drafted, &robot, name).map(|node| node.group.as_str());
+    assert_eq!([group("n.coarse"), group("n.deep.fine")], [Some("n"), Some("n/deep")]);
+    assert_eq!(heard(&drafted, &robot, "n.deep.fine"), [format!("{robot}/n.coarse/smooth")]);
+    // Both groups are new.
+    let marks = draft.marks(&real);
+    assert_eq!(["/n", "/n/deep"].map(|card| marks.card(card)), [Some(Mark::New); 2]);
+    Ok(())
+}

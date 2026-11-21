@@ -8,6 +8,7 @@
 //!
 //! A runtime can also offer a group as a kind: several nodes of kinds it
 //! has registered, wired to each other, and created together by one request.
+//! Some of them may be in a group inside that one.
 //! The rest of the runtime does not depend on this file.
 use super::{Factory, Inner, Runtime, check_name};
 use crate::{Direction, Error, Group, PortSpec, Result};
@@ -29,8 +30,9 @@ impl Runtime {
     /// A group that is asked for under the name `drone` is the nodes
     /// `drone.estimator`, `drone.controller`, and so on, each in the group
     /// `drone`, with the settings and on the threads that `group` gives
-    /// them, and wired as it says. The placement and the settings in the
-    /// request itself are not used.
+    /// them, and wired as it says. A node of a group inside it, `perception`,
+    /// is `drone.perception.camera`, in the group `drone/perception`. The
+    /// placement and the settings in the request itself are not used.
     pub fn register_group(&self, kind: &str, group: Group) -> Result {
         self.inner.check_group(&group)?;
         let factory = Factory {
@@ -47,9 +49,7 @@ impl Runtime {
 
 impl Inner {
     pub(crate) fn set_group(&self, node: &str, group: &str) -> Result {
-        if !group.is_empty() {
-            group.split('/').try_for_each(|part| check_name("group", part))?;
-        }
+        check_path(group)?;
         let mut state = self.state.lock().unwrap();
         let unknown = || Error::Unknown(format!("node {node:?} in runtime {:?}", self.name));
         state.nodes.get_mut(node).ok_or_else(unknown)?.group = group.into();
@@ -68,7 +68,10 @@ impl Inner {
         // The ports each node will have, by what the node is called in the group.
         let mut ports: BTreeMap<&str, &[PortSpec]> = BTreeMap::new();
         for member in &group.nodes {
+            // A node of a group inside the group is called after it, `inner.node`: each part is a name.
             check_name("node", &member.name)?;
+            member.name.split('.').try_for_each(|part| check_name("node", part))?;
+            check_path(&member.group)?;
             let unknown = || Error::Unknown(format!("factory {:?} in runtime {:?}", member.kind, self.name));
             let factory = state.factories.get(&member.kind).ok_or_else(unknown)?;
             if factory.group.is_some() {
@@ -110,7 +113,7 @@ impl Inner {
             let node = member.named(name);
             self.spawn_kind(&member.kind, &node, member.placement.clone(), member.params.clone())?;
             made.push(node.clone());
-            self.set_group(&node, name)
+            self.set_group(&node, &member.group_in(name))
         });
         let whole = nodes.and_then(|()| group.wired(name).iter().try_for_each(|(from, to)| self.connect(from, to)));
         // A group is made whole or not at all.
@@ -119,4 +122,12 @@ impl Inner {
         }
         whole
     }
+}
+
+/// A group is named by the groups it is inside of, and then itself: `outer/inner`. No name is no group.
+fn check_path(group: &str) -> Result {
+    if group.is_empty() {
+        return Ok(());
+    }
+    group.split('/').try_for_each(|part| check_name("group", part))
 }

@@ -276,17 +276,18 @@ fn needed(request: &Request, real: &[Inventory]) -> bool {
 /// The nodes that a request to create something creates, each with the
 /// group it is in from the start: one node, in none; or, if the kind is one
 /// that its runtime offers as a group, the nodes of that group, named after
-/// it. No other request creates any.
+/// it, each in it or in a group inside it. No other request creates any.
 fn made(request: &Request, real: &[Inventory]) -> Vec<(String, Member)> {
     let Request::Spawn { runtime, kind, name, placement, params } = request else { return Vec::new() };
     match offered(real, runtime, kind).and_then(|factory| factory.group.as_ref()) {
         Some(group) => {
             let named = |node: &Member| Member { name: node.named(name), ..node.clone() };
-            group.nodes.iter().map(|node| (name.clone(), named(node))).collect()
+            group.nodes.iter().map(|node| (node.group_in(name), named(node))).collect()
         }
         None => {
             let (kind, name) = (kind.clone(), name.clone());
-            vec![(String::new(), Member { kind, name, placement: placement.clone(), params: params.clone() })]
+            let (placement, params) = (placement.clone(), params.clone());
+            vec![(String::new(), Member { kind, name, placement, params, group: String::new() })]
         }
     }
 }

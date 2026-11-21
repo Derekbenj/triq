@@ -621,7 +621,7 @@ impl Contents {
                 }
                 Focus::Form(form) => match form.show(ui, &mut asking, &inventories) {
                     Filled::Open => {}
-                    Filled::Created { nodes, group } => created = Some((nodes, group)),
+                    Filled::Created { nodes } => created = Some(nodes),
                     Filled::Closed => *focus = Focus::Nothing,
                 },
             }
@@ -634,9 +634,9 @@ impl Contents {
         }
         // What is created is where the graph is looking: in the group whose inside it shows. A
         // group that its runtime offers as a kind is a group already, and is put there as one.
-        if let (Some((nodes, group)), Some(shown)) = (created, self.inside.clone()) {
-            let into = group.map_or(shown.clone(), |name| graph::join(Some(&shown), &name));
-            self.regroup(nodes.into_iter().map(|node| (node, Some(into.clone()))).collect());
+        if let (Some(nodes), Some(shown)) = (created, self.inside.clone()) {
+            let into = |group: String| if group.is_empty() { shown.clone() } else { graph::join(Some(&shown), &group) };
+            self.regroup(nodes.into_iter().map(|(node, group)| (node, Some(into(group)))).collect());
         }
     }
 

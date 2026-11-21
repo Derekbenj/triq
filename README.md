@@ -258,7 +258,34 @@ robot.spawn("flight_stack", "drone", Placement::Dedicated, json!(null))?;
   wire to a port that is not there, or a wire between ports of different messages.
 - The nodes of a group may be of kinds the application runs itself (see
   [Programs with their own main loop](#programs-with-their-own-main-loop)).
-  A group cannot hold another group as one of its kinds.
+  A kind that is itself a group is not one of them: a group inside a group
+  is written out, as follows.
+
+Some of the nodes may be in a group inside the group. That one is written as
+a group is, and given a name:
+
+```rust
+let perception = Group::new()
+    .spawn("camera", "camera", Placement::Dedicated, json!(null))
+    .spawn("estimator", "estimator", Placement::Dedicated, json!(null))
+    .connect("camera/image", "estimator/image");                 // by the names its nodes have in it
+let stack = Group::new()
+    .spawn("controller", "controller", Placement::pool("control"), json!({ "gain": 2.0 }))
+    .group("perception", perception)
+    .connect("perception.estimator/state", "controller/state");  // outside it, they are called after it
+rt.register_group("flight_stack", stack)?;
+```
+
+Asked for under the name `drone`, that is `drone.controller` in the group
+`drone`, and `drone.perception.camera` and `drone.perception.estimator` in
+the group `drone/perception`.
+
+- A wire is written in the group that holds both its ends. A wire of
+  `perception` is between its own nodes, or from an output that is not of
+  the group at all; one that reaches `controller` is a wire of `stack`.
+- A group inside may have groups inside it.
+- The names add up, and a node's whole name, `drone.perception.estimator`,
+  is at most 32 characters.
 
 ## From another program
 
@@ -627,7 +654,7 @@ list of numbers, the lines over time, the curves of numbers against each other,
 how those are looked at and what a line is drawn with in `charts/`),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 5,870 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 5,920 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
@@ -880,11 +907,11 @@ of a message.
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
 | `runtime.rs` | 692 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 176 | factories whose nodes the application runs |
-| `runtime/group.rs` | 122 | which group a node is in, and kinds that create a group of nodes |
+| `runtime/group.rs` | 133 | which group a node is in, and kinds that create a group of nodes |
 | `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 385 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 425 | report types, the error type, iceoryx2 type names |
 
-About 3,620 lines including comments, plus the derive macros (108) and the command-line tool (185).
+About 3,670 lines including comments, plus the derive macros (108) and the command-line tool (185).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

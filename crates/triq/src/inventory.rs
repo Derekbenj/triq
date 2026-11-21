@@ -68,6 +68,22 @@ pub struct FactoryInfo {
 ///     .spawn("controller", "controller", Placement::pool("control"), json!({ "gain": 2.0 }))
 ///     .connect("estimator/state", "controller/state");
 /// ```
+///
+/// Some of its nodes may be in a group inside it. That one is written as a
+/// group is, and given a name here:
+///
+/// ```
+/// # use serde_json::json;
+/// # use triq::{Group, Placement};
+/// let perception = Group::new()
+///     .spawn("camera", "camera", Placement::Dedicated, json!(null))
+///     .spawn("estimator", "estimator", Placement::Dedicated, json!(null))
+///     .connect("camera/image", "estimator/image");
+/// let drone = Group::new()
+///     .spawn("controller", "controller", Placement::Dedicated, json!(null))
+///     .group("perception", perception)
+///     .connect("perception.estimator/state", "controller/state");
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     pub nodes: Vec<Member>,
@@ -87,6 +103,11 @@ pub struct Member {
     pub name: String,
     pub placement: Placement,
     pub params: Value,
+    /// The group inside the group that the node is in, as `inner`, or
+    /// `inner/deeper` for a group inside that one. Empty for a node that is
+    /// in none, and from a runtime too old to say.
+    #[serde(default)]
+    pub group: String,
 }
 
 impl Group {
@@ -96,7 +117,20 @@ impl Group {
 
     /// Add a node, of a kind the runtime has registered.
     pub fn spawn(mut self, kind: &str, name: &str, placement: Placement, params: Value) -> Self {
-        self.nodes.push(Member { kind: kind.into(), name: name.into(), placement, params });
+        self.nodes.push(Member { kind: kind.into(), name: name.into(), placement, params, group: String::new() });
+        self
+    }
+
+    /// Add a group inside this one, called `name`: the nodes of `inner`, and
+    /// its wires, which are between its own nodes. Its node `camera` is
+    /// `name.camera` here, and that is what a wire of this group calls it.
+    /// In a group that was created under the name `drone` it is
+    /// `drone.name.camera`, in the group `drone/name`.
+    pub fn group(mut self, name: &str, inner: Group) -> Self {
+        // On paper, what creating `inner` under that name does.
+        self.wires.extend(inner.wired(name));
+        let inside = |node: Member| Member { name: node.named(name), group: node.group_in(name), ..node };
+        self.nodes.extend(inner.nodes.into_iter().map(inside));
         self
     }
 
@@ -119,6 +153,11 @@ impl Member {
     /// What the node is called in a group that was created under the name `group`.
     pub fn named(&self, group: &str) -> String {
         format!("{group}.{}", self.name)
+    }
+
+    /// The group the node is in then: `group`, or a group inside it.
+    pub fn group_in(&self, group: &str) -> String {
+        if self.group.is_empty() { group.to_owned() } else { format!("{group}/{}", self.group) }
     }
 }
 

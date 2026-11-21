@@ -218,3 +218,80 @@ fn a_group_that_could_not_be_made_is_not_offered() -> triq::Result {
     assert_eq!(rt.inventory().nodes.len(), 1, "only the node that was there before");
     Ok(())
 }
+
+/// A group with one more node in it: a `gain` of that name, which multiplies by `factor`.
+fn gain(group: Group, name: &str, factor: u64) -> Group {
+    group.spawn("gain", name, Placement::Dedicated, json!({ "factor": factor }))
+}
+
+#[test]
+fn a_kind_of_group_puts_some_of_its_nodes_in_a_group_inside_it() -> triq::Result {
+    let rt = Runtime::new(&unique("inner"))?;
+    rt.register::<Gain>("gain")?;
+    // A group inside the group is written as a group is: its nodes, and its wires by the names
+    // those nodes have in it. Outside it they are called after it: `fine.second`.
+    let fine = gain(gain(Group::new(), "second", 5), "third", 7).connect("second/output", "third/input");
+    let stack = gain(Group::new(), "first", 2).group("fine", fine).connect("first/output", "fine.second/input");
+    rt.register_group("stack", stack)?;
+
+    // The inventory lists its nodes one after the other, each with the group inside the group
+    // that it is in, and its wires by what the nodes are called in the whole group.
+    let offered = rt.inventory().factories.into_iter().find(|factory| factory.kind == "stack");
+    let listed = offered.and_then(|factory| factory.group).expect("what the kind creates");
+    let members: Vec<(&str, &str)> =
+        listed.nodes.iter().map(|node| (node.name.as_str(), node.group.as_str())).collect();
+    assert_eq!(members, [("first", ""), ("fine.second", "fine"), ("fine.third", "fine")]);
+    let wire = |from: &str, to: &str| (from.to_owned(), to.to_owned());
+    assert_eq!(
+        listed.wires,
+        [wire("fine.second/output", "fine.third/input"), wire("first/output", "fine.second/input")]
+    );
+
+    // Asked for under the name `x`, the group inside it is `x/fine`, and everything is wired.
+    let bench: Bench = rt.attach("bench")?;
+    rt.spawn_kind("stack", "x", Placement::Dedicated, json!(null))?;
+    let nodes = ["x.first", "x.fine.second", "x.fine.third"];
+    assert_eq!(nodes.map(|node| group(&rt, node)), ["x", "x/fine", "x/fine"].map(|group| Some(group.to_owned())));
+    rt.connect("bench/feed", "x.first/input")?;
+    rt.connect("x.fine.third/output", "bench/probe")?;
+    let heard = |name: &str| node(&rt, name).is_some_and(|node| node.outputs[0].subscribers == 1);
+    assert!(wait_for(|| nodes.into_iter().chain(["bench"]).all(heard)));
+    bench.feed.send(3)?;
+    assert_eq!(collect(&bench.probe, 1), [3 * 2 * 5 * 7]);
+
+    // A group inside a group inside the group.
+    let deep = Group::new().group("a", Group::new().group("b", gain(Group::new(), "n", 1)));
+    rt.register_group("deep", deep)?;
+    rt.spawn_kind("deep", "y", Placement::Dedicated, json!(null))?;
+    assert_eq!(group(&rt, "y.a.b.n").as_deref(), Some("y/a/b"));
+
+    // Made whole or not at all. Here the name of a node of the group inside is taken.
+    let _taken: Bench = rt.attach("z.fine.third")?;
+    assert!(matches!(rt.spawn_kind("stack", "z", Placement::Dedicated, json!(null)), Err(Error::Name(_))));
+    assert!(node(&rt, "z.first").is_none() && node(&rt, "z.fine.second").is_none(), "nothing of it is left");
+
+    // A group as a runtime listed it before a group could be inside another: every node is directly in it.
+    let node = json!({ "kind": "gain", "name": "a", "placement": "Dedicated", "params": null });
+    let old: Group = serde_json::from_value(json!({ "nodes": [node], "wires": [] }))?;
+    assert_eq!(old.nodes[0].group, "");
+    Ok(())
+}
+
+#[test]
+fn a_group_inside_a_group_that_could_not_be_made_is_not_offered() -> triq::Result {
+    let rt = Runtime::new(&unique("badinner"))?;
+    rt.register::<Gain>("gain")?;
+    let refused = |group: Group| rt.register_group("bad", group).expect_err("it is refused");
+    let inner = || gain(Group::new(), "second", 1);
+    // What the group inside is called has to be a name.
+    for bad in ["", "two words", "a/b", "_hidden"] {
+        assert!(matches!(refused(Group::new().group(bad, inner())), Error::Name(_)), "{bad:?} is refused");
+    }
+    // A wire of the group inside is between its own nodes: `first` is not one of them.
+    let reaching = gain(Group::new(), "first", 1).group("fine", inner().connect("first/output", "second/input"));
+    assert!(matches!(refused(reaching), Error::Unknown(_)));
+    // Two nodes that come to the same name.
+    assert!(matches!(refused(gain(Group::new(), "fine.second", 1).group("fine", inner())), Error::Name(_)));
+    assert!(rt.inventory().factories.iter().all(|factory| factory.kind != "bad"), "none of them is offered");
+    Ok(())
+}
