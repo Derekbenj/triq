@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
@@ -17,7 +18,7 @@ use std::time::Duration;
 /// input has data: because data arrived, not once for every message, so
 /// several messages may be waiting. A node that takes some of them and
 /// leaves some is run again at once, until it has taken them all or takes
-/// none. A node can also, or instead, be called on a fixed period: see
+/// none. A node can also, or instead, be called on fixed periods: see
 /// [`trigger`](Node::trigger).
 pub trait Node: Send + Sized + 'static {
     type Ports: Ports;
@@ -29,9 +30,11 @@ pub trait Node: Send + Sized + 'static {
 
     fn run(&mut self, ports: &mut Self::Ports) -> Result;
 
-    /// Called on every period, if the trigger has one. Does what `run` does
-    /// unless the node says otherwise.
-    fn tick(&mut self, ports: &mut Self::Ports) -> Result {
+    /// Called when a period of the trigger elapsed, with the number of that
+    /// period: 0 for the first the trigger was given, 1 for the next. Does
+    /// what `run` does unless the node says otherwise.
+    fn tick(&mut self, ports: &mut Self::Ports, period: usize) -> Result {
+        let _ = period;
         self.run(ports)
     }
 
@@ -48,7 +51,7 @@ pub trait Node: Send + Sized + 'static {
 }
 
 /// What makes a node run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trigger {
     /// Data arriving on any input.
     Input,
@@ -57,17 +60,47 @@ pub enum Trigger {
     Every(Duration),
     /// Data arriving, calling `run`, and a fixed period as well, calling `tick`.
     InputOrEvery(Duration),
+    /// Several periods, each calling `tick` with its place among them, and
+    /// data arriving as well, calling `run`, if `input` says so. This is
+    /// what [`and_every`](Trigger::and_every) makes.
+    Several { input: bool, periods: Vec<Duration> },
 }
 
 impl Trigger {
-    pub(crate) fn on_input(self) -> bool {
-        !matches!(self, Self::Every(_))
+    /// The same, and a period besides. A node that sends one thing a hundred
+    /// times a second and another once a second has two:
+    /// `Trigger::Every(fast).and_every(slow)`. Each period is timed on its
+    /// own, and `tick` is told which elapsed: 0 for the first, 1 for the
+    /// next. A node has room for 63.
+    pub fn and_every(self, period: Duration) -> Self {
+        let periods = self.periods().iter().copied().chain([period]).collect();
+        Self::Several { input: self.on_input(), periods }
     }
 
-    pub(crate) fn period(self) -> Option<Duration> {
+    pub(crate) fn on_input(&self) -> bool {
         match self {
-            Self::Input => None,
-            Self::Every(period) | Self::InputOrEvery(period) => Some(period),
+            Self::Input | Self::InputOrEvery(_) => true,
+            Self::Every(_) => false,
+            Self::Several { input, .. } => *input,
+        }
+    }
+
+    /// Its periods, in the order they were given. The number of a period is its place here.
+    pub(crate) fn periods(&self) -> &[Duration] {
+        match self {
+            Self::Input => &[],
+            Self::Every(period) | Self::InputOrEvery(period) => slice::from_ref(period),
+            Self::Several { periods, .. } => periods,
+        }
+    }
+
+    /// The trigger itself, if a node can have it: there is room for [`PERIODS`] periods.
+    pub(crate) fn checked(self) -> Result<Self> {
+        match self.periods().len() {
+            0..=PERIODS => Ok(self),
+            asked => {
+                Err(Error::Mismatch(format!("a node has at most {PERIODS} periods, and this one asks for {asked}")))
+            }
         }
     }
 }
@@ -100,16 +133,20 @@ pub(crate) struct Slot {
     /// Set once, with the panic message, if `run` panicked.
     pub stopped: OnceLock<String>,
     /// Why the node should run next: set by the thread that waits, cleared by the thread that runs.
-    due: AtomicU8,
+    due: AtomicU64,
     /// Used by shared pools only: keeps the node on one thread at a time.
     claim: AtomicU8,
     /// Set when the node is taken from its thread for good. It is not run after that.
     retired: AtomicBool,
 }
 
-/// Bits of `Slot::due`.
-const INPUT: u8 = 1;
-const TICK: u8 = 2;
+/// Bits of `Slot::due`. The first says that an input has data. Each of the
+/// others says that a period elapsed: `TICK` the first period, the bit after
+/// it the next.
+const INPUT: u64 = 1;
+const TICK: u64 = 2;
+/// How many periods a node can have: as many as `Slot::due` has bits for.
+const PERIODS: usize = 63;
 
 /// Nobody is running the node.
 const FREE: u8 = 0;
@@ -121,7 +158,7 @@ const AGAIN: u8 = 2;
 /// A node and its ports with the types erased.
 trait Body: Send {
     fn run(&mut self) -> Result;
-    fn tick(&mut self) -> Result;
+    fn tick(&mut self, period: usize) -> Result;
     fn trigger(&self) -> Trigger;
     /// Returns the settings as they will be reported.
     fn set_params(&mut self, params: Value) -> Result<Value>;
@@ -136,8 +173,8 @@ impl<N: Node> Body for Owned<N> {
     fn run(&mut self) -> Result {
         self.node.run(&mut self.ports)
     }
-    fn tick(&mut self) -> Result {
-        self.node.tick(&mut self.ports)
+    fn tick(&mut self, period: usize) -> Result {
+        self.node.tick(&mut self.ports, period)
     }
     fn trigger(&self) -> Trigger {
         self.node.trigger()
@@ -151,9 +188,10 @@ impl<N: Node> Body for Owned<N> {
 }
 
 impl Slot {
-    pub fn new<N: Node>(node: N, ports: N::Ports, inputs: Vec<Arc<dyn InputPort>>) -> Self {
+    /// `trigger` is the node's own, as [`Trigger::checked`] gave it back.
+    pub fn new<N: Node>(node: N, trigger: Trigger, ports: N::Ports, inputs: Vec<Arc<dyn InputPort>>) -> Self {
         Self {
-            trigger: Mutex::new(node.trigger()),
+            trigger: Mutex::new(trigger),
             body: Mutex::new(Box::new(Owned { node, ports })),
             inputs,
             paused: AtomicBool::new(false),
@@ -161,7 +199,7 @@ impl Slot {
             errors: AtomicU64::new(0),
             last_error: Mutex::new(None),
             stopped: OnceLock::new(),
-            due: AtomicU8::new(0),
+            due: AtomicU64::new(0),
             claim: AtomicU8::new(FREE),
             retired: AtomicBool::new(false),
         }
@@ -177,13 +215,25 @@ impl Slot {
         self.due.fetch_or(INPUT, Ordering::AcqRel);
     }
 
-    /// Note that a period elapsed.
-    pub fn period_elapsed(&self) {
-        self.due.fetch_or(TICK, Ordering::AcqRel);
+    /// Note that the period of that number elapsed.
+    pub fn period_elapsed(&self, period: usize) {
+        self.due.fetch_or(TICK << period, Ordering::AcqRel);
     }
 
-    /// Call the node for whatever is due. An error is recorded and the node
-    /// goes on; a panic stops it for good.
+    /// The numbers of the periods that `due` says elapsed, in order. One that
+    /// the node no longer has is left out: after its settings changed, such
+    /// a period may elapse once more before the node's thread has looked
+    /// again at what it waits on.
+    fn elapsed(&self, due: u64) -> impl Iterator<Item = usize> {
+        // Looked up only when a period is due: data arriving costs what it did without periods.
+        let periods = if due & !INPUT == 0 { 0 } else { self.trigger.lock().unwrap().periods().len() };
+        (0..periods).filter(move |period| due & (TICK << period) != 0)
+    }
+
+    /// Call the node for whatever is due: `run` if data arrived, then `tick`
+    /// for each period that elapsed. Each has its call whatever came of the
+    /// ones before it. An error is recorded, the first if there are several,
+    /// and the node goes on; a panic stops it for good.
     ///
     /// True if the node is due again at once. Data arriving is one reason to
     /// run, however many messages arrived, and a node may take only one of
@@ -203,13 +253,12 @@ impl Slot {
         let taken = || self.inputs.iter().map(|input| input.taken()).sum::<u64>();
         let before = taken();
         let call = |body: &mut Box<dyn Body>| -> Result {
-            if due & INPUT != 0 {
-                body.run()?;
+            let mut outcome = if due & INPUT != 0 { body.run() } else { Ok(()) };
+            for period in self.elapsed(due) {
+                let ticked = body.tick(period);
+                outcome = outcome.and(ticked);
             }
-            if due & TICK != 0 {
-                body.tick()?;
-            }
-            Ok(())
+            outcome
         };
         match catch_unwind(AssertUnwindSafe(|| call(&mut body))) {
             Ok(Ok(())) => {}
@@ -261,12 +310,12 @@ impl Slot {
         let mut body = self.body.lock().unwrap_or_else(PoisonError::into_inner);
         let shown = body.set_params(params)?;
         // New settings may change when the node runs.
-        *self.trigger.lock().unwrap() = body.trigger();
+        *self.trigger.lock().unwrap() = body.trigger().checked()?;
         Ok(shown)
     }
 
     pub fn trigger(&self) -> Trigger {
-        *self.trigger.lock().unwrap()
+        self.trigger.lock().unwrap().clone()
     }
 
     /// What wakes a node that runs on input: one listener per linked output of every input.

@@ -124,8 +124,8 @@ Optional parts of `Node`:
 
 | Method | Purpose |
 | --- | --- |
-| `trigger()` | `Trigger::Input` (default), `Every(period)`, or `InputOrEvery(period)` |
-| `tick()` | called on the period; does what `run` does unless overridden |
+| `trigger()` | `Trigger::Input` (default), `Every(period)`, or `InputOrEvery(period)`; `.and_every(period)` after any of them adds a period |
+| `tick()` | called when a period elapsed, with the number of that period; does what `run` does unless overridden |
 | `set_params()` | accept new settings while running |
 
 `run` is called because data arrived, not once for every message: several may
@@ -134,6 +134,38 @@ or only the newest with `ports.raw.latest()?`. A node that takes one message
 and returns is run again at once while more waits for it, so it does not fall
 behind without anyone noticing; the other nodes on its thread have their turn
 in between.
+
+A node can have several periods, each timed on its own, whether or not data
+wakes it as well. `tick` is told which elapsed by its number: 0 for the first
+the trigger was given, 1 for the next. This one takes what arrives as it
+arrives, sends its state a hundred times a second, and its health once a second:
+
+```rust
+fn trigger(&self) -> Trigger {
+    Trigger::InputOrEvery(Duration::from_millis(10)).and_every(Duration::from_secs(1))
+}
+
+fn run(&mut self, ports: &mut EstimatorPorts) -> triq::Result {
+    while let Some(imu) = ports.imu.recv()? {
+        self.take(&imu);
+    }
+    Ok(())
+}
+
+fn tick(&mut self, ports: &mut EstimatorPorts, period: usize) -> triq::Result {
+    match period {
+        0 => ports.state.send(self.state)?,
+        _ => ports.health.send(self.health())?,
+    };
+    Ok(())
+}
+```
+
+Periods that elapse together are one wake-up: `run` first if data arrived,
+then `tick` for each of them in order. A period that elapses again before the
+node was called for it is one call, not two. An error from one call does not
+cost the others theirs. The periods may come from the node's settings, and
+change when those do. A node has room for 63.
 
 ## Running nodes
 
@@ -843,16 +875,16 @@ of a message.
 | `message.rs` | 220 | message types, headers, the stamp on every sample |
 | `fields.rs` | 132 | the numbers a message lists, and reading one from bytes |
 | `port.rs`, `port/output.rs`, `port/input.rs` | 754 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
-| `node.rs` | 279 | the `Node` trait, `Trigger`, `Placement` |
-| `executor.rs` | 220 | the thread that waits and runs nodes |
+| `node.rs` | 328 | the `Node` trait, `Trigger`, `Placement` |
+| `executor.rs` | 221 | the thread that waits and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 691 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime.rs` | 692 | `Runtime`: spawn, factories, connect, inventory |
 | `runtime/local.rs` | 176 | factories whose nodes the application runs |
 | `runtime/group.rs` | 122 | which group a node is in, and kinds that create a group of nodes |
 | `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 385 | report types, the error type, iceoryx2 type names |
 
-About 3,570 lines including comments, plus the derive macros (108) and the command-line tool (185).
+About 3,620 lines including comments, plus the derive macros (108) and the command-line tool (185).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

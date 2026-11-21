@@ -95,7 +95,7 @@ impl Node for Duplex {
         Ok(())
     }
 
-    fn tick(&mut self, ports: &mut DuplexPorts) -> Result {
+    fn tick(&mut self, ports: &mut DuplexPorts, _: usize) -> Result {
         if self.params.loan {
             let mut loan = ports.output.loan(self.payload.len())?;
             let sent = now_ns();

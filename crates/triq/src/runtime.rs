@@ -361,8 +361,9 @@ impl Inner {
         let executor = self.executor(name, &placement)?;
         let shown = shown(&params)?;
         let node = make(params)?;
+        let trigger = node.trigger().checked()?;
         let (ports, inputs) = self.bind::<N::Ports>(name, kind, Some(placement), shown, None)?;
-        let slot = Arc::new(Slot::new(node, ports, inputs));
+        let slot = Arc::new(Slot::new(node, trigger, ports, inputs));
         match self.state.lock().unwrap().nodes.get_mut(name) {
             Some(record) => record.hosted = Some(Hosted { slot: slot.clone(), executor: executor.clone() }),
             None => {

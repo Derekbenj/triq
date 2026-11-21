@@ -1,7 +1,7 @@
 //! An executor: one thread that waits for work and runs nodes.
 //!
 //! The thread sleeps in an iceoryx2 `WaitSet` holding one listener per
-//! connected output and one timer per periodic node. A sender wakes it
+//! connected output and one timer per period of a node. A sender wakes it
 //! directly, so a message costs one thread wake-up and nothing in between.
 //! What the thread waits on is rebuilt only when the nodes or their
 //! connections change.
@@ -43,7 +43,8 @@ struct Shared {
 enum Wake {
     /// Data for the slot at this index, signalled by the listener at that index.
     Input(usize, usize),
-    Tick(usize),
+    /// For the slot at this index, its period of that number elapsed.
+    Tick(usize, usize),
 }
 
 impl Executor {
@@ -166,9 +167,9 @@ fn serve(shared: &Shared, wake: &Listener) -> Result {
             signals.push(guard);
         }
         for (index, slot) in slots.iter().enumerate() {
-            if let Some(period) = slot.trigger().period() {
-                let guard = waitset.attach_interval(period)?;
-                reasons.insert(WaitSetAttachmentId::from_guard(&guard), Wake::Tick(index));
+            for (number, period) in slot.trigger().periods().iter().enumerate() {
+                let guard = waitset.attach_interval(*period)?;
+                reasons.insert(WaitSetAttachmentId::from_guard(&guard), Wake::Tick(index, number));
                 timers.push(guard);
             }
         }
@@ -203,8 +204,8 @@ fn serve(shared: &Shared, wake: &Listener) -> Result {
                         slots[index].input_arrived();
                         ready[index] = true;
                     }
-                    Wake::Tick(index) => {
-                        slots[index].period_elapsed();
+                    Wake::Tick(index, number) => {
+                        slots[index].period_elapsed(number);
                         ready[index] = true;
                     }
                 }

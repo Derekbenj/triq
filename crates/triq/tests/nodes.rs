@@ -472,7 +472,7 @@ impl Node for Heartbeat {
         }
         Ok(())
     }
-    fn tick(&mut self, ports: &mut Through) -> triq::Result {
+    fn tick(&mut self, ports: &mut Through, _: usize) -> triq::Result {
         ports.output.send(0)?;
         Ok(())
     }
