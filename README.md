@@ -20,9 +20,9 @@ triq adds no transport of its own:
 
 ```toml
 [dependencies]
-triq = "0.1"
+triq = "0.2"
 # Only for a program that draws the project's own views of its messages:
-triq-views = "0.1"
+triq-views = "0.2"
 ```
 
 On macOS, add this once per machine to Cargo's own settings,
@@ -32,6 +32,8 @@ On macOS, add this once per machine to Cargo's own settings,
 [patch.crates-io]
 iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 ```
+
+A project that used 0.1 finds what to change in [CHANGELOG.md](CHANGELOG.md).
 
 If a project has only nodes, it depends on `triq` alone and builds no window
 code. `#[derive(ZeroCopySend)]` comes with `triq::prelude`, so a project never
@@ -345,18 +347,18 @@ cargo install triq-workbench      # on macOS, with the iceoryx2 fork set once pe
 triq-workbench
 ```
 
-From version 0.2.0 the workbench is on crates.io. Before that, and for what
-is in this repository now, install it from here, which builds on the iceoryx2
-fork with no patch, as triq's own manifest names it:
+To build what is in this repository now, before it is released, install it
+from here instead. That builds on the iceoryx2 fork with nothing set, as
+triq's own manifest names it, and `--locked` builds it with the versions it
+was tested with:
 
 ```sh
 cargo install --locked --git https://github.com/Derekbenj/triq triq-workbench
 ```
 
 In a checkout of this repository, `cargo run -p triq-workbench` does the same.
-`--locked` builds it with the versions it was tested with. To draw the
-workbench in a window of your own, depend on `triq-workbench`. Its graph is
-drawn with `triq-snarl`, which comes with it.
+To draw the workbench in a window of your own, depend on `triq-workbench`.
+Its graph is drawn with `triq-snarl`, which comes with it.
 
 When it runs, it shows every runtime on the machine: its pools, the kinds of
 node it offers, its nodes as cards, and its connections as wires. It owns no
@@ -674,7 +676,7 @@ list of numbers, the lines over time, the curves of numbers against each other,
 how those are looked at and what a line is drawn with in `charts/`),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 5,920 lines together, and `triq-tap` another 170. The graph is drawn with `egui-snarl`, and the
+window) are about 5,920 lines together, and `triq-tap` another 170. The graph is drawn with `triq-snarl` (egui-snarl, with changes), and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
@@ -814,7 +816,7 @@ Who runs the nodes behind the views depends on how much work a message takes:
 | A message is read | by the window, as it draws | on the thread or pool the node was placed on |
 | The window | reads each node's input, then draws | draws what the nodes left for it |
 | Right for | small messages: a controller's state | large ones: a camera's frame, scaled down first |
-| Example | `triq-xbox/src/viewer.rs` | `triq-bevy/src/viewer.rs` |
+| Example | the view of a controller's state (`gamepad/view.rs` below) | the view of a camera's picture (`image/view.rs` below) |
 
 A project that already has a window makes its own `Views::new(runtime,
 window)` and draws it with `Views::show`. Views are drawn with the egui that
@@ -829,14 +831,17 @@ is drawn again whenever any part of it has something new.
 
 ## Programs built on it
 
-Three programs use the library the way any project does, each in a repository
-of its own. Those repositories are not public yet.
+`triq-nodes` uses the library the way any project does: one workspace, with a
+crate for the messages and one for each peripheral, simulator and algorithm.
+Each crate of nodes is a library and two small programs, one that offers its
+nodes and one that is a window with its views. It is not public yet.
 
-| Repository | What to read it for |
+| Crate | What to read it for |
 | --- | --- |
-| `triq-xbox` | a device as a node; which device is a setting, not a wire; a view of a small message, in one call |
-| `triq-bevy` | nodes inside an engine's own loop; large frames with a header; a view whose nodes the runtime runs |
-| `triq-demo` | a views program with real things to show: those two kinds of view and one of its own, in 46 lines |
+| `triq-message-types` | messages kept apart from whoever sends them, each with its view beside it: `gamepad/view.rs` is a view of a small message, in one call; `image/view.rs` a view whose nodes the runtime runs |
+| `triq-peripheral-xbox` | a device as a node; which device is a setting, not a wire; a program that keeps its own loop |
+| `triq-simulator-bevy` | nodes inside an engine's own loop; large frames with a header |
+| `triq-algorithm-stereo-depth` | a node that does heavy work, on every core, and pairs two inputs by when they were sent |
 
 ## Delivery
 

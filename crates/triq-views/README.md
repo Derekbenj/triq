@@ -11,8 +11,8 @@ with a list of the current views and a pane for each, which the user arranges.
 
 ```toml
 [dependencies]
-triq = "0.1"
-triq-views = "0.1"
+triq = "0.2"
+triq-views = "0.2"
 ```
 
 ```rust

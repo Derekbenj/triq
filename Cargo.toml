@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Derekbenj/triq"
@@ -17,10 +17,10 @@ iceoryx2 = { version = "0.10.0", git = "https://github.com/Derekbenj/iceoryx2.gi
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The crates of this repository: built from the path here, asked for by version on crates.io.
-triq = { path = "crates/triq", version = "0.1.0" }
-triq-macros = { path = "crates/triq-macros", version = "0.1.0" }
-triq-tap = { path = "crates/triq-tap", version = "0.1.0" }
-triq-snarl = { path = "crates/triq-snarl", version = "0.1.0" }
-triq-views = { path = "crates/triq-views", version = "0.1.0", default-features = false }
+triq = { path = "crates/triq", version = "0.2.0" }
+triq-macros = { path = "crates/triq-macros", version = "0.2.0" }
+triq-tap = { path = "crates/triq-tap", version = "0.2.0" }
+triq-snarl = { path = "crates/triq-snarl", version = "0.2.0" }
+triq-views = { path = "crates/triq-views", version = "0.2.0", default-features = false }
 # Drives the workbench's window code in its tests, without opening a window.
 egui_kittest = { version = "=0.37.0", features = ["wgpu", "snapshot"] }
