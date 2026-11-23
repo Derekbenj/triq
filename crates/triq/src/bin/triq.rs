@@ -18,7 +18,8 @@ usage:
   triq connect <runtime/node/output> <runtime/node/input>
   triq disconnect <runtime/node/output> <runtime/node/input>
   triq fields <runtime/node/output>           the numbers inside what an output sends
-  triq set <runtime/node> <json>              change a node's parameters
+  triq set <runtime/node> <json>              give a node new parameters, in place of all it has
+  triq change <runtime/node> <json>           change the parameters named, and leave the rest
   triq group <runtime/node> [<group>]         put a node in a group, or in none
   triq pause <runtime/node>
   triq resume <runtime/node>
@@ -53,6 +54,9 @@ fn run(args: &[&str]) -> triq::Result {
         ["disconnect", from, to] => triq::disconnect(from, to)?,
         ["fields", output] => fields(output)?,
         ["set", node, params] => on(node, |remote, node| remote.set_params(node, serde_json::from_str(params)?))?,
+        ["change", node, changes] => {
+            on(node, |remote, node| remote.change_params(node, serde_json::from_str(changes)?))?
+        }
         ["group", node, group] => on(node, |remote, node| remote.set_group(node, group))?,
         ["group", node] => on(node, |remote, node| remote.set_group(node, ""))?,
         ["pause", node] => on(node, Remote::pause)?,

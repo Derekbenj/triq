@@ -9,6 +9,28 @@ pub(crate) fn shown<A: Serialize>(params: &A) -> Result<Value> {
     Ok(serde_json::from_str(&serde_json::to_string(params)?)?)
 }
 
+/// `params` with `changes` made to them: the settings that are named take the value they are
+/// named with, and the rest stay. Settings within settings are changed the same way, one by
+/// one. A list is taken whole. A setting named as `null` is taken out, so that the node reads
+/// its default for it. (This is JSON Merge Patch, RFC 7386.)
+pub(crate) fn changed(params: &mut Value, changes: Value) {
+    let Value::Object(changes) = changes else {
+        *params = changes;
+        return;
+    };
+    if !params.is_object() {
+        *params = Value::Object(Default::default());
+    }
+    let Value::Object(params) = params else { return };
+    for (name, change) in changes {
+        if change.is_null() {
+            params.remove(&name);
+        } else {
+            changed(params.entry(name).or_insert(Value::Null), change);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inventory {
     pub runtime: String,

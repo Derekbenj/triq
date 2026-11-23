@@ -15,7 +15,9 @@ readme = "README.md"
 # the published triq names the release; see "Platforms" in the README.
 iceoryx2 = { version = "0.10.0", git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# A node's settings are shown as text and sent back as text. Read exactly, a number comes back
+# the number it was; without this, some come back one step of rounding away.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 # The crates of this repository: built from the path here, asked for by version on crates.io.
 triq = { path = "crates/triq", version = "0.2.0" }
 triq-macros = { path = "crates/triq-macros", version = "0.2.0" }

@@ -173,8 +173,16 @@ impl Remote {
         self.done(Request::Disconnect { from: from.into(), to: to.into() })
     }
 
+    /// Give a node new settings, in place of all it has. See
+    /// [`Runtime::set_params`](crate::Runtime::set_params).
     pub fn set_params(&self, node: &str, params: Value) -> Result {
         self.done(Request::SetParams { node: node.into(), params })
+    }
+
+    /// Change some of a node's settings, and leave the rest. See
+    /// [`Runtime::change_params`](crate::Runtime::change_params).
+    pub fn change_params(&self, node: &str, changes: Value) -> Result {
+        self.done(Request::ChangeParams { node: node.into(), changes }).map_err(too_old)
     }
 
     /// Put a node in a group, or with an empty name in none. See

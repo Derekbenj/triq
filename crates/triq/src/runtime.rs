@@ -6,7 +6,7 @@ pub use local::{Local, LocalFactory, LocalNode, LocalNodes};
 
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
-use crate::inventory::{FactoryInfo, Group, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, shown};
+use crate::inventory::{FactoryInfo, Group, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, changed, shown};
 use crate::message::now_ns;
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
@@ -16,7 +16,7 @@ use iceoryx2::prelude::{NodeBuilder, NodeName, SignalHandlingMode};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 
 /// Owns the nodes of one process and makes them visible to the machine.
 ///
@@ -82,6 +82,8 @@ struct Record {
     group: String,
     placement: Option<Placement>,
     params: Value,
+    /// Held while the node is given new settings, so that it is given one set at a time.
+    settling: Arc<Mutex<()>>,
     inputs: Vec<(PortSpec, Arc<dyn InputPort>)>,
     outputs: Vec<(PortSpec, Arc<dyn OutputPort>)>,
     /// `None` when the application runs the node itself.
@@ -293,9 +295,23 @@ impl Runtime {
         self.inner.set_paused(node, false)
     }
 
-    /// Change a running node's settings.
+    /// Give a running node new settings, in place of all it has: a setting that `params`
+    /// leaves out is its default. To change some and leave the rest, see
+    /// [`change_params`](Self::change_params).
     pub fn set_params(&self, node: &str, params: Value) -> Result {
         self.inner.set_params(node, params)
+    }
+
+    /// Change some of a running node's settings, and leave the rest as they are.
+    ///
+    /// `changes` names the settings to change, any number of them: `{"gain": 2}` changes the
+    /// gain and nothing else. Settings within settings are named the same way,
+    /// `{"limits": {"high": 9}}`. A list is taken whole, and a setting named as `null` goes
+    /// back to its default. The node is then given all of its settings, with the changes in
+    /// them, exactly as [`set_params`](Self::set_params) would give them: it checks them as it
+    /// always does, and if it refuses them nothing has changed.
+    pub fn change_params(&self, node: &str, changes: Value) -> Result {
+        self.inner.change_params(node, changes)
     }
 
     /// Record that something is wrong with a node the application runs. It
@@ -431,6 +447,7 @@ impl Inner {
                 group: String::new(),
                 placement,
                 params,
+                settling: Arc::default(),
                 inputs,
                 outputs,
                 hosted: None,
@@ -555,11 +572,32 @@ impl Inner {
     }
 
     pub(crate) fn set_params(&self, node: &str, params: Value) -> Result {
-        let hosted = self.hosted(node)?;
-        let notify = self.state.lock().unwrap().nodes.get(node).and_then(|record| record.notify.clone());
+        self.settle(node, |_| params)
+    }
+
+    pub(crate) fn change_params(&self, node: &str, changes: Value) -> Result {
+        self.settle(node, |mut params| {
+            changed(&mut params, changes);
+            params
+        })
+    }
+
+    /// Give a node the settings that `new` makes of the ones it has.
+    fn settle(&self, node: &str, new: impl FnOnce(Value) -> Value) -> Result {
+        let unknown = || Error::Unknown(format!("node {node:?} in runtime {:?}", self.name));
+        let settling = self.state.lock().unwrap().nodes.get(node).ok_or_else(unknown)?.settling.clone();
+        // One set at a time for a node: a change worked out from its settings as they were
+        // before another change, and made after it, would undo that other change. Each node
+        // has a lock of its own, so that a node may change another's settings as it runs.
+        let _one = settling.lock().unwrap_or_else(PoisonError::into_inner);
+        let (params, hosted, notify) = {
+            let state = self.state.lock().unwrap();
+            let record = state.nodes.get(node).ok_or_else(unknown)?;
+            (record.params.clone(), record.hosted.clone(), record.notify.clone())
+        };
         let shown = match (&hosted, notify) {
-            (Some(hosted), _) => hosted.slot.set_params(params)?,
-            (None, Some(notify)) => notify(node, Notice::Params(params))?,
+            (Some(hosted), _) => hosted.slot.set_params(new(params))?,
+            (None, Some(notify)) => notify(node, Notice::Params(new(params)))?,
             (None, None) => {
                 return Err(Error::Mismatch(format!("node {node:?} takes no parameters")));
             }

@@ -1,5 +1,16 @@
 # Changes
 
+## Not yet released
+
+- **Some of a node's settings can be changed, and the rest left.** `Runtime::change_params` and
+  `Remote::change_params` take the settings to change, by name, and `triq change <runtime/node>
+  <json>` does the same from a terminal. `set_params` and `triq set` go on replacing all of
+  them, so that a setting left out is its default again. A runtime built with 0.2.0 does not
+  know the new request, and says so.
+- **A number in a node's settings reads back as exactly the number it is.** Settings are shown
+  as text; read back from it, a few numbers came back one step of rounding away, so that
+  settings sent back as they were shown were not always the same settings.
+
 ## 0.2.0
 
 What a project that used 0.1 has to change:

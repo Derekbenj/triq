@@ -142,7 +142,7 @@ Optional parts of `Node`:
 | --- | --- |
 | `trigger()` | `Trigger::Input` (default), `Every(period)`, or `InputOrEvery(period)`; `.and_every(period)` after any of them adds a period |
 | `tick()` | called when a period elapsed, with the number of that period; does what `run` does unless overridden |
-| `set_params()` | accept new settings while running |
+| `set_params()` | accept new settings while running: always all of them, whether a tool sent all or only some |
 
 `run` is called because data arrived, not once for every message: several may
 be waiting. Take them all with `while let Some(sample) = ports.raw.recv()?`,
@@ -311,6 +311,7 @@ for inventory in triq::discover()? { /* runtimes, pools, factories, nodes, ports
 let robot = triq::Remote::open("robot")?;
 robot.spawn("filter", "filter_2", Placement::pool("dsp"), json!({ "alpha": 0.5 }))?;
 triq::connect("robot/imu/pose", "robot/filter_2/raw")?;
+robot.change_params("filter_2", json!({ "alpha": 0.1 }))?;   // this setting, and no other
 
 let watch = triq::Watch::new()?;       // hears any runtime start, stop or change
 watch.wait(Duration::from_secs(1))?;   // then call discover() again
@@ -318,7 +319,22 @@ watch.wait(Duration::from_secs(1))?;   // then call discover() again
 
 The program that asks owns nothing. Each request is carried out by the runtime
 that owns the node, and a refusal comes back as the same error it would raise
-locally. Opening a runtime costs many times as much as asking it something, so
+locally.
+
+A node's settings are changed in two ways, and `Runtime` has the same two:
+
+| Call | Command | What the node's settings become |
+| --- | --- | --- |
+| `change_params` | `triq change` | what they were, with the settings named changed |
+| `set_params` | `triq set` | what is sent, and its default for every setting left out |
+
+`change_params` names any number of settings, `{"alpha": 0.1, "limits": {"high": 9}}`:
+settings within settings are named the same way, a list is taken whole, and a setting named
+as `null` goes back to its default. They are changed together: the node is given all of its
+settings once, with the changes in them, and if it refuses them none has changed. Two changes
+to one node, from anywhere, are made one after the other, so neither undoes the other. A
+setting that is not named never leaves the node's program, and a number the runtime shows
+reads back as exactly the number it is. Opening a runtime costs many times as much as asking it something, so
 a thread keeps the runtimes it has opened: `Remote::open` and `discover` are
 cheap from the second time on, and a runtime that stopped or started again is
 noticed. A thread lets go of what it kept when it ends. The main thread of a
@@ -334,7 +350,8 @@ which builds it on the fork. Its commands:
 triq list                 # or `triq watch` to keep it on screen
 triq spawn robot filter filter_2 --pool dsp --params '{"alpha":0.5}'
 triq connect robot/imu/pose robot/filter_2/raw
-triq set robot/filter_2 '{"alpha":0.1}'
+triq change robot/filter_2 '{"alpha":0.1}'   # change the settings named, and leave the rest
+triq set robot/filter_2 '{"alpha":0.1}'      # replace them all: what is left out is its default
 triq group robot/filter_2 sensing   # put it in a group; without a name, in none
 triq fields robot/imu/pose          # the numbers inside what an output sends
 triq pause | resume | remove robot/filter_2
