@@ -123,6 +123,23 @@ fn once_the_node_has_what_was_typed_the_text_is_the_nodes_own_and_nothing_is_lef
 }
 
 #[test]
+fn a_setting_put_back_to_its_default_is_written_as_the_node_then_shows_it() {
+    // The factor is no longer written: the node is asked for its default, which only it knows.
+    let mut editing = Editing::new(has(), &has());
+    let mut typed = has();
+    typed.as_object_mut().unwrap().remove("factor");
+    typed["limits"].as_object_mut().unwrap().remove("low");
+    editing.text = written(&typed);
+    assert_eq!(editing.changes(&typed), Some(json!({ "factor": null, "limits": { "low": null } })));
+    // What the node shows once it has changed is what it made of that, and nothing is left to ask.
+    let mut now = has();
+    now["factor"] = json!(1);
+    now["limits"]["low"] = json!(0);
+    editing.follow(&now, &now);
+    assert_eq!((editing.text.clone(), editing.changes(&editing.typed().unwrap())), (written(&now), None));
+}
+
+#[test]
 fn while_the_node_has_not_changed_the_text_is_left_alone() {
     // Asked and refused, or not yet answered: what was typed stays, to be mended and asked again.
     let mut editing = Editing::new(has(), &has());
