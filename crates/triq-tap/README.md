@@ -37,7 +37,7 @@ show the numbers inside messages, but it works with the topics of any iceoryx2
 program. It is the one crate of triq that uses `unsafe`: in three places, each
 with the reason it is sound beside it.
 
-On macOS, add the `[patch.crates-io]` section that
+On macOS, set the iceoryx2 fork once per machine, as
 ["Platforms"](https://github.com/Derekbenj/triq#platforms) in the triq README
 describes.
 

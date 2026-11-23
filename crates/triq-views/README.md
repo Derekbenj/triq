@@ -58,7 +58,7 @@ its default features; it then builds no window.
 
 [`examples/template.rs`](examples/template.rs) is a complete program to copy.
 ["Views of your own"](https://github.com/Derekbenj/triq#views-of-your-own) in
-the triq README says more. On macOS, add the `[patch.crates-io]` section that
+the triq README says more. On macOS, set the iceoryx2 fork once per machine, as
 ["Platforms"](https://github.com/Derekbenj/triq#platforms) describes there.
 
 ## License

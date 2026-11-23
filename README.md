@@ -23,9 +23,12 @@ triq adds no transport of its own:
 triq = "0.1"
 # Only for a program that draws the project's own views of its messages:
 triq-views = "0.1"
+```
 
-# On macOS, add this section as well, or put it once in Cargo's own settings;
-# "Platforms" below says why, and how.
+On macOS, add this once per machine to Cargo's own settings,
+`~/.cargo/config.toml`. ["Platforms"](#platforms) says why.
+
+```toml
 [patch.crates-io]
 iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 ```
@@ -47,57 +50,40 @@ needs iceoryx2 as a dependency of its own.
 
 | System | Where triq stands |
 | --- | --- |
-| macOS | Written and tested here. Needs the `[patch.crates-io]` section above, in a project or once per machine. |
+| macOS | Written and tested here. Needs the iceoryx2 fork, set once per machine as above. |
 | Linux | Compiles (docs.rs builds it on Linux), but has not been run. triq has no platform-specific code and iceoryx2 supports Linux, so it is expected to work. |
 | Windows | Not run yet. |
 
-**Why macOS needs the section.** A crate on crates.io may only depend on
+**Why macOS needs the fork.** A crate on crates.io may only depend on
 crates that are also on crates.io, so the published triq builds on the
 released iceoryx2 0.10 (0.10.1 at the time of writing). On macOS, that keeps several files open for
 every port and waits on them with `select`, which cannot handle a file
 numbered 1024 or higher. This is how many ports a chain of nodes, each with
 one input and one output, could have:
 
-| | iceoryx2 0.10 as released | with the section |
+| | iceoryx2 0.10 as released | with the fork |
 | --- | --- | --- |
 | the usual limit of 256 open files | 10 ports; more fail with `PublishSubscribeOpenError::InternalFailure` | 200 ports; the open-file limit itself is reached before 300 |
 | the limit raised (`ulimit -n`) | 60 ports; with more, the program aborts: `fd … out of range: valid fds are 0..FD_SETSIZE` | 600 ports; no upper limit was looked for |
 
-The section replaces that release with [a fork](https://github.com/Derekbenj/iceoryx2):
+The setting replaces that release with [a fork](https://github.com/Derekbenj/iceoryx2):
 the same release plus four fixes. Two of them stop it holding files open;
 iceoryx2 has since merged those for its next release. The other two are the
 fork's own: file numbers are checked before `select` is used, and macOS waits
 with kqueue instead.
 
-The section can go in either of two places. Cargo ignores it in a dependency's
-manifest, which is why triq cannot supply it for you.
-
-- **In a project:** in the `Cargo.toml` of the program being built, or of its
-  workspace, as above.
-- **Once per machine:** in Cargo's own settings, `~/.cargo/config.toml`, in
-  the same words. Then every project on the machine builds on the fork with
-  nothing in its own `Cargo.toml`, and so does every program installed with
-  `cargo install`, the workbench among them.
-
-```toml
-# ~/.cargo/config.toml
-[patch.crates-io]
-iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
-```
-
-For one install only, the same can be given on the command line:
-
-```sh
-cargo install triq-workbench \
-  --config 'patch.crates-io.iceoryx2.git="https://github.com/Derekbenj/iceoryx2.git"' \
-  --config 'patch.crates-io.iceoryx2.rev="638d936394bc5ceff3462c23dbcb4b7c220a040e"'
-```
+Set once in Cargo's own settings, it reaches every project on the machine and
+every program installed with `cargo install`, the workbench among them, with
+nothing in a project's own `Cargo.toml`. Cargo ignores such a section in the
+manifest of a dependency, which is why triq cannot supply it for you. (The
+same section in a project's own `Cargo.toml` does the same for that project
+alone.)
 
 The patch is to iceoryx2 0.10. A project that comes to depend on a later
 iceoryx2 is not patched: Cargo says the patch was not used, and builds on the
 release.
 
-A project that depends on triq by its git address does not need the section,
+A project that depends on triq by its git address does not need the setting,
 because in the repository triq's own manifest names the fork:
 
 ```toml
@@ -355,7 +341,7 @@ triq pause | resume | remove robot/filter_2
 ## The workbench
 
 ```sh
-cargo install triq-workbench      # on macOS, with the patch once per machine: see Platforms
+cargo install triq-workbench      # on macOS, with the iceoryx2 fork set once per machine: see Platforms
 triq-workbench
 ```
 
