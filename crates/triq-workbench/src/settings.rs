@@ -40,6 +40,19 @@ fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// `changes` without those that put a setting back to its default; None if nothing is left.
+fn without_resets(changes: Value) -> Option<Value> {
+    match changes {
+        Value::Null => None,
+        Value::Object(named) => {
+            let kept = named.into_iter().filter_map(|(name, change)| Some((name, without_resets(change)?)));
+            let kept: Map<String, Value> = kept.collect();
+            (!kept.is_empty()).then_some(Value::Object(kept))
+        }
+        other => Some(other),
+    }
+}
+
 /// Settings as text for a person to read and edit.
 pub(crate) fn pretty(settings: &Value) -> String {
     serde_json::to_string_pretty(settings).unwrap_or_default()
@@ -74,7 +87,9 @@ impl Editing {
 
     /// Keep up with the node, which now `has` these settings on the machine and is `drawn` with
     /// these. Once its settings have changed, by what was asked here or by anything else, the
-    /// text is made again from them, with what was typed and is still to ask for in it.
+    /// text is made again from them, with what was typed and is still to ask for in it. A
+    /// setting that was put back to its default is not kept so: only the node knows its
+    /// default, and what it shows for the setting now is written.
     ///
     /// While they have not changed the text is left alone: what was asked may not be answered
     /// yet, or was refused, and is there to mend and ask again.
@@ -84,7 +99,7 @@ impl Editing {
         }
         // Text that is not JSON is being typed. It waits until it can be read.
         let Ok(typed) = self.typed() else { return };
-        let unsent = self.changes(&typed);
+        let unsent = self.changes(&typed).and_then(without_resets);
         self.had = has.clone();
         let wanted = unsent.map_or_else(|| drawn.clone(), |unsent| triq::changed(drawn.clone(), unsent));
         // If the node has all of it now, nothing is left to ask, and the text is the node's own.

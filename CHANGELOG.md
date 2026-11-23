@@ -7,6 +7,11 @@
   <json>` does the same from a terminal. `set_params` and `triq set` go on replacing all of
   them, so that a setting left out is its default again. A runtime built with 0.2.0 does not
   know the new request, and says so.
+- **The workbench changes the settings that were edited, and leaves the rest.** `Apply changes`
+  in a node's details asks for what was typed that differs from what the node had, and says
+  which settings those are; `Replace all` asks for all of them as written, as `Apply` did.
+  What is written there now keeps up with the node. `triq::changed` is what a change makes of
+  settings, for a tool that shows it before asking.
 - **A number in a node's settings reads back as exactly the number it is.** Settings are shown
   as text; read back from it, a few numbers came back one step of rounding away, so that
   settings sent back as they were shown were not always the same settings.

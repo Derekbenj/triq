@@ -440,6 +440,13 @@ In `Runtimes`, `Graph` and `Details`:
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
   and its settings, and to disconnect single sources. `Details` opens for it if it was closed.
+- A node's settings are written in `Details` as JSON, to be edited there. `Apply changes` asks
+  the node's runtime to change the settings that were edited, any number of them at once, and
+  says under the buttons which those are. The node's other settings are not sent: they stay as
+  the node has them, also where something else has changed them since they were written.
+  `Replace all` asks for all of them as they are written, and a setting that is not written is
+  its default again. What is written keeps up with the node while it is not being edited, and
+  keeps what was typed when the node changes underneath it.
 - Pause a node or start it again with the button on its card. `Details` has the same button, and
   one to remove the node.
 - Drag a card by any part of it to move it, scroll to move the view, and pinch to zoom. `Fit`
