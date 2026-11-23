@@ -31,6 +31,7 @@ use crate::colors::Colors;
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card, Groups, Kind, Place, Places};
+use crate::settings::Editing;
 use cards::Viewer;
 use details::{Filled, Form};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
@@ -140,7 +141,7 @@ enum Focus {
     /// A node, by `runtime/node`, with its settings as the user is editing them.
     Node {
         key: String,
-        settings: String,
+        settings: Editing,
     },
     /// A group, by where it is among the groups, as `outer/inner`, with
     /// what it is called there as the user is editing it.
@@ -153,8 +154,11 @@ enum Focus {
 }
 
 impl Focus {
-    fn node(key: String, params: &Value) -> Self {
-        Self::Node { key, settings: details::pretty(params) }
+    /// Turn to a node, which is drawn with the settings `drawn`. `real` is what the runtimes
+    /// report: what the node has there is what a change to its settings is a change from.
+    fn node(key: String, real: &[Inventory], drawn: &Value) -> Self {
+        let has = node(real, &key).map_or(Value::Null, |(_, node)| node.params.clone());
+        Self::Node { key, settings: Editing::new(has, drawn) }
     }
 
     /// Turn to a group. If the details are about it already, they stay as
@@ -554,7 +558,7 @@ impl Contents {
                     let key = format!("{}/{}", inventory.runtime, node.name);
                     let focused = matches!(&self.focus, Focus::Node { key: focus, .. } if *focus == key);
                     if ui.selectable_label(focused, &node.name).clicked() {
-                        (self.focus, self.reveal) = (Focus::node(key, &node.params), true);
+                        (self.focus, self.reveal) = (Focus::node(key, &self.real, &node.params), true);
                     }
                 }
                 ui.separator();
@@ -630,7 +634,7 @@ impl Contents {
             }
         });
         if let Some((key, (_, node))) = turn_to.and_then(|key| Some((key.clone(), node(&inventories, &key)?))) {
-            *focus = Focus::node(key, &node.params);
+            *focus = Focus::node(key, real, &node.params);
         }
         // What is created is where the graph is looking: in the group whose inside it shows. A
         // group that its runtime offers as a kind is a group already, and is put there as one.

@@ -11,6 +11,7 @@ pub mod draft;
 pub mod feed;
 pub mod graph;
 pub mod history;
+pub mod settings;
 pub mod signals;
 
 pub use app::Workbench;

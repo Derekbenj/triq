@@ -439,7 +439,7 @@ impl SnarlViewer<Card> for Viewer<'_> {
         let card = &snarl[node];
         *self.reveal = true;
         match &card.kind {
-            Kind::Node { node, .. } => *self.focus = Focus::node(card.key(), &node.params),
+            Kind::Node { node, .. } => *self.focus = Focus::node(card.key(), self.asking.real, &node.params),
             Kind::Group { path, .. } => {
                 if self.double {
                     *self.wish = Some(Wish::Enter(path.clone()));

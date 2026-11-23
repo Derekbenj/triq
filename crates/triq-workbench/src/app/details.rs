@@ -5,6 +5,7 @@ use super::{Asking, Rates, Wish, awaits};
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::Request;
 use crate::graph;
+use crate::settings::{Editing, pretty};
 use eframe::egui::{self, Ui};
 use serde_json::Value;
 use triq::{FactoryInfo, Inventory, NodeInfo, NodeState, Placement, PoolInfo, PortSpec};
@@ -142,7 +143,7 @@ pub(super) fn node_details(
     marks: &Marks,
     home: &Inventory,
     node: &NodeInfo,
-    settings: &mut String,
+    settings: &mut Editing,
     rates: &Rates,
 ) {
     let key = format!("{}/{}", home.runtime, node.name);
@@ -180,12 +181,30 @@ pub(super) fn node_details(
     if !node.params.is_null() {
         ui.separator();
         ui.strong("Settings");
-        ui.add(wide(egui::TextEdit::multiline(settings)).code_editor().desired_rows(3));
-        match serde_json::from_str::<Value>(settings) {
+        // What the node has on the machine, which a draft may have drawn otherwise.
+        let real = asking.real.iter().find(|real| real.runtime == home.runtime);
+        let has = real.and_then(|real| real.nodes.iter().find(|real| real.name == node.name));
+        settings.follow(has.map_or(&Value::Null, |has| &has.params), &node.params);
+        ui.add(wide(egui::TextEdit::multiline(&mut settings.text)).code_editor().desired_rows(3));
+        match settings.typed() {
             Ok(params) => {
-                if ui.button("Apply").clicked() {
-                    asking.ask(Request::SetParams { runtime: home.runtime.clone(), node: node.name.clone(), params });
-                }
+                let changes = settings.changes(&params);
+                let said = changes.as_ref().map_or("No changes".to_owned(), |changes| format!("Changes: {changes}"));
+                let (runtime, node) = (home.runtime.clone(), node.name.clone());
+                ui.horizontal_wrapped(|ui| {
+                    let some = ui.add_enabled(changes.is_some(), egui::Button::new("Apply changes")).on_hover_text(
+                        "Ask for the settings that differ from the node's, and leave its others as they are.",
+                    );
+                    let all = ui.button("Replace all").on_hover_text(
+                        "Ask for all of them as they are written here. One that is not written is its default again.",
+                    );
+                    if let Some(changes) = changes.filter(|_| some.clicked()) {
+                        asking.ask(Request::ChangeParams { runtime, node, changes });
+                    } else if all.clicked() {
+                        asking.ask(Request::SetParams { runtime, node, params });
+                    }
+                });
+                ui.weak(said);
             }
             Err(error) => _ = ui.colored_label(ui.visuals().error_fg_color, format!("Not valid JSON: {error}")),
         }
@@ -382,10 +401,6 @@ pub(super) fn held_back(ui: &mut Ui, draft: &mut Draft, real: &[Inventory]) {
 /// A place to write in that is as wide as the room it is given, and narrower in a narrower window.
 fn wide(field: egui::TextEdit<'_>) -> egui::TextEdit<'_> {
     field.desired_width(f32::INFINITY)
-}
-
-pub(super) fn pretty(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
 /// `name: Type`, as written beside a pin.

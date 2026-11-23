@@ -15,6 +15,7 @@
 //! however many nodes it creates.
 use crate::feed::Request;
 use crate::graph::{Cut, group_key, groups, parent, within};
+use crate::settings::differences;
 use std::collections::BTreeMap;
 use triq::{Direction, FactoryInfo, InputInfo, Inventory, Member, NodeInfo, NodeState, OutputInfo, SourceInfo};
 
@@ -139,6 +140,11 @@ impl Draft {
                         node.params.clone_from(params);
                     }
                 }
+                Request::ChangeParams { runtime, node, changes } => {
+                    if let Some(node) = node_mut(&mut drafted, runtime, node) {
+                        node.params = triq::changed(node.params.take(), changes.clone());
+                    }
+                }
                 Request::Pause { runtime, node } => {
                     if let Some(node) = node_mut(&mut drafted, runtime, node) {
                         node.state = NodeState::Paused;
@@ -192,6 +198,7 @@ impl Draft {
                     }
                 }
                 Request::SetParams { runtime, node, .. }
+                | Request::ChangeParams { runtime, node, .. }
                 | Request::SetGroup { runtime, node, .. }
                 | Request::Pause { runtime, node }
                 | Request::Resume { runtime, node } => {
@@ -236,7 +243,9 @@ enum About<'a> {
 fn about(request: &Request) -> About<'_> {
     match request {
         Request::Connect { from, to } | Request::Disconnect { from, to } => About::Wire(from, to),
-        Request::SetParams { runtime, node, .. } => About::Settings(runtime, node),
+        Request::SetParams { runtime, node, .. } | Request::ChangeParams { runtime, node, .. } => {
+            About::Settings(runtime, node)
+        }
         Request::Pause { runtime, node } | Request::Resume { runtime, node } => About::Running(runtime, node),
         Request::SetGroup { runtime, node, .. } => About::Group(runtime, node),
         Request::Spawn { runtime, name: node, .. } | Request::Remove { runtime, node } => About::Being(runtime, node),
@@ -262,6 +271,9 @@ fn needed(request: &Request, real: &[Inventory]) -> bool {
         Request::Disconnect { from, to } => hears(real, to, from),
         // A node that is yet to be created has no settings to compare with, and no group.
         Request::SetParams { params, .. } => found.is_none_or(|node| node.params != *params),
+        Request::ChangeParams { changes, .. } => found.is_none_or(|node| {
+            differences(&node.params, &triq::changed(node.params.clone(), changes.clone())).is_some()
+        }),
         Request::SetGroup { group, .. } => found.is_none_or(|node| node.group != *group),
         Request::Pause { .. } => found.is_some_and(|node| node.state == NodeState::Running),
         Request::Resume { .. } => found.is_some_and(|node| node.state == NodeState::Paused),
