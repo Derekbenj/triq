@@ -15,10 +15,10 @@ use crate::draft::{Mark, Marks};
 use crate::feed::Request;
 use crate::graph::{self, Card, Kind, Port};
 use eframe::egui::{self, Color32, Rect, Role, Sense, Shape, Stroke, Ui, WidgetInfo, emath::TSTransform};
-use egui_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer};
-use egui_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 use std::collections::BTreeSet;
 use triq::NodeState;
+use triq_snarl::ui::{PinInfo, PinWireInfo, SnarlPin, SnarlStyle, SnarlViewer};
+use triq_snarl::{InPin, InPinId, NodeId, OutPin, OutPinId, Snarl};
 
 /// How the graph widget asks what to draw and reports what the user did.
 pub(super) struct Viewer<'a> {

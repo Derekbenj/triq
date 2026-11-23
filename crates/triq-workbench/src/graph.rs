@@ -15,11 +15,11 @@
 //! group that are connected to nothing. So every wire in the drawing is a
 //! connection, and whatever can be wired to from here has a pin.
 use eframe::egui::{Pos2, Vec2, pos2, vec2};
-use egui_snarl::{InPinId, NodeId, OutPinId, Snarl};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use triq::{Direction, InputInfo, Inventory, NodeInfo, OutputInfo, PortSpec};
+use triq_snarl::{InPinId, NodeId, OutPinId, Snarl};
 
 /// One box on the drawing.
 #[derive(Debug, Clone, PartialEq)]

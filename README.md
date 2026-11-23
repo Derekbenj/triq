@@ -24,7 +24,8 @@ triq = "0.1"
 # Only for a program that draws the project's own views of its messages:
 triq-views = "0.1"
 
-# On macOS, add this section as well; "Platforms" below says why.
+# On macOS, add this section as well, or put it once in Cargo's own settings;
+# "Platforms" below says why, and how.
 [patch.crates-io]
 iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
 ```
@@ -39,24 +40,25 @@ needs iceoryx2 as a dependency of its own.
 | `triq-macros` | `#[derive(Ports)]` and `#[derive(Fields)]`; comes with `triq` |
 | `triq-views` | a window for a project's own views of its messages; see [Views of your own](#views-of-your-own) |
 | `triq-tap` | reads any iceoryx2 topic as bytes; the workbench uses it, and it holds the only `unsafe` code |
-| `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own. Not on crates.io; see [The workbench](#the-workbench) |
+| `triq-workbench` | the window: a program to run, and a library to draw it in a window of your own; see [The workbench](#the-workbench) |
+| `triq-snarl` | the graph the workbench draws: [egui-snarl](https://github.com/zakarumych/egui-snarl), ported to egui 0.37, with the changes the workbench needs; see [its README](crates/triq-snarl/README.md) |
 
 ### Platforms
 
 | System | Where triq stands |
 | --- | --- |
-| macOS | Written and tested here. Needs the `[patch.crates-io]` section above. |
+| macOS | Written and tested here. Needs the `[patch.crates-io]` section above, in a project or once per machine. |
 | Linux | Compiles (docs.rs builds it on Linux), but has not been run. triq has no platform-specific code and iceoryx2 supports Linux, so it is expected to work. |
 | Windows | Not run yet. |
 
 **Why macOS needs the section.** A crate on crates.io may only depend on
 crates that are also on crates.io, so the published triq builds on the
-released iceoryx2 0.10.0. On macOS, that release keeps several files open for
+released iceoryx2 0.10 (0.10.1 at the time of writing). On macOS, that keeps several files open for
 every port and waits on them with `select`, which cannot handle a file
 numbered 1024 or higher. This is how many ports a chain of nodes, each with
 one input and one output, could have:
 
-| | iceoryx2 0.10.0 as released | with the section |
+| | iceoryx2 0.10 as released | with the section |
 | --- | --- | --- |
 | the usual limit of 256 open files | 10 ports; more fail with `PublishSubscribeOpenError::InternalFailure` | 200 ports; the open-file limit itself is reached before 300 |
 | the limit raised (`ulimit -n`) | 60 ports; with more, the program aborts: `fd … out of range: valid fds are 0..FD_SETSIZE` | 600 ports; no upper limit was looked for |
@@ -65,9 +67,35 @@ The section replaces that release with [a fork](https://github.com/Derekbenj/ice
 the same release plus four fixes. Two of them stop it holding files open;
 iceoryx2 has since merged those for its next release. The other two are the
 fork's own: file numbers are checked before `select` is used, and macOS waits
-with kqueue instead. The section goes in the `Cargo.toml` of the program being
-built, or of its workspace. Cargo ignores it anywhere else, which is why triq
-cannot supply it for you.
+with kqueue instead.
+
+The section can go in either of two places. Cargo ignores it in a dependency's
+manifest, which is why triq cannot supply it for you.
+
+- **In a project:** in the `Cargo.toml` of the program being built, or of its
+  workspace, as above.
+- **Once per machine:** in Cargo's own settings, `~/.cargo/config.toml`, in
+  the same words. Then every project on the machine builds on the fork with
+  nothing in its own `Cargo.toml`, and so does every program installed with
+  `cargo install`, the workbench among them.
+
+```toml
+# ~/.cargo/config.toml
+[patch.crates-io]
+iceoryx2 = { git = "https://github.com/Derekbenj/iceoryx2.git", rev = "638d936394bc5ceff3462c23dbcb4b7c220a040e" }
+```
+
+For one install only, the same can be given on the command line:
+
+```sh
+cargo install triq-workbench \
+  --config 'patch.crates-io.iceoryx2.git="https://github.com/Derekbenj/iceoryx2.git"' \
+  --config 'patch.crates-io.iceoryx2.rev="638d936394bc5ceff3462c23dbcb4b7c220a040e"'
+```
+
+The patch is to iceoryx2 0.10. A project that comes to depend on a later
+iceoryx2 is not patched: Cargo says the patch was not used, and builds on the
+release.
 
 A project that depends on triq by its git address does not need the section,
 because in the repository triq's own manifest names the fork:
@@ -327,16 +355,22 @@ triq pause | resume | remove robot/filter_2
 ## The workbench
 
 ```sh
-cargo install --locked --git https://github.com/Derekbenj/triq triq-workbench
+cargo install triq-workbench      # on macOS, with the patch once per machine: see Platforms
 triq-workbench
 ```
 
+From version 0.2.0 the workbench is on crates.io. Before that, and for what
+is in this repository now, install it from here, which builds on the iceoryx2
+fork with no patch, as triq's own manifest names it:
+
+```sh
+cargo install --locked --git https://github.com/Derekbenj/triq triq-workbench
+```
+
 In a checkout of this repository, `cargo run -p triq-workbench` does the same.
-The workbench is not on crates.io: its graph is drawn with egui-snarl, which
-has no release for egui 0.37 yet, so the workbench builds on a fork that
-supports it. `--locked` builds it with the versions it was tested with. To
-draw the workbench in a window of your own, depend on `triq-workbench` by the
-same git address.
+`--locked` builds it with the versions it was tested with. To draw the
+workbench in a window of your own, depend on `triq-workbench`. Its graph is
+drawn with `triq-snarl`, which comes with it.
 
 When it runs, it shows every runtime on the machine: its pools, the kinds of
 node it offers, its nodes as cards, and its connections as wires. It owns no

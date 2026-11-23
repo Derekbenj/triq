@@ -949,26 +949,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "egui-scale"
-version = "0.7.0"
-source = "git+https://github.com/rafaga/egui-scale?branch=egui-0.37#07455a501306bffeb2361313d0f74c53f9fb7303"
-dependencies = [
- "egui",
-]
-
-[[package]]
-name = "egui-snarl"
-version = "0.13.0"
-source = "git+https://github.com/Derekbenj/egui-snarl.git?rev=b2d48da566dd5a73141f8be1c693c8091ead71cb#b2d48da566dd5a73141f8be1c693c8091ead71cb"
-dependencies = [
- "ahash",
- "egui",
- "egui-scale",
- "slab",
- "smallvec",
-]
-
-[[package]]
 name = "egui-wgpu"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3609,6 +3589,9 @@ name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "slotmap"
@@ -4039,6 +4022,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "triq-snarl"
+version = "0.1.1"
+dependencies = [
+ "ahash",
+ "egui",
+ "serde",
+ "slab",
+ "smallvec",
+]
+
+[[package]]
 name = "triq-tap"
 version = "0.1.1"
 dependencies = [
@@ -4064,13 +4058,13 @@ name = "triq-workbench"
 version = "0.1.1"
 dependencies = [
  "eframe",
- "egui-snarl",
  "egui_kittest",
  "egui_tiles",
  "iceoryx2",
  "serde",
  "serde_json",
  "triq",
+ "triq-snarl",
  "triq-tap",
  "triq-views",
 ]

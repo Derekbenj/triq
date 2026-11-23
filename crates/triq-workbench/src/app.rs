@@ -35,8 +35,6 @@ use cards::Viewer;
 use details::{Filled, Form};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
 use eframe::egui::{self, Align, Color32, Key, Layout, Modifiers, Rect, Stroke, Ui, UiBuilder, emath::TSTransform};
-use egui_snarl::ui::{NodeLayout, PinPlacement, SnarlStyle, SnarlWidget, WireStyle};
-use egui_snarl::{InPinId, OutPinId, Snarl};
 use egui_tiles::{Behavior, Linear, LinearDir, SimplificationOptions, Tabs, TileId, Tiles, Tree, UiResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +42,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use triq::{Inventory, NodeInfo};
+use triq_snarl::ui::{NodeLayout, PinPlacement, SnarlStyle, SnarlWidget, WireStyle};
+use triq_snarl::{InPinId, OutPinId, Snarl};
 use triq_views::panes;
 
 pub struct Workbench {
@@ -746,7 +746,7 @@ impl Contents {
         // The widget is known by a name of its own, so that what is selected in it can be asked for.
         let name = egui::Id::unique("triq-graph");
         SnarlWidget::new().id(name).style(style).show(&mut self.snarl, &mut viewer, ui);
-        let selected = egui_snarl::ui::get_selected_nodes(name, ui.ctx());
+        let selected = triq_snarl::ui::get_selected_nodes(name, ui.ctx());
         let cards = selected.into_iter().filter_map(|id| self.snarl.get_node(id)).map(Card::key);
         // The two cards that stand for the outside of a group are nothing to put in a group or move.
         self.selected = cards.filter(|card| !card.starts_with("//")).collect();

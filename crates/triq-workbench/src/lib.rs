@@ -17,4 +17,4 @@ pub use app::Workbench;
 
 pub use eframe;
 pub use eframe::egui;
-pub use egui_snarl as snarl;
+pub use triq_snarl as snarl;
