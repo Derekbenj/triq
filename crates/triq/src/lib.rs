@@ -63,7 +63,7 @@ mod runtime;
 pub use error::{Error, Result};
 pub use fields::{Field, Fields, Layout, Scalar, member};
 pub use inventory::{
-    FactoryInfo, Group, InputInfo, Inventory, Member, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo,
+    FactoryInfo, Group, InputInfo, Inventory, Member, NodeInfo, NodeState, OutputInfo, PoolInfo, SourceInfo, changed,
 };
 pub use message::{Headed, Header, MessageType, Payload, Stamp};
 pub use node::{Node, Placement, Trigger};

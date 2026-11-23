@@ -9,26 +9,26 @@ pub(crate) fn shown<A: Serialize>(params: &A) -> Result<Value> {
     Ok(serde_json::from_str(&serde_json::to_string(params)?)?)
 }
 
-/// `params` with `changes` made to them: the settings that are named take the value they are
-/// named with, and the rest stay. Settings within settings are changed the same way, one by
-/// one. A list is taken whole. A setting named as `null` is taken out, so that the node reads
-/// its default for it. (This is JSON Merge Patch, RFC 7386.)
-pub(crate) fn changed(params: &mut Value, changes: Value) {
-    let Value::Object(changes) = changes else {
-        *params = changes;
-        return;
+/// Settings with changes made to them, as [`Runtime::change_params`](crate::Runtime::change_params)
+/// makes them: for a tool that shows what a change would do before it asks for it.
+///
+/// The settings that `changes` names take the value they are named with, and the rest stay.
+/// Settings within settings are changed the same way, one by one. A list is taken whole. A
+/// setting named as `null` is taken out, so that the node reads its default for it. Changes
+/// that are not named settings are all of the settings. (This is JSON Merge Patch, RFC 7386.)
+pub fn changed(params: Value, changes: Value) -> Value {
+    let Value::Object(changes) = changes else { return changes };
+    let mut params = match params {
+        Value::Object(params) => params,
+        _ => serde_json::Map::new(),
     };
-    if !params.is_object() {
-        *params = Value::Object(Default::default());
-    }
-    let Value::Object(params) = params else { return };
     for (name, change) in changes {
-        if change.is_null() {
-            params.remove(&name);
-        } else {
-            changed(params.entry(name).or_insert(Value::Null), change);
+        let had = params.remove(&name).unwrap_or_default();
+        if !change.is_null() {
+            params.insert(name, changed(had, change));
         }
     }
+    Value::Object(params)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

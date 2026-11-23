@@ -576,10 +576,7 @@ impl Inner {
     }
 
     pub(crate) fn change_params(&self, node: &str, changes: Value) -> Result {
-        self.settle(node, |mut params| {
-            changed(&mut params, changes);
-            params
-        })
+        self.settle(node, |params| changed(params, changes))
     }
 
     /// Give a node the settings that `new` makes of the ones it has.
