@@ -147,6 +147,22 @@ fn a_setting_named_as_null_goes_back_to_its_default() -> triq::Result {
 }
 
 #[test]
+fn a_tool_works_out_what_a_change_would_make_of_settings_before_it_asks() {
+    // What `change_params` makes of a node's settings, for a tool that shows it first.
+    let has = json!({ "factor": 2, "steps": [1, 2], "limits": { "low": 3, "high": 40 } });
+    let changes = json!({ "factor": 5, "steps": [9], "limits": { "high": null, "middle": 7 }, "new": true });
+    assert_eq!(
+        triq::changed(has.clone(), changes),
+        json!({ "factor": 5, "steps": [9], "limits": { "low": 3, "middle": 7 }, "new": true })
+    );
+    assert_eq!(triq::changed(has.clone(), json!({})), has, "no change named, none made");
+    // Settings that are not named ones, or a change that is not, have nothing to name: the change is all of them.
+    assert_eq!(triq::changed(json!(4), json!(7)), json!(7));
+    assert_eq!(triq::changed(has, json!([1])), json!([1]));
+    assert_eq!(triq::changed(json!(4), json!({ "factor": 5, "gone": null })), json!({ "factor": 5 }));
+}
+
+#[test]
 fn a_change_that_is_refused_changes_nothing() -> triq::Result {
     let (rt, bench) = scale("refused", json!({ "factor": 2, "offset": 1 }))?;
     let before = shown(&rt);
