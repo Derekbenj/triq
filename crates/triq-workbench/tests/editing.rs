@@ -100,6 +100,12 @@ fn the_details_ask_for_the_settings_that_were_changed_or_for_all_of_them() -> tr
     press(&mut harness, "Draft");
     write(&mut harness, &json!({ "gain": 5.0, "offset": 9.0 }));
     assert!(shows(&harness, r#"Changes: {"gain":5.0}"#), "it says what it would ask for");
+    // A picture of it, for a human to look at. Drawing it needs a GPU.
+    let picture = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("settings.png");
+    match harness.render() {
+        Ok(image) => image.save(&picture).map_err(|error| triq::Error::Other(error.to_string()))?,
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
     press(&mut harness, "Apply changes");
     let change =
         Request::ChangeParams { runtime: robot.clone(), node: "tuner".into(), changes: json!({ "gain": 5.0 }) };
