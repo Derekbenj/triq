@@ -1,0 +1,342 @@
+//! Changing some of a node's settings and leaving the rest, where `set_params` replaces them all.
+#[path = "support/helpers.rs"]
+mod helpers;
+use helpers::*;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use triq::prelude::*;
+use triq::{Local, Remote};
+
+#[derive(Ports)]
+struct Bench {
+    feed: Output<u64>,
+    probe: Input<u64>,
+}
+
+#[derive(Ports)]
+struct Through {
+    input: Input<u64>,
+    output: Output<u64>,
+}
+
+/// Settings of several sorts: numbers, a list, and settings within settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct ScaleParams {
+    factor: u64,
+    offset: u64,
+    steps: Vec<u64>,
+    limits: Limits,
+    /// A number that the text of it must be read exactly to give back.
+    fine: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Limits {
+    low: u64,
+    high: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { low: 0, high: 100 }
+    }
+}
+
+/// A number that a careless reader of its text gives back one step of rounding away.
+const FINE: f64 = 1.0676952664346183e-6;
+
+impl Default for ScaleParams {
+    fn default() -> Self {
+        Self { factor: 1, offset: 0, steps: vec![1, 2, 3], limits: Limits::default(), fine: FINE }
+    }
+}
+
+/// Sends what it hears, scaled and offset and held to its limits. Told 0, it sends the bits of
+/// its `fine` setting, so that a test sees the number the node itself has.
+struct Scale(ScaleParams);
+
+impl Node for Scale {
+    type Ports = Through;
+    type Params = ScaleParams;
+    fn new(params: ScaleParams) -> triq::Result<Self> {
+        Ok(Self(params))
+    }
+    fn set_params(&mut self, params: ScaleParams) -> triq::Result {
+        if params.limits.low > params.limits.high {
+            return Err(Error::Mismatch("low is above high".into()));
+        }
+        self.0 = params;
+        Ok(())
+    }
+    fn run(&mut self, ports: &mut Through) -> triq::Result {
+        while let Some(value) = ports.input.recv()? {
+            let Limits { low, high } = self.0.limits;
+            let scaled = (*value * self.0.factor + self.0.offset).clamp(low, high);
+            ports.output.send(if *value == 0 { self.0.fine.to_bits() } else { scaled })?;
+        }
+        Ok(())
+    }
+}
+
+/// A runtime with one `Scale` node, `scale`, made with `settings`, and both of its ends.
+fn scale(tag: &str, settings: serde_json::Value) -> triq::Result<(Runtime, Bench)> {
+    let rt = Runtime::new(&unique(tag))?;
+    rt.register::<Scale>("scale")?;
+    rt.spawn_kind("scale", "scale", Placement::Dedicated, settings)?;
+    let bench: Bench = rt.attach("bench")?;
+    rt.connect("bench/feed", "scale/input")?;
+    rt.connect("scale/output", "bench/probe")?;
+    Ok((rt, bench))
+}
+
+/// What the node makes of `value`.
+fn made(bench: &Bench, value: u64) -> u64 {
+    bench.feed.send(value).expect("send");
+    collect(&bench.probe, 1)[0]
+}
+
+fn shown(rt: &Runtime) -> serde_json::Value {
+    rt.inventory().nodes.into_iter().find(|node| node.name == "scale").unwrap().params
+}
+
+#[test]
+fn the_settings_named_change_and_the_rest_stay_as_they_are() -> triq::Result {
+    let (rt, bench) = scale("named", json!({ "factor": 2, "offset": 1 }))?;
+    assert_eq!(made(&bench, 5), 11);
+
+    // Only the offset is named. The factor stays 2: it does not go back to its default of 1.
+    rt.change_params("scale", json!({ "offset": 7 }))?;
+    assert_eq!(made(&bench, 5), 17);
+    assert_eq!(shown(&rt)["factor"], 2);
+    assert_eq!(shown(&rt)["offset"], 7);
+
+    // Replacing them all is still what `set_params` does: what is left out is its default.
+    rt.set_params("scale", json!({ "offset": 7 }))?;
+    assert_eq!(made(&bench, 5), 12);
+    Ok(())
+}
+
+#[test]
+fn settings_within_settings_change_one_by_one_and_a_list_changes_whole() -> triq::Result {
+    let (rt, bench) = scale("within", json!({ "factor": 10, "limits": { "low": 3, "high": 40 } }))?;
+    assert_eq!(made(&bench, 9), 40);
+
+    // Only the high limit is named: the low one stays 3.
+    rt.change_params("scale", json!({ "limits": { "high": 60 } }))?;
+    assert_eq!(shown(&rt)["limits"], json!({ "low": 3, "high": 60 }));
+    assert_eq!(made(&bench, 9), 60);
+
+    // A list has no names in it to change one by one: the new list takes the place of the old.
+    rt.change_params("scale", json!({ "steps": [9] }))?;
+    assert_eq!(shown(&rt)["steps"], json!([9]));
+    assert_eq!(shown(&rt)["limits"], json!({ "low": 3, "high": 60 }), "and nothing else changed");
+    Ok(())
+}
+
+#[test]
+fn a_setting_named_as_null_goes_back_to_its_default() -> triq::Result {
+    let (rt, bench) = scale("null", json!({ "factor": 4, "offset": 2, "limits": { "low": 5, "high": 50 } }))?;
+    rt.change_params("scale", json!({ "factor": null, "limits": { "low": null } }))?;
+    assert_eq!(shown(&rt)["factor"], 1, "the default");
+    assert_eq!(shown(&rt)["limits"], json!({ "low": 0, "high": 50 }));
+    assert_eq!(shown(&rt)["offset"], 2, "what was not named stays");
+    assert_eq!(made(&bench, 5), 7);
+    Ok(())
+}
+
+#[test]
+fn a_change_that_is_refused_changes_nothing() -> triq::Result {
+    let (rt, bench) = scale("refused", json!({ "factor": 2, "offset": 1 }))?;
+    let before = shown(&rt);
+    // Not a number at all; a setting the node has none of the kind of; and one its own check refuses.
+    assert!(rt.change_params("scale", json!({ "factor": "two" })).is_err());
+    assert!(rt.change_params("scale", json!({ "limits": 5 })).is_err());
+    assert!(matches!(rt.change_params("scale", json!({ "limits": { "low": 500 } })), Err(Error::Mismatch(_))));
+    assert_eq!(shown(&rt), before);
+    assert_eq!(made(&bench, 5), 11);
+
+    // As with `set_params`: a node that is not there, and one whose settings cannot change.
+    assert!(matches!(rt.change_params("nobody", json!({ "factor": 3 })), Err(Error::Unknown(_))));
+    assert!(matches!(rt.change_params("bench", json!({ "factor": 3 })), Err(Error::Mismatch(_))));
+    Ok(())
+}
+
+#[test]
+fn a_number_that_was_not_named_is_still_exactly_the_number_it_was() -> triq::Result {
+    // The runtime keeps a node's settings as it shows them, which is as text reads. A number
+    // read back from its text one step of rounding away would be a setting that changed by
+    // itself whenever another one was changed.
+    let (rt, bench) = scale("exact", json!({ "factor": 2 }))?;
+    assert_eq!(f64::from_bits(made(&bench, 0)), FINE);
+    assert_eq!(shown(&rt)["fine"], json!(FINE), "shown as the number it is");
+
+    rt.change_params("scale", json!({ "offset": 3 }))?;
+    assert_eq!(f64::from_bits(made(&bench, 0)), FINE, "the node still has the number it had, to the last bit");
+
+    // And all of what the runtime shows, sent back as it is shown, changes nothing either.
+    rt.set_params("scale", shown(&rt))?;
+    assert_eq!(f64::from_bits(made(&bench, 0)), FINE);
+    assert_eq!(made(&bench, 5), 13);
+    Ok(())
+}
+
+#[test]
+fn changes_made_at_the_same_moment_are_all_made() -> triq::Result {
+    // Each thread changes a setting of its own. A change worked out from the settings as they
+    // were before another change, and made after it, would undo that other change.
+    let (rt, _bench) = scale("together", json!({}))?;
+    let names = ["factor", "offset", "steps"];
+    for round in 1..=200u64 {
+        let started = std::sync::Barrier::new(names.len());
+        std::thread::scope(|threads| {
+            for name in names {
+                let (rt, started) = (&rt, &started);
+                threads.spawn(move || {
+                    started.wait();
+                    let value = if name == "steps" { json!([round]) } else { json!(round) };
+                    rt.change_params("scale", json!({ name: value })).expect("change");
+                });
+            }
+        });
+        let now = shown(&rt);
+        assert_eq!((&now["factor"], &now["offset"], &now["steps"]), (&json!(round), &json!(round), &json!([round])));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_change_and_new_settings_at_the_same_moment_are_made_one_after_the_other() -> triq::Result {
+    // Whichever is first, the factor is the new settings': a change worked out before them and
+    // made after them would put back the factor of the round before.
+    let (rt, _bench) = scale("either", json!({}))?;
+    for round in 1..=200u64 {
+        let started = std::sync::Barrier::new(2);
+        std::thread::scope(|threads| {
+            let (rt, started) = (&rt, &started);
+            threads.spawn(move || {
+                started.wait();
+                rt.set_params("scale", json!({ "factor": round })).expect("set");
+            });
+            threads.spawn(move || {
+                started.wait();
+                rt.change_params("scale", json!({ "offset": round })).expect("change");
+            });
+        });
+        let now = shown(&rt);
+        assert_eq!(now["factor"], round);
+        assert!(now["offset"] == round || now["offset"] == 0, "the change, or the default that came after it");
+    }
+    Ok(())
+}
+
+#[derive(Ports)]
+struct Orders {
+    input: Input<u64>,
+    output: Output<u64>,
+}
+
+/// A node that changes another node's settings as it runs: `scale`'s offset becomes what it hears.
+struct Foreman(std::sync::Weak<Runtime>);
+
+impl Node for Foreman {
+    type Ports = Orders;
+    type Params = u64;
+    fn new(_: u64) -> triq::Result<Self> {
+        unreachable!("made by the test")
+    }
+    fn set_params(&mut self, _: u64) -> triq::Result {
+        Ok(())
+    }
+    fn run(&mut self, ports: &mut Orders) -> triq::Result {
+        while let Some(value) = ports.input.recv()? {
+            if let Some(rt) = self.0.upgrade() {
+                rt.change_params("scale", json!({ "offset": *value }))?;
+            }
+            ports.output.send(*value)?;
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_node_changes_another_nodes_settings_while_its_own_are_changed() -> triq::Result {
+    // The foreman is given new settings while it runs, and its run changes the settings of
+    // `scale`. Were one node's settings held while another's are changed, each would wait for
+    // the other for ever.
+    let (rt, _bench) = scale("foreman", json!({}))?;
+    let rt = std::sync::Arc::new(rt);
+    let weak = std::sync::Arc::downgrade(&rt);
+    rt.register_with::<Foreman>("foreman", move |_, _| Ok(Foreman(weak.clone())))?;
+    rt.spawn_kind("foreman", "foreman", Placement::Dedicated, json!(0))?;
+    let orders: Bench = rt.attach("orders")?;
+    rt.connect("orders/feed", "foreman/input")?;
+    rt.connect("foreman/output", "orders/probe")?;
+
+    // Not a scoped thread: if it does wait for ever, the test is to fail, not to wait with it.
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (setter, stop) = (rt.clone(), done.clone());
+    std::thread::spawn(move || {
+        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            setter.set_params("foreman", json!(1)).expect("set");
+        }
+    });
+    for order in 1..=500u64 {
+        orders.feed.send(order)?;
+        assert_eq!(collect(&orders.probe, 1), [order], "the foreman ran, and did not wait for ever");
+    }
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(shown(&rt)["offset"], 500);
+    Ok(())
+}
+
+#[derive(Ports)]
+struct LampPorts {
+    #[allow(dead_code, reason = "a node needs a port; this one's is never sent on")]
+    light: Output<u64>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct LampParams {
+    level: u32,
+    colour: String,
+}
+
+impl Default for LampParams {
+    fn default() -> Self {
+        Self { level: 10, colour: "white".into() }
+    }
+}
+
+#[test]
+fn a_node_the_application_runs_is_told_all_of_its_settings_with_the_change_in_them() -> triq::Result {
+    let rt = Runtime::new(&unique("lamp"))?;
+    let lamps = rt.local_factory::<LampPorts, LampParams>("lamp")?;
+    rt.spawn_kind("lamp", "desk", Placement::Dedicated, json!({ "level": 60, "colour": "amber" }))?;
+    // The node lasts for as long as the application holds its ports.
+    let Some(Local::Spawn { ports: _ports, .. }) = lamps.try_next() else { panic!("a spawn request") };
+
+    rt.change_params("desk", json!({ "level": 80 }))?;
+    let Some(Local::Params { name, params }) = lamps.try_next() else { panic!("the new settings") };
+    assert_eq!((name.as_str(), params), ("desk", LampParams { level: 80, colour: "amber".into() }));
+    assert_eq!(rt.inventory().nodes[0].params, json!({ "level": 80, "colour": "amber" }));
+
+    // What is refused never reaches the application.
+    assert!(rt.change_params("desk", json!({ "level": "bright" })).is_err());
+    assert!(lamps.try_next().is_none());
+    Ok(())
+}
+
+#[test]
+fn another_program_changes_some_of_a_nodes_settings() -> triq::Result {
+    let (rt, bench) = scale("remote", json!({ "factor": 2, "offset": 1 }))?;
+    let remote = Remote::open(rt.name())?;
+    remote.change_params("scale", json!({ "factor": 3 }))?;
+    assert_eq!(made(&bench, 5), 16);
+    assert_eq!(remote.inventory()?.nodes.iter().find(|node| node.name == "scale").unwrap().params["offset"], 1);
+    assert!(remote.change_params("scale", json!({ "factor": "three" })).is_err());
+    assert!(matches!(remote.change_params("nobody", json!({})), Err(Error::Unknown(_))));
+    Ok(())
+}

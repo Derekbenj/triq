@@ -87,6 +87,13 @@ fn a_third_program_wires_two_others_and_a_crash_takes_its_wiring_with_it() {
 
     triq(&["set", &format!("{left}/ticks"), r#"{"period_ms":50}"#]).unwrap();
     assert_eq!(node(&left, "ticks").unwrap().params["period_ms"], 50);
+    // `change` names the settings to change, and leaves the rest: none is named here, and the
+    // period stays what it was set to, where `set` with nothing would put it back to its default.
+    triq(&["change", &format!("{left}/ticks"), "{}"]).unwrap();
+    assert_eq!(node(&left, "ticks").unwrap().params["period_ms"], 50);
+    triq(&["change", &format!("{left}/ticks"), r#"{"period_ms":20}"#]).unwrap();
+    assert_eq!(node(&left, "ticks").unwrap().params["period_ms"], 20);
+    assert!(triq(&["change", &format!("{left}/ticks"), r#"{"period_ms":"fast"}"#]).is_err());
 
     // A node is put in a group, and taken out of it again.
     triq(&["group", &format!("{left}/ticks"), "sources/slow"]).unwrap();
