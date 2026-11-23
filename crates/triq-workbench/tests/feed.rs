@@ -78,6 +78,9 @@ fn the_feed_follows_the_machine_and_carries_out_requests() -> triq::Result {
     let (runtime, name) = on("extra");
     feed.ask(Request::SetParams { runtime, node: name, params: json!({ "alpha": 0.75 }) });
     assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().params == json!({ "alpha": 0.75 })));
+    let (runtime, name) = on("extra");
+    feed.ask(Request::ChangeParams { runtime, node: name, changes: json!({ "alpha": 0.5 }) });
+    assert!(wait_for(|| node(&feed, &robot_name, "extra").unwrap().params == json!({ "alpha": 0.5 })));
 
     // Which group a node is in is its runtime's to say, too.
     let (runtime, name) = on("extra");
