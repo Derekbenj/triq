@@ -10,11 +10,17 @@
 - **The workbench changes the settings that were edited, and leaves the rest.** `Apply changes`
   in a node's details asks for what was typed that differs from what the node had, and says
   which settings those are; `Replace all` asks for all of them as written, as `Apply` did.
-  What is written there now keeps up with the node. `triq::changed` is what a change makes of
-  settings, for a tool that shows it before asking.
-- **A number in a node's settings reads back as exactly the number it is.** Settings are shown
-  as text; read back from it, a few numbers came back one step of rounding away, so that
-  settings sent back as they were shown were not always the same settings.
+  Text that nobody is typing in now keeps up with the node. `triq::merged` is what a change
+  makes of settings, for a tool that shows it before asking.
+- **A number in a node's settings reads back as exactly the number it is**, for an `f64` and a
+  whole number of up to 64 bits. Settings are shown as text; read back from it, a few numbers
+  came back one step of rounding away, so that settings sent back as they were shown were not
+  always the same settings. This turns on `serde_json`'s `float_roundtrip`, and Cargo turns a
+  feature on for every crate of a project that has triq in it: their own JSON is read exactly
+  too, a little more slowly.
+- **A node's own refusal is no longer taken for an old runtime's.** A value a node did not know
+  for a setting that is one of a few names came back from another program as "the runtime was
+  built with an earlier triq". It comes back as the node's words.
 
 ## 0.2.0
 

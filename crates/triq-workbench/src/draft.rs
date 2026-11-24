@@ -142,7 +142,7 @@ impl Draft {
                 }
                 Request::ChangeParams { runtime, node, changes } => {
                     if let Some(node) = node_mut(&mut drafted, runtime, node) {
-                        node.params = triq::changed(node.params.take(), changes.clone());
+                        node.params = triq::merged(node.params.take(), changes.clone());
                     }
                 }
                 Request::Pause { runtime, node } => {
@@ -272,7 +272,7 @@ fn needed(request: &Request, real: &[Inventory]) -> bool {
         // A node that is yet to be created has no settings to compare with, and no group.
         Request::SetParams { params, .. } => found.is_none_or(|node| node.params != *params),
         Request::ChangeParams { changes, .. } => found.is_none_or(|node| {
-            differences(&node.params, &triq::changed(node.params.clone(), changes.clone())).is_some()
+            differences(&node.params, &triq::merged(node.params.clone(), changes.clone())).is_some()
         }),
         Request::SetGroup { group, .. } => found.is_none_or(|node| node.group != *group),
         Request::Pause { .. } => found.is_some_and(|node| node.state == NodeState::Running),

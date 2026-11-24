@@ -6,7 +6,7 @@ pub use local::{Local, LocalFactory, LocalNode, LocalNodes};
 
 use crate::control::{Control, announcements};
 use crate::executor::Executor;
-use crate::inventory::{FactoryInfo, Group, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, changed, shown};
+use crate::inventory::{FactoryInfo, Group, InputInfo, Inventory, NodeInfo, NodeState, PoolInfo, merged, shown};
 use crate::message::now_ns;
 use crate::node::Slot;
 use crate::port::{Binder, InputPort, NodeGuard, OutputPort};
@@ -82,8 +82,9 @@ struct Record {
     group: String,
     placement: Option<Placement>,
     params: Value,
-    /// Held while the node is given new settings, so that it is given one set at a time.
-    settling: Arc<Mutex<()>>,
+    /// Held while the node is given new settings, so that it is given one set at a time. It is
+    /// also what tells this node from a later one of its name.
+    params_lock: Arc<Mutex<()>>,
     inputs: Vec<(PortSpec, Arc<dyn InputPort>)>,
     outputs: Vec<(PortSpec, Arc<dyn OutputPort>)>,
     /// `None` when the application runs the node itself.
@@ -306,10 +307,13 @@ impl Runtime {
     ///
     /// `changes` names the settings to change, any number of them: `{"gain": 2}` changes the
     /// gain and nothing else. Settings within settings are named the same way,
-    /// `{"limits": {"high": 9}}`. A list is taken whole, and a setting named as `null` goes
-    /// back to its default. The node is then given all of its settings, with the changes in
-    /// them, exactly as [`set_params`](Self::set_params) would give them: it checks them as it
-    /// always does, and if it refuses them nothing has changed.
+    /// `{"limits": {"high": 9}}`. A list is taken whole, and a setting named as `null` is left
+    /// out, so that it is its default again if it has one. The node is then given all of its
+    /// settings, with the changes in them, exactly as [`set_params`](Self::set_params) would
+    /// give them: it checks them as it always does, and if it refuses them nothing has changed.
+    ///
+    /// The changes are made to the settings as the runtime shows them. A node with a setting
+    /// that JSON cannot show, as a number that is not finite, cannot be changed this way.
     pub fn change_params(&self, node: &str, changes: Value) -> Result {
         self.inner.change_params(node, changes)
     }
@@ -447,7 +451,7 @@ impl Inner {
                 group: String::new(),
                 placement,
                 params,
-                settling: Arc::default(),
+                params_lock: Arc::default(),
                 inputs,
                 outputs,
                 hosted: None,
@@ -572,24 +576,27 @@ impl Inner {
     }
 
     pub(crate) fn set_params(&self, node: &str, params: Value) -> Result {
-        self.settle(node, |_| params)
+        self.give_params(node, |_| params)
     }
 
     pub(crate) fn change_params(&self, node: &str, changes: Value) -> Result {
-        self.settle(node, |params| changed(params, changes))
+        self.give_params(node, |params| merged(params, changes))
     }
 
     /// Give a node the settings that `new` makes of the ones it has.
-    fn settle(&self, node: &str, new: impl FnOnce(Value) -> Value) -> Result {
+    fn give_params(&self, node: &str, new: impl FnOnce(Value) -> Value) -> Result {
         let unknown = || Error::Unknown(format!("node {node:?} in runtime {:?}", self.name));
-        let settling = self.state.lock().unwrap().nodes.get(node).ok_or_else(unknown)?.settling.clone();
+        let lock = self.state.lock().unwrap().nodes.get(node).ok_or_else(unknown)?.params_lock.clone();
         // One set at a time for a node: a change worked out from its settings as they were
         // before another change, and made after it, would undo that other change. Each node
         // has a lock of its own, so that a node may change another's settings as it runs.
-        let _one = settling.lock().unwrap_or_else(PoisonError::into_inner);
+        let _held = lock.lock().unwrap_or_else(PoisonError::into_inner);
+        // The node may have gone while the lock was waited for, and another have its name: that
+        // one has a lock of its own, and is not this node.
+        let this = |record: &Record| Arc::ptr_eq(&record.params_lock, &lock);
         let (params, hosted, notify) = {
             let state = self.state.lock().unwrap();
-            let record = state.nodes.get(node).ok_or_else(unknown)?;
+            let record = state.nodes.get(node).filter(|record| this(record)).ok_or_else(unknown)?;
             (record.params.clone(), record.hosted.clone(), record.notify.clone())
         };
         let shown = match (&hosted, notify) {
@@ -599,7 +606,8 @@ impl Inner {
                 return Err(Error::Mismatch(format!("node {node:?} takes no parameters")));
             }
         };
-        if let Some(record) = self.state.lock().unwrap().nodes.get_mut(node) {
+        // Nor are the settings it took those of a node that has its name by now.
+        if let Some(record) = self.state.lock().unwrap().nodes.get_mut(node).filter(|record| this(record)) {
             record.params = shown;
         }
         // The node's trigger may have changed.

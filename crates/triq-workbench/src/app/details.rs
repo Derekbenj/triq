@@ -192,16 +192,21 @@ pub(super) fn node_details(
                 let said = changes.as_ref().map_or("No changes".to_owned(), |changes| format!("Changes: {changes}"));
                 let (runtime, node) = (home.runtime.clone(), node.name.clone());
                 ui.horizontal_wrapped(|ui| {
-                    let some = ui.add_enabled(changes.is_some(), egui::Button::new("Apply changes")).on_hover_text(
-                        "Ask for the settings that differ from the node's, and leave its others as they are.",
-                    );
+                    let some = ui
+                        .add_enabled(changes.is_some(), egui::Button::new("Apply changes"))
+                        .on_hover_text(
+                            "Ask for the settings that differ from the node's, and leave its others as they are.",
+                        )
+                        .on_disabled_hover_text("Nothing written here differs from what the node has.");
                     let all = ui.button("Replace all").on_hover_text(
                         "Ask for all of them as they are written here. One that is not written is its default again.",
                     );
                     if let Some(changes) = changes.filter(|_| some.clicked()) {
                         asking.ask(Request::ChangeParams { runtime, node, changes });
+                        settings.asked();
                     } else if all.clicked() {
                         asking.ask(Request::SetParams { runtime, node, params });
+                        settings.asked();
                     }
                 });
                 ui.weak(said);

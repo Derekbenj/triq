@@ -182,13 +182,14 @@ impl Remote {
     /// Change some of a node's settings, and leave the rest. See
     /// [`Runtime::change_params`](crate::Runtime::change_params).
     pub fn change_params(&self, node: &str, changes: Value) -> Result {
-        self.done(Request::ChangeParams { node: node.into(), changes }).map_err(too_old)
+        self.done(Request::ChangeParams { node: node.into(), changes }).map_err(|error| too_old(error, "ChangeParams"))
     }
 
     /// Put a node in a group, or with an empty name in none. See
     /// [`Runtime::set_group`](crate::Runtime::set_group).
     pub fn set_group(&self, node: &str, group: &str) -> Result {
-        self.done(Request::SetGroup { node: node.into(), group: group.into() }).map_err(too_old)
+        self.done(Request::SetGroup { node: node.into(), group: group.into() })
+            .map_err(|error| too_old(error, "SetGroup"))
     }
 
     pub fn pause(&self, node: &str) -> Result {
@@ -214,11 +215,13 @@ impl Remote {
 }
 
 /// A runtime that was built with an earlier triq cannot read a request that
-/// came later, and says so in the words of the JSON reader. This says what
-/// that means.
-fn too_old(error: Error) -> Error {
+/// came later, and says so in the words of the JSON reader, by the request's
+/// name. This says what that means. A node that does not know a value of one
+/// of its settings says so in the same words, by the value: that is its own
+/// refusal, and is passed on as it is.
+fn too_old(error: Error, request: &str) -> Error {
     match error {
-        Error::Other(reason) if reason.starts_with("unknown variant") => {
+        Error::Other(reason) if reason.starts_with(&format!("unknown variant `{request}`")) => {
             Error::Mismatch("the runtime was built with an earlier triq, which does not know this request".into())
         }
         other => other,
@@ -260,8 +263,11 @@ mod tests {
     fn a_request_that_an_earlier_triq_does_not_know_is_refused_in_plain_words() {
         // What a runtime answers that was built before the request existed.
         let unread = serde_json::from_str::<Request>(r#"{"FromLater":{"node":"x"}}"#).map_err(Error::from).unwrap_err();
-        assert!(matches!(too_old(unread), Error::Mismatch(reason) if reason.contains("earlier triq")));
-        // Any other refusal is passed on as it is.
-        assert_eq!(too_old(Error::Unknown("node".into())), Error::Unknown("node".into()));
+        assert!(matches!(too_old(unread, "FromLater"), Error::Mismatch(reason) if reason.contains("earlier triq")));
+        // Any other refusal is passed on as it is: also a node's, of a value it does not know,
+        // which the JSON reader words the same way.
+        assert_eq!(too_old(Error::Unknown("node".into()), "FromLater"), Error::Unknown("node".into()));
+        let unknown_value = Error::Other("unknown variant `turbo`, expected `slow` or `fast`".into());
+        assert_eq!(too_old(unknown_value.clone(), "FromLater"), unknown_value);
     }
 }

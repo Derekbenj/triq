@@ -40,19 +40,6 @@ fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// `changes` without those that put a setting back to its default; None if nothing is left.
-fn without_resets(changes: Value) -> Option<Value> {
-    match changes {
-        Value::Null => None,
-        Value::Object(named) => {
-            let kept = named.into_iter().filter_map(|(name, change)| Some((name, without_resets(change)?)));
-            let kept: Map<String, Value> = kept.collect();
-            (!kept.is_empty()).then_some(Value::Object(kept))
-        }
-        other => Some(other),
-    }
-}
-
 /// Settings as text for a person to read and edit.
 pub(crate) fn pretty(settings: &Value) -> String {
     serde_json::to_string_pretty(settings).unwrap_or_default()
@@ -61,9 +48,14 @@ pub(crate) fn pretty(settings: &Value) -> String {
 /// A node's settings as the user is editing them.
 #[derive(Debug)]
 pub struct Editing {
-    /// The settings the node had on the machine when the text was last made from them: what a
-    /// change is a change from. Null for a node that is not on the machine yet.
+    /// The settings the node had on the machine when the text was made from them: what a change
+    /// is a change from. Null for a node that is not on the machine yet.
     had: Value,
+    /// What was drawn for it then: the same, unless a draft changes its settings.
+    drawn: Value,
+    /// The text as it was made, or as it was when it was last asked for. Any other text has
+    /// edits that have not been asked for.
+    asked: String,
     pub text: String,
 }
 
@@ -71,7 +63,8 @@ impl Editing {
     /// For a node that `has` these settings on the machine, or null if it is not there yet, and
     /// is `drawn` with these: the same, unless a draft changes them.
     pub fn new(has: Value, drawn: &Value) -> Self {
-        Self { had: has, text: pretty(drawn) }
+        let text = pretty(drawn);
+        Self { had: has, drawn: drawn.clone(), asked: text.clone(), text }
     }
 
     /// What the text says, if it is JSON.
@@ -85,24 +78,26 @@ impl Editing {
         differences(&self.had, typed)
     }
 
+    /// The text as it stands was asked for: no edit of it is left that was not.
+    pub fn asked(&mut self) {
+        self.asked.clone_from(&self.text);
+    }
+
     /// Keep up with the node, which now `has` these settings on the machine and is `drawn` with
-    /// these. Once its settings have changed, by what was asked here or by anything else, the
-    /// text is made again from them, with what was typed and is still to ask for in it. A
-    /// setting that was put back to its default is not kept so: only the node knows its
-    /// default, and what it shows for the setting now is written.
+    /// these.
     ///
-    /// While they have not changed the text is left alone: what was asked may not be answered
-    /// yet, or was refused, and is there to mend and ask again.
+    /// Text with edits that were not asked for is being typed in, and is left exactly as it is,
+    /// whatever the node does: text made again under a caret would put the next key in the wrong
+    /// place. What it asks for is still only what differs from the settings it was made from, so
+    /// a setting that something else changed meanwhile is not put back, though the text still
+    /// shows it as it was.
+    ///
+    /// Text without such edits is made again from the node once the node's settings, or what a
+    /// draft makes of them, are no longer what it was made from. So what was asked for stays
+    /// until the node has answered: if the node refused it, it is there to mend and ask again.
     pub fn follow(&mut self, has: &Value, drawn: &Value) {
-        if *has == self.had {
-            return;
+        if self.text == self.asked && (*has != self.had || *drawn != self.drawn) {
+            *self = Self::new(has.clone(), drawn);
         }
-        // Text that is not JSON is being typed. It waits until it can be read.
-        let Ok(typed) = self.typed() else { return };
-        let unsent = self.changes(&typed).and_then(without_resets);
-        self.had = has.clone();
-        let wanted = unsent.map_or_else(|| drawn.clone(), |unsent| triq::changed(drawn.clone(), unsent));
-        // If the node has all of it now, nothing is left to ask, and the text is the node's own.
-        self.text = pretty(if self.changes(&wanted).is_some() { &wanted } else { drawn });
     }
 }

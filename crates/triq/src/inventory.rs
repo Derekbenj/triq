@@ -9,14 +9,16 @@ pub(crate) fn shown<A: Serialize>(params: &A) -> Result<Value> {
     Ok(serde_json::from_str(&serde_json::to_string(params)?)?)
 }
 
-/// Settings with changes made to them, as [`Runtime::change_params`](crate::Runtime::change_params)
-/// makes them: for a tool that shows what a change would do before it asks for it.
+/// Settings with changes merged into them, as [`Runtime::change_params`](crate::Runtime::change_params)
+/// merges them: for a tool that shows what a change would do before it asks for it.
 ///
 /// The settings that `changes` names take the value they are named with, and the rest stay.
 /// Settings within settings are changed the same way, one by one. A list is taken whole. A
-/// setting named as `null` is taken out, so that the node reads its default for it. Changes
-/// that are not named settings are all of the settings. (This is JSON Merge Patch, RFC 7386.)
-pub fn changed(params: Value, changes: Value) -> Value {
+/// setting named as `null` is taken out, so that the node reads its default for it; so no
+/// setting can be given the value `null` this way. `changes` that are not an object of named
+/// settings, as a number or a list is not, take the place of all the settings. (This is JSON
+/// Merge Patch, RFC 7386.)
+pub fn merged(params: Value, changes: Value) -> Value {
     let Value::Object(changes) = changes else { return changes };
     let mut params = match params {
         Value::Object(params) => params,
@@ -25,7 +27,7 @@ pub fn changed(params: Value, changes: Value) -> Value {
     for (name, change) in changes {
         let had = params.remove(&name).unwrap_or_default();
         if !change.is_null() {
-            params.insert(name, changed(had, change));
+            params.insert(name, merged(had, change));
         }
     }
     Value::Object(params)
