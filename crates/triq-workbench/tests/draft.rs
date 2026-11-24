@@ -118,6 +118,33 @@ fn a_draft_holds_what_it_takes_to_get_from_the_machine_to_the_drawing_and_no_mor
 }
 
 #[test]
+fn a_change_of_some_settings_is_drawn_with_the_others_as_they_are() -> triq::Result {
+    // A node with two settings, of which a draft changes one: it is drawn with the other as
+    // the machine has it, and the change is no longer needed once the machine has that one.
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    let mut real = scene.inventories();
+    let has = |real: &mut [Inventory], settings: serde_json::Value| {
+        let home = real.iter_mut().find(|inventory| inventory.runtime == robot).unwrap();
+        home.nodes.iter_mut().find(|node| node.name == "smoother").unwrap().params = settings;
+    };
+    has(&mut real, json!({ "alpha": 0.5, "beta": 2 }));
+    let mut draft = Draft::default();
+    let change =
+        Request::ChangeParams { runtime: robot.clone(), node: "smoother".to_owned(), changes: json!({ "alpha": 0.9 }) };
+    draft.record(change.clone(), &real);
+    let drawn = draft.over(&real);
+    assert_eq!(node(&drawn, &robot, "smoother").unwrap().params, json!({ "alpha": 0.9, "beta": 2 }));
+    // Something else changes the other setting: the change is still to make, and leaves it be.
+    has(&mut real, json!({ "alpha": 0.5, "beta": 7 }));
+    assert_eq!(draft.changes(&real), [change]);
+    assert_eq!(node(&draft.over(&real), &robot, "smoother").unwrap().params, json!({ "alpha": 0.9, "beta": 7 }));
+    has(&mut real, json!({ "alpha": 0.9, "beta": 7 }));
+    assert_eq!(draft.changes(&real), []);
+    Ok(())
+}
+
+#[test]
 fn the_machine_is_shown_as_it_would_be_with_the_changes_made() -> triq::Result {
     let scene = Scene::new()?;
     let (robot, desk) = (scene.robot.name().to_owned(), scene.desk.name().to_owned());

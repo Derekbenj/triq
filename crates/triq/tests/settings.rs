@@ -29,6 +29,16 @@ struct ScaleParams {
     limits: Limits,
     /// A number that the text of it must be read exactly to give back.
     fine: f64,
+    pace: Pace,
+}
+
+/// A setting that is one of a few names.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Pace {
+    #[default]
+    Slow,
+    Fast,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,7 +59,7 @@ const FINE: f64 = 1.0676952664346183e-6;
 
 impl Default for ScaleParams {
     fn default() -> Self {
-        Self { factor: 1, offset: 0, steps: vec![1, 2, 3], limits: Limits::default(), fine: FINE }
+        Self { factor: 1, offset: 0, steps: vec![1, 2, 3], limits: Limits::default(), fine: FINE, pace: Pace::Slow }
     }
 }
 
@@ -152,14 +162,14 @@ fn a_tool_works_out_what_a_change_would_make_of_settings_before_it_asks() {
     let has = json!({ "factor": 2, "steps": [1, 2], "limits": { "low": 3, "high": 40 } });
     let changes = json!({ "factor": 5, "steps": [9], "limits": { "high": null, "middle": 7 }, "new": true });
     assert_eq!(
-        triq::changed(has.clone(), changes),
+        triq::merged(has.clone(), changes),
         json!({ "factor": 5, "steps": [9], "limits": { "low": 3, "middle": 7 }, "new": true })
     );
-    assert_eq!(triq::changed(has.clone(), json!({})), has, "no change named, none made");
+    assert_eq!(triq::merged(has.clone(), json!({})), has, "no change named, none made");
     // Settings that are not named ones, or a change that is not, have nothing to name: the change is all of them.
-    assert_eq!(triq::changed(json!(4), json!(7)), json!(7));
-    assert_eq!(triq::changed(has, json!([1])), json!([1]));
-    assert_eq!(triq::changed(json!(4), json!({ "factor": 5, "gone": null })), json!({ "factor": 5 }));
+    assert_eq!(triq::merged(json!(4), json!(7)), json!(7));
+    assert_eq!(triq::merged(has, json!([1])), json!([1]));
+    assert_eq!(triq::merged(json!(4), json!({ "factor": 5, "gone": null })), json!({ "factor": 5 }));
 }
 
 #[test]
@@ -354,5 +364,111 @@ fn another_program_changes_some_of_a_nodes_settings() -> triq::Result {
     assert_eq!(remote.inventory()?.nodes.iter().find(|node| node.name == "scale").unwrap().params["offset"], 1);
     assert!(remote.change_params("scale", json!({ "factor": "three" })).is_err());
     assert!(matches!(remote.change_params("nobody", json!({})), Err(Error::Unknown(_))));
+    Ok(())
+}
+
+#[test]
+fn a_name_the_node_does_not_know_is_refused_in_the_nodes_own_words_from_another_program_too() -> triq::Result {
+    // A runtime built with an earlier triq does not know the request itself, and the caller is
+    // told so. A node that does not know a setting's value says so in much the same words: that
+    // is the node's refusal, and must reach the caller as it is.
+    let (rt, _bench) = scale("pace", json!({}))?;
+    let remote = Remote::open(rt.name())?;
+    remote.change_params("scale", json!({ "pace": "fast" }))?;
+    assert_eq!(shown(&rt)["pace"], "fast");
+    for refused in [
+        rt.change_params("scale", json!({ "pace": "turbo" })),
+        remote.change_params("scale", json!({ "pace": "turbo" })),
+    ] {
+        let said = refused.expect_err("no such pace").to_string();
+        assert!(said.contains("turbo") && !said.contains("earlier triq"), "{said}");
+    }
+    assert_eq!(shown(&rt)["pace"], "fast");
+    Ok(())
+}
+
+#[derive(Ports)]
+struct Hears {
+    #[allow(dead_code, reason = "a node needs a port; nothing is sent to this one")]
+    input: Input<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Three {
+    a: u64,
+    b: u64,
+    c: u64,
+}
+
+/// What a test holds a node's `set_params` at: the node says it is there, and waits to be let on.
+struct Gate {
+    there: std::sync::mpsc::Sender<()>,
+    on: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+/// A node that takes any settings: at once, or, with a gate, when the test lets it. Told an `a`
+/// of 13, it panics.
+struct Takes(Option<Gate>);
+
+impl Node for Takes {
+    type Ports = Hears;
+    type Params = Three;
+    fn new(_: Three) -> triq::Result<Self> {
+        Ok(Self(None))
+    }
+    fn set_params(&mut self, params: Three) -> triq::Result {
+        assert_ne!(params.a, 13, "thirteen");
+        if let Some(gate) = &self.0 {
+            gate.there.send(()).expect("the test is waiting");
+            gate.on.lock().unwrap().recv().expect("the test lets it on");
+        }
+        Ok(())
+    }
+    fn run(&mut self, _: &mut Hears) -> triq::Result {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_change_to_a_node_that_is_gone_is_not_made_to_the_node_that_has_its_name_now() -> triq::Result {
+    // A node is being given settings, and takes its time. Meanwhile it is removed, and another
+    // is made with its name and settings of its own. What the first was given is not the
+    // second's: not shown as its settings, and not what its next change is worked out from.
+    let rt = std::sync::Arc::new(Runtime::new(&unique("renamed"))?);
+    let (there, arrived) = std::sync::mpsc::channel();
+    let (let_on, on) = std::sync::mpsc::channel();
+    // The first node made has the gate, and those after it none.
+    let gate = std::sync::Mutex::new(Some(Gate { there, on: std::sync::Mutex::new(on) }));
+    rt.register_with::<Takes>("takes", move |_, _| Ok(Takes(gate.lock().unwrap().take())))?;
+    rt.spawn_kind("takes", "node", Placement::Dedicated, json!({ "a": 1, "b": 1, "c": 1 }))?;
+    let has = |rt: &Runtime| rt.inventory().nodes.into_iter().find(|node| node.name == "node").unwrap().params;
+
+    let changing = {
+        let rt = rt.clone();
+        std::thread::spawn(move || rt.change_params("node", json!({ "a": 5 })))
+    };
+    arrived.recv_timeout(std::time::Duration::from_secs(5)).expect("the first node is being given its settings");
+    rt.remove("node")?;
+    rt.spawn_kind("takes", "node", Placement::Dedicated, json!({ "a": 0, "b": 9, "c": 0 }))?;
+    let_on.send(()).expect("the first node is waiting");
+    let _ = changing.join().expect("the change ends");
+
+    assert_eq!(has(&rt), json!({ "a": 0, "b": 9, "c": 0 }), "the second node's own settings");
+    rt.change_params("node", json!({ "c": 7 }))?;
+    assert_eq!(has(&rt), json!({ "a": 0, "b": 9, "c": 7 }));
+    Ok(())
+}
+
+#[test]
+fn a_node_that_panics_at_its_settings_can_be_given_others_after() -> triq::Result {
+    let rt = Runtime::new(&unique("panics"))?;
+    rt.register::<Takes>("takes")?;
+    rt.spawn_kind("takes", "node", Placement::Dedicated, json!({ "a": 1 }))?;
+    let panicked =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| rt.change_params("node", json!({ "a": 13 }))));
+    assert!(panicked.is_err(), "the panic reaches whoever asked");
+    rt.change_params("node", json!({ "a": 2, "b": 4 }))?;
+    assert_eq!(rt.inventory().nodes[0].params, json!({ "a": 2, "b": 4, "c": 0 }));
     Ok(())
 }

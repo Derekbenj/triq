@@ -71,7 +71,7 @@ fn the_differences_made_to_what_a_node_has_give_what_was_wanted() {
         has(),
     ];
     for wanted in typed {
-        let made = differences(&has(), &wanted).map_or(has(), |changes| triq::changed(has(), changes));
+        let made = differences(&has(), &wanted).map_or(has(), |changes| triq::merged(has(), changes));
         assert_eq!(made, wanted);
     }
 }
@@ -95,69 +95,77 @@ fn what_is_typed_and_differs_from_what_the_node_had_is_what_is_asked_for() {
 }
 
 #[test]
-fn a_setting_that_changed_on_the_node_meanwhile_is_not_among_the_changes() {
-    // The text was made when the factor was 2. Something else has since made it 8, and the
-    // text, which still says 2, was not touched there: asking for 2 would undo that change.
+fn text_that_is_being_typed_in_is_never_rewritten_and_only_what_was_typed_is_asked_for() {
+    // The text was made when the factor was 2, and the level is being typed. Something else
+    // then changes the node, again and again. The text is left exactly as it is, to the
+    // character: text rewritten under a caret puts the next key in the wrong place. It still
+    // says 2 for the factor, which nobody typed, and 2 is not among the changes: asking for it
+    // would undo what the something else did.
     let mut editing = Editing::new(has(), &has());
-    editing.text = editing.text.replace("0.5", "0.75");
-    let mut now = has();
-    now["factor"] = json!(8);
-    editing.follow(&now, &now);
-    // The text has the node's new factor, and still what was typed and not yet sent.
-    let typed = editing.typed().unwrap();
-    assert_eq!((&typed["factor"], &typed["level"]), (&json!(8), &json!(0.75)));
-    assert_eq!(editing.changes(&typed), Some(json!({ "level": 0.75 })));
+    editing.text = editing.text.replace("0.5", "0.7");
+    let typed = editing.text.clone();
+    for factor in 3..13 {
+        let mut now = has();
+        now["factor"] = json!(factor);
+        editing.follow(&now, &now);
+        assert_eq!(editing.text, typed);
+        assert_eq!(editing.changes(&editing.typed().unwrap()), Some(json!({ "level": 0.7 })));
+    }
+    // So is a setting that was taken out of the text and not yet asked for, and text that is
+    // not JSON at this moment.
+    let mut without = has();
+    without.as_object_mut().unwrap().remove("name");
+    for text in [written(&without), "{ \"level\": ".to_owned()] {
+        let mut editing = Editing::new(has(), &has());
+        editing.text.clone_from(&text);
+        let mut now = has();
+        now["factor"] = json!(8);
+        editing.follow(&now, &now);
+        assert_eq!(editing.text, text);
+    }
 }
 
 #[test]
-fn once_the_node_has_what_was_typed_the_text_is_the_nodes_own_and_nothing_is_left_to_ask() {
+fn once_it_is_asked_for_and_the_node_has_answered_the_text_is_the_nodes_own() {
     let mut editing = Editing::new(has(), &has());
-    // Typed as a whole number, where the node will show a fraction.
-    editing.text = editing.text.replace("0.5", "1");
-    assert_eq!(editing.changes(&editing.typed().unwrap()), Some(json!({ "level": 1 })));
-    let mut now = has();
-    now["level"] = json!(1.0);
-    editing.follow(&now, &now);
-    assert_eq!(editing.text, written(&now));
-    assert_eq!(editing.changes(&editing.typed().unwrap()), None);
-}
-
-#[test]
-fn a_setting_put_back_to_its_default_is_written_as_the_node_then_shows_it() {
-    // The factor is no longer written: the node is asked for its default, which only it knows.
-    let mut editing = Editing::new(has(), &has());
+    // Typed as a whole number, where the node will show a fraction; and the factor taken out,
+    // which asks the node for its default, 1, that only it knows.
     let mut typed = has();
+    typed["level"] = json!(1);
     typed.as_object_mut().unwrap().remove("factor");
-    typed["limits"].as_object_mut().unwrap().remove("low");
     editing.text = written(&typed);
-    assert_eq!(editing.changes(&typed), Some(json!({ "factor": null, "limits": { "low": null } })));
-    // What the node shows once it has changed is what it made of that, and nothing is left to ask.
+    assert_eq!(editing.changes(&typed), Some(json!({ "level": 1, "factor": null })));
+    editing.asked();
+    // Until the node answers, nothing moves: the text is what was asked for.
+    editing.follow(&has(), &has());
+    assert_eq!(editing.text, written(&typed));
+    // It answers. The text is made again from what it shows, and nothing is left to ask.
     let mut now = has();
-    now["factor"] = json!(1);
-    now["limits"]["low"] = json!(0);
+    (now["level"], now["factor"]) = (json!(1.0), json!(1));
     editing.follow(&now, &now);
     assert_eq!((editing.text.clone(), editing.changes(&editing.typed().unwrap())), (written(&now), None));
 }
 
 #[test]
-fn while_the_node_has_not_changed_the_text_is_left_alone() {
-    // Asked and refused, or not yet answered: what was typed stays, to be mended and asked again.
+fn what_was_asked_for_and_refused_stays_to_be_mended_and_asked_again() {
     let mut editing = Editing::new(has(), &has());
-    editing.text = editing.text.replace("0.5", "\"half\"");
-    let typed = editing.text.clone();
+    editing.text = editing.text.replace("0.5", "\"half\"").replace("\"a\"", "\"b\"");
+    editing.asked();
+    // The node refuses all of it, so its settings are what they were, and the text stays.
     editing.follow(&has(), &has());
-    assert_eq!(editing.text, typed);
+    assert!(editing.text.contains("\"half\""));
+    // Mended, it asks again for both settings: the one that was wrong and the one that was not.
+    editing.text = editing.text.replace("\"half\"", "0.25");
+    assert_eq!(editing.changes(&editing.typed().unwrap()), Some(json!({ "level": 0.25, "name": "b" })));
+}
 
-    // Text that is not JSON is being typed: it waits, and keeps up once it can be read.
+#[test]
+fn text_that_nobody_has_typed_in_keeps_up_with_the_node() {
+    let mut editing = Editing::new(has(), &has());
     let mut now = has();
     now["factor"] = json!(8);
-    editing.text = "{ \"level\": ".to_owned();
     editing.follow(&now, &now);
-    assert_eq!(editing.text, "{ \"level\": ");
-    editing.text = written(&has()).replace("0.5", "0.75");
-    editing.follow(&now, &now);
-    let typed = editing.typed().unwrap();
-    assert_eq!((&typed["factor"], &typed["level"]), (&json!(8), &json!(0.75)));
+    assert_eq!((editing.text.clone(), editing.changes(&editing.typed().unwrap())), (written(&now), None));
 }
 
 #[test]
@@ -170,13 +178,31 @@ fn while_drafting_the_changes_are_from_what_the_node_has_on_the_machine() {
     let mut editing = Editing::new(has(), &drawn);
     assert_eq!(editing.text, written(&drawn));
     editing.text = editing.text.replace("\"a\"", "\"b\"");
-    assert_eq!(editing.changes(&editing.typed().unwrap()), Some(json!({ "level": 0.75, "name": "b" })));
+    let both = json!({ "level": 0.75, "name": "b" });
+    assert_eq!(editing.changes(&editing.typed().unwrap()), Some(both.clone()));
+
+    // It is drafted: the drawing has both, the machine neither, and the changes are still both.
+    editing.asked();
+    let mut drafted = drawn.clone();
+    drafted["name"] = json!("b");
+    editing.follow(&has(), &drafted);
+    assert_eq!((editing.text.clone(), editing.changes(&editing.typed().unwrap())), (written(&drafted), Some(both)));
 
     // The draft is applied: the machine has both, and nothing is left to ask.
-    let mut now = drawn.clone();
-    now["name"] = json!("b");
-    editing.follow(&now, &now);
-    assert_eq!((editing.text.clone(), editing.changes(&editing.typed().unwrap())), (written(&now), None));
+    let mut applied = editing_after(&has(), &drafted);
+    applied.follow(&drafted, &drafted);
+    assert_eq!((applied.text.clone(), applied.changes(&applied.typed().unwrap())), (written(&drafted), None));
+
+    // Or the draft is thrown away: the text goes back to the machine's, and asks for nothing
+    // of what was drafted.
+    let mut discarded = editing_after(&has(), &drafted);
+    discarded.follow(&has(), &has());
+    assert_eq!((discarded.text.clone(), discarded.changes(&discarded.typed().unwrap())), (written(&has()), None));
+}
+
+/// The details of a node that has `has` on the machine and is drawn with `drawn`, untouched.
+fn editing_after(has: &Value, drawn: &Value) -> Editing {
+    Editing::new(has.clone(), drawn)
 }
 
 #[test]

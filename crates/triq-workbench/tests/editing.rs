@@ -4,7 +4,7 @@
 mod scene;
 #[path = "support/window.rs"]
 mod window;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use scene::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -90,6 +90,7 @@ fn the_details_ask_for_the_settings_that_were_changed_or_for_all_of_them() -> tr
     harness.get_all_by_label("tuner").next().expect("the node, among the runtimes").click();
     assert!(until(&mut harness, |harness| shows(harness, "Apply changes")), "its details are shown");
     assert!(shows(&harness, "Replace all") && shows(&harness, "No changes"));
+    assert!(harness.get_by_label("Apply changes").accesskit_node().is_disabled(), "with nothing to ask for");
     assert_eq!(written(&harness), json!({ "gain": 2.0, "offset": 3.0 }));
 
     // Something else changes one of its settings: what is written keeps up.
@@ -107,12 +108,17 @@ fn the_details_ask_for_the_settings_that_were_changed_or_for_all_of_them() -> tr
         Err(reason) => eprintln!("no picture: {reason}"),
     }
     press(&mut harness, "Apply changes");
-    let change =
-        Request::ChangeParams { runtime: robot.clone(), node: "tuner".into(), changes: json!({ "gain": 5.0 }) };
-    assert_eq!(harness.state().drafted(), [change]);
+    let change = |changes: Value| Request::ChangeParams { runtime: robot.clone(), node: "tuner".into(), changes };
+    assert_eq!(harness.state().drafted(), [change(json!({ "gain": 5.0 }))]);
     assert_eq!(has(), json!({ "gain": 2.0, "offset": 9.0 }), "nothing is asked while it is drafted");
+    // The offset is typed too. The draft holds one change of this node's settings, and it is
+    // both: what is asked for is counted from what the machine has, not from what is drawn.
+    assert!(until(&mut harness, |harness| written(harness) == json!({ "gain": 5.0, "offset": 9.0 })));
+    write(&mut harness, &json!({ "gain": 5.0, "offset": 4.0 }));
+    press(&mut harness, "Apply changes");
+    assert_eq!(harness.state().drafted(), [change(json!({ "gain": 5.0, "offset": 4.0 }))]);
     press(&mut harness, "Apply draft");
-    assert!(wait_for(|| has() == json!({ "gain": 5.0, "offset": 9.0 })), "{}", has());
+    assert!(wait_for(|| has() == json!({ "gain": 5.0, "offset": 4.0 })), "{}", has());
     assert!(until(&mut harness, |harness| shows(harness, "No changes")), "the node has it: nothing is left to ask");
 
     // "Replace all" asks for what is written and nothing else: a setting that is not written is its default.
