@@ -60,10 +60,17 @@ pub enum Request {
         from: String,
         to: String,
     },
+    /// Give a node these settings in place of all it has: one that is left out is its default.
     SetParams {
         runtime: String,
         node: String,
         params: Value,
+    },
+    /// Change the settings of a node that are named, and leave its others as they are.
+    ChangeParams {
+        runtime: String,
+        node: String,
+        changes: Value,
     },
     /// Put a node in a group, as `outer/inner` for one inside another; or, with an empty name, in none.
     SetGroup {
@@ -280,6 +287,9 @@ impl Request {
             Self::Connect { from, to } => triq::connect(from, to),
             Self::Disconnect { from, to } => triq::disconnect(from, to),
             Self::SetParams { runtime, node, params } => Remote::open(runtime)?.set_params(node, params.clone()),
+            Self::ChangeParams { runtime, node, changes } => {
+                Remote::open(runtime)?.change_params(node, changes.clone())
+            }
             Self::SetGroup { runtime, node, group } => Remote::open(runtime)?.set_group(node, group),
             Self::Pause { runtime, node } => Remote::open(runtime)?.pause(node),
             Self::Resume { runtime, node } => Remote::open(runtime)?.resume(node),
@@ -294,7 +304,10 @@ impl fmt::Display for Request {
             Self::Remove { runtime, node } => write!(f, "remove {runtime}/{node}"),
             Self::Connect { from, to } => write!(f, "connect {from} to {to}"),
             Self::Disconnect { from, to } => write!(f, "disconnect {from} from {to}"),
-            Self::SetParams { runtime, node, .. } => write!(f, "change the settings of {runtime}/{node}"),
+            Self::SetParams { runtime, node, .. } => write!(f, "replace the settings of {runtime}/{node}"),
+            Self::ChangeParams { runtime, node, changes } => {
+                write!(f, "change {changes} in the settings of {runtime}/{node}")
+            }
             Self::SetGroup { runtime, node, group } if group.is_empty() => {
                 write!(f, "take {runtime}/{node} out of its group")
             }

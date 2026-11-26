@@ -31,6 +31,7 @@ use crate::colors::Colors;
 use crate::draft::{Draft, Mark, Marks};
 use crate::feed::{Feed, Request};
 use crate::graph::{self, Card, Groups, Kind, Place, Places};
+use crate::settings::Editing;
 use cards::Viewer;
 use details::{Filled, Form};
 use eframe::egui::color_picker::{Alpha, color_edit_button_srgba};
@@ -140,7 +141,7 @@ enum Focus {
     /// A node, by `runtime/node`, with its settings as the user is editing them.
     Node {
         key: String,
-        settings: String,
+        settings: Editing,
     },
     /// A group, by where it is among the groups, as `outer/inner`, with
     /// what it is called there as the user is editing it.
@@ -153,8 +154,11 @@ enum Focus {
 }
 
 impl Focus {
-    fn node(key: String, params: &Value) -> Self {
-        Self::Node { key, settings: details::pretty(params) }
+    /// Turn to a node, which is drawn with the settings `drawn`. `real` is what the runtimes
+    /// report: what the node has there is what a change to its settings is a change from.
+    fn node(key: String, real: &[Inventory], drawn: &Value) -> Self {
+        let has = node(real, &key).map_or(Value::Null, |(_, node)| node.params.clone());
+        Self::Node { key, settings: Editing::new(has, drawn) }
     }
 
     /// Turn to a group. If the details are about it already, they stay as
@@ -558,7 +562,7 @@ impl Contents {
                     let key = format!("{}/{}", inventory.runtime, node.name);
                     let focused = matches!(&self.focus, Focus::Node { key: focus, .. } if *focus == key);
                     if ui.selectable_label(focused, &node.name).clicked() {
-                        (self.focus, self.reveal) = (Focus::node(key, &node.params), true);
+                        (self.focus, self.reveal) = (Focus::node(key, &self.real, &node.params), true);
                     }
                 }
                 ui.separator();
@@ -595,6 +599,7 @@ impl Contents {
                     );
                     ui.weak("Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.");
                     ui.weak("Pause a node with the button on its card. Its details have the rest.");
+                    ui.weak("Click a group to pause, start again or remove all of its nodes together.");
                     ui.weak(
                         "A node that is clicked keeps its colour, with all that feeds it and all that it feeds. The rest goes grey.",
                     );
@@ -619,9 +624,13 @@ impl Contents {
                     }
                 }
                 Focus::Group { name, renamed } => {
-                    let nodes: Vec<_> = grouping.iter().filter(|(_, of)| graph::within(of, name)).collect();
-                    let (mark, shown) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
-                    turn_to = details::group_details(ui, name, renamed, &nodes, mark, shown, wish);
+                    let told = details::Told {
+                        path: name,
+                        nodes: grouping.iter().filter(|(_, of)| graph::within(of, name)).collect(),
+                        mark: marks.card(&graph::group_key(name)),
+                        shown: inside.as_deref() == Some(name.as_str()),
+                    };
+                    turn_to = details::group_details(ui, &mut asking, &inventories, &told, renamed, wish);
                 }
                 Focus::Form(form) => match form.show(ui, &mut asking, &inventories) {
                     Filled::Open => {}
@@ -634,7 +643,7 @@ impl Contents {
             }
         });
         if let Some((key, (_, node))) = turn_to.and_then(|key| Some((key.clone(), node(&inventories, &key)?))) {
-            *focus = Focus::node(key, &node.params);
+            *focus = Focus::node(key, real, &node.params);
         }
         // What is created is where the graph is looking: in the group whose inside it shows. A
         // group that its runtime offers as a kind is a group already, and is put there as one.

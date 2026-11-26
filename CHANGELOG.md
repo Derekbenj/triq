@@ -2,6 +2,28 @@
 
 ## Not yet released
 
+- **Some of a node's settings can be changed, and the rest left.** `Runtime::change_params` and
+  `Remote::change_params` take the settings to change, by name, and `triq change <runtime/node>
+  <json>` does the same from a terminal. `set_params` and `triq set` go on replacing all of
+  them, so that a setting left out is its default again. A runtime built with 0.2.0 does not
+  know the new request, and says so.
+- **The workbench changes the settings that were edited, and leaves the rest.** `Apply changes`
+  in a node's details asks for what was typed that differs from what the node had, and says
+  which settings those are; `Replace all` asks for all of them as written, as `Apply` did.
+  Text that nobody is typing in now keeps up with the node. `triq::merged` is what a change
+  makes of settings, for a tool that shows it before asking.
+- **A number in a node's settings reads back as exactly the number it is**, for an `f64` and a
+  whole number of up to 64 bits. Settings are shown as text; read back from it, a few numbers
+  came back one step of rounding away, so that settings sent back as they were shown were not
+  always the same settings. This turns on `serde_json`'s `float_roundtrip`, and Cargo turns a
+  feature on for every crate of a project that has triq in it: their own JSON is read exactly
+  too, a little more slowly.
+- **A node's own refusal is no longer taken for an old runtime's.** A value a node did not know
+  for a setting that is one of a few names came back from another program as "the runtime was
+  built with an earlier triq". It comes back as the node's words.
+- **The workbench pauses, starts again and removes a whole group.** The details of a group have
+  `Pause all`, `Resume all` and `Remove all`, which ask every node in it, those of the groups
+  inside it too, and its list of nodes says which of them do not run.
 - **A pool whose threads never sleep.** `Runtime::builder("robot").polling_pool("fast", 1)` is a
   third kind of pool. A node placed in it keeps one of its threads, as in `pool`, and that thread
   looks for work again and again in place of sleeping until some comes: a message to the node

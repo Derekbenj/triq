@@ -142,7 +142,7 @@ Optional parts of `Node`:
 | --- | --- |
 | `trigger()` | `Trigger::Input` (default), `Every(period)`, or `InputOrEvery(period)`; `.and_every(period)` after any of them adds a period |
 | `tick()` | called when a period elapsed, with the number of that period; does what `run` does unless overridden |
-| `set_params()` | accept new settings while running |
+| `set_params()` | accept new settings while running: always all of them, whether a tool sent all or only some |
 
 `run` is called because data arrived, not once for every message: several may
 be waiting. Take them all with `while let Some(sample) = ports.raw.recv()?`,
@@ -325,6 +325,7 @@ for inventory in triq::discover()? { /* runtimes, pools, factories, nodes, ports
 let robot = triq::Remote::open("robot")?;
 robot.spawn("filter", "filter_2", Placement::pool("dsp"), json!({ "alpha": 0.5 }))?;
 triq::connect("robot/imu/pose", "robot/filter_2/raw")?;
+robot.change_params("filter_2", json!({ "alpha": 0.1 }))?;   // this setting, and no other
 
 let watch = triq::Watch::new()?;       // hears any runtime start, stop or change
 watch.wait(Duration::from_secs(1))?;   // then call discover() again
@@ -332,7 +333,30 @@ watch.wait(Duration::from_secs(1))?;   // then call discover() again
 
 The program that asks owns nothing. Each request is carried out by the runtime
 that owns the node, and a refusal comes back as the same error it would raise
-locally. Opening a runtime costs many times as much as asking it something, so
+locally.
+
+A node's settings are changed in two ways, and `Runtime` has the same two:
+
+| Call | Command | What the node's settings become |
+| --- | --- | --- |
+| `change_params` | `triq change` | what they were, with the settings named changed |
+| `set_params` | `triq set` | what is sent, and its default for every setting left out |
+
+`change_params` names any number of settings, `{"alpha": 0.1, "limits": {"high": 9}}`:
+settings within settings are named the same way, a list is taken whole, and a setting named
+as `null` is left out of what the node is given: it is its default again if it has one
+(`#[serde(default)]`), and otherwise the node refuses the change. They are changed together:
+the node is given all of its settings once, with the changes in them, and if it refuses them
+none has changed. Two changes to one node, from anywhere, are made one after the other, so
+neither undoes the other. A setting that is not named never leaves the node's program.
+
+What is changed is the settings as the runtime shows them, which is as JSON. An `f64` and a
+whole number of up to 64 bits read back from it as exactly the number they are (an `f32` too,
+but for one value in two thousand million, which comes back a step away). Three things do
+not: a number that is not finite (an infinity, or not a number) is shown as `null`, and a
+node with one cannot be given a change, only all of its settings; so with a whole number wider
+than 64 bits; and a setting the node does not show (`#[serde(skip_serializing)]`) is its
+default after any change. Opening a runtime costs many times as much as asking it something, so
 a thread keeps the runtimes it has opened: `Remote::open` and `discover` are
 cheap from the second time on, and a runtime that stopped or started again is
 noticed. A thread lets go of what it kept when it ends. The main thread of a
@@ -348,7 +372,8 @@ which builds it on the fork. Its commands:
 triq list                 # or `triq watch` to keep it on screen
 triq spawn robot filter filter_2 --pool dsp --params '{"alpha":0.5}'
 triq connect robot/imu/pose robot/filter_2/raw
-triq set robot/filter_2 '{"alpha":0.1}'
+triq change robot/filter_2 '{"alpha":0.1}'   # change the settings named, and leave the rest
+triq set robot/filter_2 '{"alpha":0.1}'      # replace them all: what is left out is its default
 triq group robot/filter_2 sensing   # put it in a group; without a name, in none
 triq fields robot/imu/pose          # the numbers inside what an output sends
 triq pause | resume | remove robot/filter_2
@@ -437,6 +462,15 @@ In `Runtimes`, `Graph` and `Details`:
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters
   and its settings, and to disconnect single sources. `Details` opens for it if it was closed.
+- A node's settings are written in `Details` as JSON, to be edited there. `Apply changes` asks
+  the node's runtime to change the settings that were edited, any number of them at once, and
+  says under the buttons which those are. The node's other settings are not sent: they stay as
+  the node has them, also where something else has changed them since they were written.
+  `Replace all` asks for all of them as they are written, and a setting that is not written is
+  its default again. Text that nobody is typing in keeps up with the node. Text that is being
+  typed in is left exactly as it is until it is asked for, however the node changes meanwhile;
+  once it is asked for and the node has answered, it is the node's own again. What a node
+  refuses stays written, to mend and ask again.
 - Pause a node or start it again with the button on its card. `Details` has the same button, and
   one to remove the node.
 - Drag a card by any part of it to move it, scroll to move the view, and pinch to zoom. `Fit`
@@ -496,6 +530,7 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 | go one group out | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
 | move the selected cards one group out, from inside | `P`, or `Move out` in `Details` |
 | take a group apart | select its card and press `Cmd+Option+G`, or `Ungroup` in `Details` |
+| pause, start again or remove every node of a group | click its card, then `Pause all`, `Resume all` or `Remove all` in `Details` |
 
 - The card of a group is outlined in white, or in black on a light background. Its header fades
   through the colours of the runtimes its nodes run in, and has a dot for each of them. It is never
@@ -519,7 +554,15 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - What is created while the graph shows the inside of a group is in that group: a node, or a
   group of a kind that its runtime offers, which is then a group inside the one that is shown.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.
-  Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
+  Click it to see the group in `Details`: there it can be renamed, and its nodes are listed,
+  each that does not run saying so.
+- `Details` has what all the nodes of a group can be asked together, those of the groups inside
+  it too. `Pause all` pauses every one that runs and `Resume all` starts every one that is
+  paused again: each is there while there is such a node, and a node that cannot be paused, as
+  one an application merely holds the ports of, is passed over. `Remove all` removes every node
+  in the group, and the group is gone with them, as it is whenever its last node goes; `Ungroup`
+  is what takes a group apart and leaves its nodes running. Each is one request for each node:
+  in a draft they are held back with the rest, a change a node.
 - A group can be inside a group. The card of a group is selected and grouped like a node's, and
   `Cmd+G` inside a group makes the new group there. Above the graph it says where you are, such
   as `inside sensing/filters`.
@@ -685,18 +728,19 @@ number is kept from the moment it is put on a chart.
 `graph.rs` (the drawing as plain data: cards, pins, wires and groups),
 `draft.rs` (the changes a draft holds, as plain data), `colors.rs` (a colour
 per runtime), `history.rs` (what connections and outputs did, as plain data),
-`signals.rs` (the numbers inside messages), `charts.rs` (the charts, with the
+`signals.rs` (the numbers inside messages), `settings.rs` (a node's settings as they are
+edited, and which of them to ask for), `charts.rs` (the charts, with the
 list of numbers, the lines over time, the curves of numbers against each other,
 how those are looked at and what a line is drawn with in `charts/`),
 `feed.rs` (the background threads), `app.rs` (the windows), `app/cards.rs`
 (how the graph is drawn and handled) and `app/details.rs` (the details
-window) are about 5,920 lines together, and `triq-tap` another 170. The graph is drawn with `triq-snarl` (egui-snarl, with changes), and the
+window) are about 6,111 lines together, and `triq-tap` another 170. The graph is drawn with `triq-snarl` (egui-snarl, with changes), and the
 windows and the charts are arranged with `egui_tiles`, by the rules that
 `triq-views` has for panes (`panes.rs` there). The tests drive the
 real window code without opening a window, with a simulated pointer where it
 matters, and write pictures to `target/tmp`: `windows.png`, `workbench.png`,
 `graph.png`, `focus.png`, `draft.png`, `group.png`, `group-inside.png`,
-`charts.png`, `chart-colours.png`, `curves.png` and `space.png`.
+`charts.png`, `chart-colours.png`, `curves.png`, `space.png` and `settings.png`.
 
 ## Programs with their own main loop
 
@@ -944,13 +988,13 @@ of a message.
 | `node.rs` | 328 | the `Node` trait, `Trigger`, `Placement` |
 | `executor.rs` | 230 | the thread that waits for work, or polls for it, and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 718 | `Runtime`: its pools, spawn, factories, connect, inventory |
+| `runtime.rs` | 761 | `Runtime`: its pools, spawn, factories, connect, settings, inventory |
 | `runtime/local.rs` | 176 | factories whose nodes the application runs |
 | `runtime/group.rs` | 133 | which group a node is in, and kinds that create a group of nodes |
-| `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 429 | report types, the error type, iceoryx2 type names |
+| `control.rs`, `remote.rs` | 548 | requests between programs, discovery, change announcements |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 453 | report types, what a change makes of settings, the error type, iceoryx2 type names |
 
-About 3,710 lines including comments, plus the derive macros (108) and the command-line tool (189).
+About 3,790 lines including comments, plus the derive macros (108) and the command-line tool (193).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

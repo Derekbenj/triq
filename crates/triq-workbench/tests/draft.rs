@@ -78,6 +78,35 @@ fn a_draft_holds_what_it_takes_to_get_from_the_machine_to_the_drawing_and_no_mor
     draft.record(Request::SetParams { runtime, node, params: json!({ "alpha": 0.5 }) }, &real);
     assert_eq!(draft.changes(&real), [disconnect(&smooth, &viewer), connect(&pose, &viewer)]);
 
+    // Some of a node's settings may be changed and the rest left. The node is shown with the
+    // change made; a later change to its settings takes the place of an earlier one, whichever
+    // sort each is; and a change to what it already has is none.
+    let change = |changes: serde_json::Value| {
+        let (runtime, node) = smoother();
+        Request::ChangeParams { runtime, node, changes }
+    };
+    let shown = |draft: &Draft| self::node(&draft.over(&real), &robot, "smoother").unwrap().params.clone();
+    draft.record(change(json!({ "alpha": 0.9 })), &real);
+    assert_eq!(draft.changes(&real).last(), Some(&change(json!({ "alpha": 0.9 }))));
+    assert_eq!(shown(&draft), json!({ "alpha": 0.9 }));
+    assert_eq!(draft.marks(&real).card(&format!("{robot}/smoother")), Some(Mark::Changed));
+    draft.record(change(json!({ "alpha": 0.7 })), &real);
+    assert_eq!((draft.changes(&real).len(), shown(&draft)), (3, json!({ "alpha": 0.7 })));
+    let (runtime, node) = smoother();
+    draft.record(Request::SetParams { runtime, node, params: json!({ "alpha": 0.8 }) }, &real);
+    assert_eq!((draft.changes(&real).len(), shown(&draft)), (3, json!({ "alpha": 0.8 })));
+    draft.record(change(json!({ "alpha": 0.5 })), &real);
+    assert_eq!(draft.changes(&real), [disconnect(&smooth, &viewer), connect(&pose, &viewer)]);
+    draft.record(change(json!({})), &real);
+    assert_eq!(draft.changes(&real).len(), 2, "no setting named, nothing to do");
+    assert_eq!(
+        change(json!({ "alpha": 0.9 })).to_string(),
+        format!("change {{\"alpha\":0.9}} in the settings of {robot}/smoother")
+    );
+    let (runtime, node) = smoother();
+    let all = Request::SetParams { runtime, node, params: json!({ "alpha": 0.9 }) };
+    assert_eq!(all.to_string(), format!("replace the settings of {robot}/smoother"));
+
     // One of the changes is taken back.
     draft.take_back(&disconnect(&smooth, &viewer), &real);
     assert_eq!(draft.changes(&real), [connect(&pose, &viewer)]);
@@ -85,6 +114,33 @@ fn a_draft_holds_what_it_takes_to_get_from_the_machine_to_the_drawing_and_no_mor
     // When the machine comes to be as it was drafted by other means, there is nothing left to do.
     scene.desk.connect(&pose, "viewer/pose")?;
     assert_eq!(draft.changes(&scene.inventories()), []);
+    Ok(())
+}
+
+#[test]
+fn a_change_of_some_settings_is_drawn_with_the_others_as_they_are() -> triq::Result {
+    // A node with two settings, of which a draft changes one: it is drawn with the other as
+    // the machine has it, and the change is no longer needed once the machine has that one.
+    let scene = Scene::new()?;
+    let robot = scene.robot.name().to_owned();
+    let mut real = scene.inventories();
+    let has = |real: &mut [Inventory], settings: serde_json::Value| {
+        let home = real.iter_mut().find(|inventory| inventory.runtime == robot).unwrap();
+        home.nodes.iter_mut().find(|node| node.name == "smoother").unwrap().params = settings;
+    };
+    has(&mut real, json!({ "alpha": 0.5, "beta": 2 }));
+    let mut draft = Draft::default();
+    let change =
+        Request::ChangeParams { runtime: robot.clone(), node: "smoother".to_owned(), changes: json!({ "alpha": 0.9 }) };
+    draft.record(change.clone(), &real);
+    let drawn = draft.over(&real);
+    assert_eq!(node(&drawn, &robot, "smoother").unwrap().params, json!({ "alpha": 0.9, "beta": 2 }));
+    // Something else changes the other setting: the change is still to make, and leaves it be.
+    has(&mut real, json!({ "alpha": 0.5, "beta": 7 }));
+    assert_eq!(draft.changes(&real), [change]);
+    assert_eq!(node(&draft.over(&real), &robot, "smoother").unwrap().params, json!({ "alpha": 0.9, "beta": 7 }));
+    has(&mut real, json!({ "alpha": 0.9, "beta": 7 }));
+    assert_eq!(draft.changes(&real), []);
     Ok(())
 }
 
