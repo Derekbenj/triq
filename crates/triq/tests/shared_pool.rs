@@ -66,7 +66,7 @@ fn answer_times_beside_a_blocked_node(rt: &Runtime) -> triq::Result<Vec<Duration
 #[test]
 fn in_a_shared_pool_a_blocked_node_delays_nobody() -> triq::Result {
     let rt = Runtime::builder(&unique("shared")).shared_pool("work", 2).start()?;
-    assert_eq!(rt.inventory().pools, [PoolInfo { name: "work".into(), threads: 2, shared: true }]);
+    assert_eq!(rt.inventory().pools, [PoolInfo { name: "work".into(), threads: 2, shared: true, polling: false }]);
     let times = answer_times_beside_a_blocked_node(&rt)?;
     assert!(times.iter().all(|time| *time < Duration::from_millis(100)), "{times:?}");
     Ok(())

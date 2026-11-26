@@ -14,3 +14,7 @@ iceoryx2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 triq-macros.workspace = true
+
+[dev-dependencies]
+# How long a thread has had a processor for: what tells a pool that polls from one that sleeps.
+cpu-time = "1"

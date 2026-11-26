@@ -414,7 +414,7 @@ fn the_inventory_describes_pools_and_nodes() -> triq::Result {
     collect(&bench.probe, 1);
 
     let inventory = rt.inventory();
-    assert_eq!(inventory.pools, [PoolInfo { name: "dsp".into(), threads: 2, shared: false }]);
+    assert_eq!(inventory.pools, [PoolInfo { name: "dsp".into(), threads: 2, shared: false, polling: false }]);
     let node = inventory.nodes.iter().find(|node| node.name == "doubler").unwrap();
     assert_eq!(node.placement, Some(Placement::pool("dsp")));
     assert_eq!(node.state, NodeState::Running);
