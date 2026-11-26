@@ -418,6 +418,9 @@ fn runs_on(placement: &Option<Placement>, pools: &[PoolInfo]) -> String {
         Some(Placement::Dedicated) => "a thread of its own".to_owned(),
         Some(Placement::Pool(name)) => match pools.iter().find(|pool| pool.name == *name) {
             Some(pool) if pool.shared => format!("pool {name}: any of its {} threads", pool.threads),
+            Some(pool) if pool.polling => {
+                format!("pool {name}: one of its {} threads, which never sleep", pool.threads)
+            }
             Some(pool) => format!("pool {name}: one of its {} threads", pool.threads),
             None => format!("pool {name}"),
         },

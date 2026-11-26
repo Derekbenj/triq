@@ -112,12 +112,10 @@ fn spawn_options(options: &[&str]) -> triq::Result<(Placement, Value)> {
 fn describe(inventory: &Inventory) -> String {
     let mut text = format!("{} (pid {})\n", inventory.runtime, inventory.pid);
     for pool in &inventory.pools {
-        let kind = if pool.shared {
-            ", shared"
-        } else if pool.polling {
-            ", polling"
-        } else {
-            ""
+        let kind = match (pool.shared, pool.polling) {
+            (true, _) => ", shared",
+            (_, true) => ", polling",
+            _ => "",
         };
         _ = writeln!(text, "  pool {}: {} threads{kind}", pool.name, pool.threads);
     }

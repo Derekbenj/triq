@@ -537,8 +537,12 @@ impl Contents {
                     ui.add(egui::Label::new(process).extend());
                 });
                 for pool in &inventory.pools {
-                    let shared = if pool.shared { ", shared" } else { "" };
-                    ui.weak(format!("pool {}: {} threads{shared}", pool.name, pool.threads));
+                    let kind = match (pool.shared, pool.polling) {
+                        (true, _) => ", shared",
+                        (_, true) => ", polling",
+                        _ => "",
+                    };
+                    ui.weak(format!("pool {}: {} threads{kind}", pool.name, pool.threads));
                 }
                 for factory in &inventory.factories {
                     let mut new = ui.button(format!("New {}", factory.kind));
