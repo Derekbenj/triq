@@ -1,13 +1,16 @@
 //! Latency and loss under two loads: one hop between two processes, and a mesh of nodes.
 //!
 //! ```text
-//! triq-bench hop  [--rate 10000] [--bytes 128] [--seconds 10] [--loan]
-//!     one sending process and one receiving process, each node on its own thread
+//! triq-bench hop  [--rate 10000] [--bytes 128] [--seconds 10] [--loan] [--polling]
+//!     one sending process and one receiving process, each node on its own thread;
+//!     with `--polling` the receiving node's thread never sleeps
 //!
 //! triq-bench mesh [--nodes 30] [--rate 5000] [--bytes 200] [--seconds 20]
-//!                 [--groups 3] [--threads 10] [--processes] [--shared] [--dedicated]
+//!                 [--groups 3] [--threads 10] [--processes] [--shared] [--polling] [--dedicated]
 //!     pairs of nodes sending to each other. A group is a pool of `threads`
-//!     threads; with `--processes` every group is a separate program.
+//!     threads; with `--processes` every group is a separate program. Partners
+//!     are in neighbouring groups, so with one group of one thread every
+//!     message stays on its thread.
 //! ```
 //!
 //! Latency runs from just before a node hands a message to its output until
@@ -118,14 +121,23 @@ impl Drop for Duplex {
     }
 }
 
-/// A program that owns nodes: `worker <runtime> <pools> <threads> <shared> <results file>`.
+/// The pools of a worker program: how many, of how many threads each, and of which kind,
+/// `kept`, `shared` or `polling`.
+#[derive(Clone, Copy)]
+struct Pools(usize, usize, &'static str);
+
+/// A program that owns nodes: `worker <runtime> <pools> <threads> <kind of pool> <results file>`.
 fn worker(args: &[String]) -> Result {
-    let (name, pools, threads, shared, file) =
+    let (name, pools, threads, kind, file) =
         (&args[0], args[1].parse::<usize>()?, args[2].parse()?, &args[3], &args[4]);
     let mut builder = Runtime::builder(name);
     for pool in 0..pools {
         let pool = format!("work{pool}");
-        builder = if shared == "true" { builder.shared_pool(&pool, threads) } else { builder.pool(&pool, threads) };
+        builder = match kind.as_str() {
+            "shared" => builder.shared_pool(&pool, threads),
+            "polling" => builder.polling_pool(&pool, threads),
+            _ => builder.pool(&pool, threads),
+        };
     }
     let rt = builder.start()?;
     rt.register::<Duplex>("duplex")?;
@@ -171,13 +183,16 @@ struct Workers {
 }
 
 impl Workers {
-    fn start(count: usize, pools: usize, threads: usize, shared: bool) -> Result<Self> {
+    /// One program for each of `pools`, with those pools.
+    fn start(pools: &[Pools]) -> Result<Self> {
         let directory = std::env::temp_dir();
-        let programs = (0..count)
-            .map(|index| {
+        let programs = pools
+            .iter()
+            .enumerate()
+            .map(|(index, Pools(pools, threads, kind))| {
                 let name = format!("bench{}-{index}", std::process::id());
                 let file = directory.join(format!("{name}.json")).to_string_lossy().into_owned();
-                let args = [name.clone(), pools.to_string(), threads.to_string(), shared.to_string(), file.clone()];
+                let args = [name.clone(), pools.to_string(), threads.to_string(), kind.to_string(), file.clone()];
                 let child = Command::new(std::env::current_exe()?).arg("worker").args(args).spawn()?;
                 Ok((name, child, file))
             })
@@ -264,19 +279,23 @@ fn report(
 fn hop(options: &Options) -> Result {
     let (rate, bytes, seconds) =
         (options.number("rate", 10_000), options.number("bytes", 128), options.number("seconds", 10));
-    let workers = Workers::start(2, 0, 0, false)?;
+    // The receiving program has one thread that polls, if asked for; the sending one has none.
+    let polling = options.flag("polling");
+    let workers = Workers::start(&[Pools(0, 0, "kept"), Pools(usize::from(polling), 1, "polling")])?;
     let (sender, receiver) = (workers.programs[0].0.clone(), workers.programs[1].0.clone());
     let from_ns = now_ns() + WARMUP.as_nanos() as u64;
     let until_ns = from_ns + seconds as u64 * 1_000_000_000;
     let params = |period_us: usize| json!({ "period_us": period_us, "bytes": bytes, "loan": options.flag("loan"), "from_ns": from_ns, "until_ns": until_ns });
-    Remote::open(&receiver)?.spawn("duplex", "rx", Placement::Dedicated, params(0))?;
+    let placed = if polling { Placement::pool("work0") } else { Placement::Dedicated };
+    Remote::open(&receiver)?.spawn("duplex", "rx", placed, params(0))?;
     Remote::open(&sender)?.spawn("duplex", "tx", Placement::Dedicated, params(1_000_000 / rate))?;
     triq::connect(&format!("{sender}/tx/output"), &format!("{receiver}/rx/input"))?;
     std::thread::sleep(WARMUP + Duration::from_secs(seconds as u64) + Duration::from_millis(500));
     let (generated, lost, latencies) = workers.finish()?;
     let kind = if options.flag("loan") { "filled in place" } else { "copied in" };
+    let receiver = if polling { "; the receiver's thread polls" } else { "" };
     report(
-        &format!("hop: two processes, {bytes} bytes {kind}, {rate} Hz, {seconds} s"),
+        &format!("hop: two processes, {bytes} bytes {kind}, {rate} Hz, {seconds} s{receiver}"),
         seconds,
         1,
         rate,
@@ -295,11 +314,16 @@ fn mesh(options: &Options) -> Result {
         options.number("seconds", 20),
     );
     let (groups, threads) = (options.number("groups", 3), options.number("threads", 10));
-    let (processes, shared, dedicated) = (options.flag("processes"), options.flag("shared"), options.flag("dedicated"));
+    let (processes, dedicated) = (options.flag("processes"), options.flag("dedicated"));
+    let kind = match (options.flag("shared"), options.flag("polling")) {
+        (true, _) => "shared",
+        (_, true) => "polling",
+        _ => "kept",
+    };
     let workers = if processes {
-        Workers::start(groups, 1, threads, shared)?
+        Workers::start(&vec![Pools(1, threads, kind); groups])?
     } else {
-        Workers::start(1, groups, threads, shared)?
+        Workers::start(&[Pools(groups, threads, kind)])?
     };
 
     // Where node `index` lives. Partners sit in neighbouring groups, so every message crosses groups.
@@ -329,7 +353,7 @@ fn mesh(options: &Options) -> Result {
         (true, _) => format!("{groups} processes, each a pool of {threads} threads"),
         (false, _) => format!("one process, {groups} pools of {threads} threads"),
     };
-    let kind = if shared { " (shared pools)" } else { "" };
+    let kind = if kind == "kept" { String::new() } else { format!(" ({kind} pools)") };
     report(
         &format!("mesh: {nodes} nodes in pairs, {bytes} bytes, {rate} Hz each, {seconds} s; {layout}{kind}"),
         seconds,
