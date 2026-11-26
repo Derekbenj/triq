@@ -258,25 +258,38 @@ pub(super) fn node_details(
     }
 }
 
-/// What is known of a group: what it is called, which can be changed, and
-/// every node in it, each `runtime/node` with the group it is in. `shown` is
-/// whether the graph shows the inside of this group. Returns the node that
-/// was clicked, to see its details.
+/// A group, as its details tell of it.
+pub(super) struct Told<'a> {
+    /// Its path: its name, after the names of the groups it is in.
+    pub path: &'a str,
+    /// Every node in it, each `runtime/node` with the group it is in.
+    pub nodes: Vec<(&'a String, &'a String)>,
+    /// What a draft holds for it.
+    pub mark: Option<Mark>,
+    /// Whether the graph shows the inside of it.
+    pub shown: bool,
+}
+
+/// What is known of a group: what it is called, which can be changed, what
+/// all its nodes can be asked together, and every node in it. `machine` is
+/// what the runtimes last reported, or while drafting that with the draft's
+/// changes made. Returns the node that was clicked, to see its details.
 pub(super) fn group_details(
     ui: &mut Ui,
-    group: &str,
+    asking: &mut Asking<'_>,
+    machine: &[Inventory],
+    told: &Told<'_>,
     renamed: &mut String,
-    nodes: &[(&String, &String)],
-    mark: Option<Mark>,
-    shown: bool,
     wish: &mut Option<Wish>,
 ) -> Option<String> {
+    let Told { path: group, nodes, mark, shown } = told;
+    let (group, shown) = (*group, *shown);
     ui.heading(graph::called(group));
     let size =
         if nodes.len() == 1 { "a group of 1 node".to_owned() } else { format!("a group of {} nodes", nodes.len()) };
     ui.weak(graph::parent(group).map_or(size.clone(), |outer| format!("{size}, inside {outer}")));
     if let Some(mark) = mark {
-        ui.weak(format!("{}, when the draft is applied", awaits(mark)));
+        ui.weak(format!("{}, when the draft is applied", awaits(*mark)));
     }
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
@@ -287,6 +300,29 @@ pub(super) fn group_details(
         let about = "Take the group apart. What was in it is where the group was, and runs as before";
         if ui.button("Ungroup").on_hover_text(about).clicked() {
             *wish = Some(Wish::Ungroup(group.to_owned()));
+        }
+    });
+    // What all of its nodes can be asked together, those of the groups inside it too.
+    let known = |(key, _): &(&String, &String)| super::node(machine, key);
+    let known: Vec<(&Inventory, &NodeInfo)> = nodes.iter().filter_map(known).collect();
+    ui.horizontal_wrapped(|ui| {
+        let all = [
+            ("Pause", "Pause all", "Pause every node in the group that runs"),
+            ("Resume", "Resume all", "Start every node in the group that is paused again"),
+        ];
+        for (word, button, about) in all {
+            // A node that can be neither paused nor started again is passed over.
+            let toggles = known.iter().filter_map(|(home, node)| toggle(&home.runtime, node));
+            let asked: Vec<Request> = toggles.filter(|(does, _)| *does == word).map(|(_, request)| request).collect();
+            if !asked.is_empty() && ui.button(button).on_hover_text(about).clicked() {
+                asked.into_iter().for_each(|request| asking.ask(request));
+            }
+        }
+        let about = "Remove every node in the group. The group is gone with them";
+        if !known.is_empty() && ui.button("Remove all").on_hover_text(about).clicked() {
+            for (home, node) in &known {
+                asking.ask(Request::Remove { runtime: home.runtime.clone(), node: node.name.clone() });
+            }
         }
     });
     ui.separator();
@@ -312,6 +348,12 @@ pub(super) fn group_details(
             // A node of a group inside this one says which.
             if let Some(inner) = of.strip_prefix(group).and_then(|rest| rest.strip_prefix('/')) {
                 ui.weak(format!("in {inner}"));
+            }
+            // One that does not run says so, as its card does.
+            match super::node(machine, node).map(|(_, node)| &node.state) {
+                Some(NodeState::Paused) => _ = ui.colored_label(ui.visuals().warn_fg_color, "paused"),
+                Some(NodeState::Stopped(_)) => _ = ui.colored_label(ui.visuals().error_fg_color, "stopped"),
+                Some(NodeState::Running) | None => {}
             }
         });
     }

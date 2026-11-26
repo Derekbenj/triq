@@ -595,6 +595,7 @@ impl Contents {
                     );
                     ui.weak("Drag from an output to an input to connect them. Right-click a wire or a pin to disconnect it.");
                     ui.weak("Pause a node with the button on its card. Its details have the rest.");
+                    ui.weak("Click a group to pause, start again or remove all of its nodes together.");
                     ui.weak(
                         "A node that is clicked keeps its colour, with all that feeds it and all that it feeds. The rest goes grey.",
                     );
@@ -619,9 +620,13 @@ impl Contents {
                     }
                 }
                 Focus::Group { name, renamed } => {
-                    let nodes: Vec<_> = grouping.iter().filter(|(_, of)| graph::within(of, name)).collect();
-                    let (mark, shown) = (marks.card(&graph::group_key(name)), inside.as_deref() == Some(name.as_str()));
-                    turn_to = details::group_details(ui, name, renamed, &nodes, mark, shown, wish);
+                    let told = details::Told {
+                        path: name,
+                        nodes: grouping.iter().filter(|(_, of)| graph::within(of, name)).collect(),
+                        mark: marks.card(&graph::group_key(name)),
+                        shown: inside.as_deref() == Some(name.as_str()),
+                    };
+                    turn_to = details::group_details(ui, &mut asking, &inventories, &told, renamed, wish);
                 }
                 Focus::Form(form) => match form.show(ui, &mut asking, &inventories) {
                     Filled::Open => {}

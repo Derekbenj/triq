@@ -36,6 +36,14 @@ fn header(harness: &Bench<'_>, card: &str) -> egui::Pos2 {
     seen(harness, &name.unwrap_or_else(|| panic!("no card is called {card:?}")))
 }
 
+/// Save a picture of the window, for a human to look at. Drawing it needs a GPU.
+fn picture(harness: &mut Bench<'_>, name: &str) {
+    match harness.render() {
+        Ok(image) => image.save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name)).expect("save a picture"),
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
+}
+
 /// Whether the graph has a card by this key.
 fn has_card(harness: &Bench<'_>, key: &str) -> bool {
     harness.state().graph().nodes().any(|card| Card::key(card) == key)
@@ -107,6 +115,7 @@ fn every_node_of_a_group_is_paused_started_again_and_removed_from_the_details_of
     scene.robot.resume("pair1.fine")?;
     assert!(until(&mut harness, |harness| shows(harness, "Pause all") && shows(harness, "Resume all")));
     assert_eq!(harness.query_all_by_label("paused").count(), 1);
+    picture(&mut harness, "group-details.png");
     harness.get_by_label("Resume all").click();
     assert!(until(&mut harness, |_| states(&scene, pair) == [RUNNING, RUNNING]), "{:?}", states(&scene, pair));
     assert!(until(&mut harness, |harness| !shows(harness, "Resume all") && !shows(harness, "paused")));
@@ -145,7 +154,8 @@ fn a_group_asks_the_nodes_of_a_group_inside_it_too_and_passes_over_a_node_that_c
 
     // Put the sensor, the filter and the pair in a group together. The sensor is the test's
     // own: its application runs it, and it cannot be paused.
-    let taken = |harness: &Bench<'_>, name: &String| harness.state().groups().values().any(|of| graph::within(of, name));
+    let taken =
+        |harness: &Bench<'_>, name: &String| harness.state().groups().values().any(|of| graph::within(of, name));
     let made = (1..).map(|number| format!("group{number}")).find(|name| !taken(&harness, name)).expect("a free name");
     tidy(&mut harness);
     for card in ["imu", "smoother", "pair1"] {
