@@ -91,6 +91,12 @@ fn a_runtime_says_which_of_its_pools_poll() -> triq::Result {
         rt.inventory().pools,
         [pool("fast", 1, false, true), pool("kept", 2, false, false), pool("shared", 3, true, false)]
     );
+    // The tool's list says so too.
+    let listed = std::process::Command::new(env!("CARGO_BIN_EXE_triq")).arg("list").output()?;
+    let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+    for pool in ["pool fast: 1 threads, polling\n", "pool kept: 2 threads\n", "pool shared: 3 threads, shared\n"] {
+        assert!(listed.contains(pool), "{pool:?} is not in:\n{listed}");
+    }
     // A runtime too old to say has no pool that polls.
     let old: PoolInfo = serde_json::from_value(json!({ "name": "dsp", "threads": 2, "shared": false }))?;
     assert_eq!(old, pool("dsp", 2, false, false));
@@ -120,7 +126,12 @@ fn nodes_in_a_polling_pool_run_as_in_any_pool_and_several_share_a_thread() -> tr
             bench.feed.send(round * 10 + index as u64)?;
         }
         for (index, bench) in benches.iter().enumerate() {
-            assert_eq!(collect(&bench.probe, 1), [(round * 10 + index as u64) * 2], "{} in round {round}", names[index]);
+            assert_eq!(
+                collect(&bench.probe, 1),
+                [(round * 10 + index as u64) * 2],
+                "{} in round {round}",
+                names[index]
+            );
         }
     }
     let placed = |node: &str| rt.inventory().nodes.into_iter().find(|info| info.name == node).unwrap().placement;
@@ -153,8 +164,8 @@ fn nodes_in_a_polling_pool_run_as_in_any_pool_and_several_share_a_thread() -> tr
 }
 
 #[test]
-fn the_threads_of_a_polling_pool_are_busy_all_the_time_and_those_of_another_pool_only_while_they_work()
--> triq::Result {
+fn the_threads_of_a_polling_pool_are_busy_all_the_time_and_those_of_another_pool_only_while_they_work() -> triq::Result
+{
     let rt = Runtime::builder(&unique("busy")).polling_pool("fast", 1).pool("kept", 1).start()?;
     rt.spawn::<Clocked>("polls", Placement::pool("fast"), ())?;
     rt.spawn::<Clocked>("sleeps", Placement::pool("kept"), ())?;

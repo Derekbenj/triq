@@ -5,6 +5,10 @@
 //! directly, so a message costs one thread wake-up and nothing in between.
 //! What the thread waits on is rebuilt only when the nodes or their
 //! connections change.
+//!
+//! A thread of a polling pool does not sleep: it looks at the same `WaitSet`
+//! again and again without waiting, so a message costs no wake-up, and the
+//! thread keeps a processor core busy.
 mod workers;
 
 use crate::Result;
@@ -34,6 +38,8 @@ struct Shared {
     finished: AtomicBool,
     /// Interrupts the thread's wait.
     wake: Notifier,
+    /// The thread never waits: it looks for work again and again.
+    polling: bool,
     /// In a shared pool, the threads that run the nodes instead of this one.
     workers: Option<Workers>,
 }
@@ -50,7 +56,8 @@ enum Wake {
 impl Executor {
     /// With `workers == 0` the thread runs its nodes itself; otherwise it only
     /// waits, and hands each ready node to one of that many worker threads.
-    pub fn start(ipc: &IpcNode, runtime: &str, name: &str, workers: usize) -> Result<Self> {
+    /// With `polling` it never sleeps.
+    pub fn start(ipc: &IpcNode, runtime: &str, name: &str, workers: usize, polling: bool) -> Result<Self> {
         let service =
             ipc.service_builder(&ServiceName::new(&format!("{runtime}/_executor/{name}"))?).event().open_or_create()?;
         let listener = service.listener_builder().create()?;
@@ -61,6 +68,7 @@ impl Executor {
             stop: AtomicBool::new(false),
             finished: AtomicBool::new(false),
             wake: service.notifier_builder().create()?,
+            polling,
             workers: if workers == 0 { None } else { Some(Workers::start(name, workers)?) },
         });
         let thread = thread::Builder::new().name(format!("triq-{name}")).spawn({
@@ -190,7 +198,8 @@ fn serve(shared: &Shared, wake: &Listener) -> Result {
             };
             // A node that is behind is run again at once. The others on this thread have their
             // turn in between: what has arrived for them meanwhile is looked for, without waiting.
-            if ready.contains(&true) {
+            // A thread that polls never waits.
+            if shared.polling || ready.contains(&true) {
                 waitset.wait_and_process_once_with_timeout(&mut note, Duration::ZERO)?;
             } else {
                 waitset.wait_and_process_once(&mut note)?;
