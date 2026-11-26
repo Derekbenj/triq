@@ -423,3 +423,21 @@ fn runs_on(placement: &Option<Placement>, pools: &[PoolInfo]) -> String {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn where_a_node_runs_says_what_kind_of_pool_it_is_in() {
+        let pool = |name: &str, threads, shared, polling| PoolInfo { name: name.into(), threads, shared, polling };
+        let pools = [pool("dsp", 2, false, false), pool("heavy", 8, true, false), pool("fast", 1, false, true)];
+        let on = |name: &str| runs_on(&Some(Placement::pool(name)), &pools);
+        assert_eq!(on("dsp"), "pool dsp: one of its 2 threads");
+        assert_eq!(on("heavy"), "pool heavy: any of its 8 threads");
+        assert_eq!(on("fast"), "pool fast: one of its 1 threads, which never sleep");
+        assert_eq!(on("gone"), "pool gone");
+        assert_eq!(runs_on(&Some(Placement::Dedicated), &pools), "a thread of its own");
+        assert_eq!(runs_on(&None, &pools), "the application's own loop");
+    }
+}
