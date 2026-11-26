@@ -187,8 +187,9 @@ change when those do. A node has room for 63.
 
 ```rust
 let rt = Runtime::builder("robot")
-    .pool("dsp", 4)           // each node keeps one of 4 threads: the fastest arrangement
+    .pool("dsp", 4)           // each node keeps one of 4 threads, which sleep until there is work
     .shared_pool("heavy", 8)  // any free thread takes a ready node: a blocked node delays nobody
+    .polling_pool("fast", 1)  // each node keeps its one thread, which never sleeps
     .start()?;                // does not take over the calling thread
 
 rt.spawn::<Filter>("filter", Placement::pool("dsp"), FilterParams { alpha: 0.2 })?;
@@ -198,6 +199,19 @@ rt.register::<Filter>("filter")?;  // a factory: any program may now ask for one
 rt.connect("imu/pose", "filter/raw")?;
 rt.wait();                         // or carry on with your own main loop
 ```
+
+**A polling pool** is for nodes that must have a message as soon as it is sent. A thread that
+sleeps is woken by the operating system, which takes 20 to 50 µs here once messages are far
+enough apart for it to fall asleep. A thread of a polling pool looks for work again and again
+and is never asleep: it has the message in about 5 µs, however seldom one comes
+("Measurements", below). It pays with a processor core. Each thread of a polling pool keeps one
+busy for as long as its runtime lives, with work or without, so the pool is given as few threads
+as will do, and the nodes that need it share them. As in `pool`, a node keeps its thread, and
+the nodes on a thread run one after another: one that takes long delays the others on it.
+
+A polling pool does nothing for a machine whose cores are all busy. There the operating system
+takes the core from a thread that polls as it does from any other, and a message waits as long
+for a thread that polls as for one that sleeps.
 
 A node that needs more than its settings when it is created is made by a
 closure. The closure is given the name and the settings of each node that is
@@ -928,15 +942,15 @@ of a message.
 | `fields.rs` | 132 | the numbers a message lists, and reading one from bytes |
 | `port.rs`, `port/output.rs`, `port/input.rs` | 754 | `Output`, `Input`, `Sample`, `Loan`, port declarations |
 | `node.rs` | 328 | the `Node` trait, `Trigger`, `Placement` |
-| `executor.rs` | 221 | the thread that waits and runs nodes |
+| `executor.rs` | 230 | the thread that waits for work, or polls for it, and runs nodes |
 | `executor/workers.rs` | 57 | the optional dispatcher behind shared pools |
-| `runtime.rs` | 692 | `Runtime`: spawn, factories, connect, inventory |
+| `runtime.rs` | 718 | `Runtime`: its pools, spawn, factories, connect, inventory |
 | `runtime/local.rs` | 176 | factories whose nodes the application runs |
 | `runtime/group.rs` | 133 | which group a node is in, and kinds that create a group of nodes |
 | `control.rs`, `remote.rs` | 532 | requests between programs, discovery, change announcements |
-| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 425 | report types, the error type, iceoryx2 type names |
+| `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 429 | report types, the error type, iceoryx2 type names |
 
-About 3,670 lines including comments, plus the derive macros (108) and the command-line tool (185).
+About 3,710 lines including comments, plus the derive macros (108) and the command-line tool (189).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements
@@ -966,9 +980,33 @@ Other findings:
 - Shared pools cost more than expected under this load: p50 26, p99 66 µs
   against 8 and 44 for ordinary pools.
 
+**A polling pool**, measured later on the same machine, each number a single run of 8 s. One hop
+between two processes, 128 bytes, the receiving node on a thread of its own or on a polling pool
+of one thread:
+
+| Messages | Receiver sleeps | Receiver polls |
+| --- | --- | --- |
+| 60 a second | p50 47, p99 97, max 112 µs | p50 6, p99 20, max 22 µs |
+| 1 kHz | p50 20, p99 42, max 103 µs | p50 5, p99 10, max 35 µs |
+| 10 kHz | p50 5, p99 8, max 96 µs | p50 4, p99 9, max 46 µs |
+
+- A thread that polls has a message in the 5 µs a thread that sleeps takes only when messages
+  come too fast for it to fall asleep. It is not under 1 µs: it learns of a message as a
+  sleeping thread does, by the sender's signal, which is most of those 5 µs.
+- Two nodes sending to each other at 1 kHz: p50 12, p99 30 µs on one thread of a pool, and
+  31 and 39 µs on two threads or in two programs; p50 3, p99 6 µs on one polling thread, and
+  6 and 11 µs on two.
+- With every core of the machine busy with other work, the same hop at 60 a second took p50 44,
+  p99 851, max 994 µs with a receiver that sleeps, and p50 23, p99 880, max 1,386 µs with one
+  that polls: polling does not help there. With that other work held to a lower standing
+  (`taskpolicy -c utility`) it took p50 28, p99 62, max 75 µs sleeping and p50 8, p99 45,
+  max 49 µs polling: what a busy machine needs is for the threads that matter to stand above
+  the rest, which triq does not arrange.
+- A polling thread took 0.3 to 0.4 ms from each 13 ms of the work that kept the cores busy.
+
 ```sh
-cargo run --release -p triq-bench -- hop --rate 10000 --bytes 128 --seconds 30
-cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [--processes] [--shared]
+cargo run --release -p triq-bench -- hop --rate 10000 --bytes 128 --seconds 30 [--polling]
+cargo run --release -p triq-bench -- mesh --groups 3 --threads 10 --seconds 60 [--processes] [--shared] [--polling]
 ```
 
 ## Not there yet

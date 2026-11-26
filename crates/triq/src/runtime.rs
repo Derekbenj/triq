@@ -141,9 +141,9 @@ enum Notice {
 type Notify = Arc<dyn Fn(&str, Notice) -> Result<Value> + Send + Sync>;
 
 impl Builder {
-    /// Add a pool of `threads` threads. A node placed in it keeps one of them,
-    /// which is the fastest arrangement; a node that blocks delays the nodes
-    /// sharing its thread.
+    /// Add a pool of `threads` threads, which sleep until there is work. A
+    /// node placed in it keeps one of them; a node that blocks delays the
+    /// nodes sharing its thread.
     pub fn pool(mut self, name: &str, threads: usize) -> Self {
         self.pools.push((name.into(), threads, Kind::Kept));
         self
