@@ -418,8 +418,29 @@ fn runs_on(placement: &Option<Placement>, pools: &[PoolInfo]) -> String {
         Some(Placement::Dedicated) => "a thread of its own".to_owned(),
         Some(Placement::Pool(name)) => match pools.iter().find(|pool| pool.name == *name) {
             Some(pool) if pool.shared => format!("pool {name}: any of its {} threads", pool.threads),
+            Some(pool) if pool.polling => {
+                format!("pool {name}: one of its {} threads, which never sleep", pool.threads)
+            }
             Some(pool) => format!("pool {name}: one of its {} threads", pool.threads),
             None => format!("pool {name}"),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn where_a_node_runs_says_what_kind_of_pool_it_is_in() {
+        let pool = |name: &str, threads, shared, polling| PoolInfo { name: name.into(), threads, shared, polling };
+        let pools = [pool("dsp", 2, false, false), pool("heavy", 8, true, false), pool("fast", 1, false, true)];
+        let on = |name: &str| runs_on(&Some(Placement::pool(name)), &pools);
+        assert_eq!(on("dsp"), "pool dsp: one of its 2 threads");
+        assert_eq!(on("heavy"), "pool heavy: any of its 8 threads");
+        assert_eq!(on("fast"), "pool fast: one of its 1 threads, which never sleep");
+        assert_eq!(on("gone"), "pool gone");
+        assert_eq!(runs_on(&Some(Placement::Dedicated), &pools), "a thread of its own");
+        assert_eq!(runs_on(&None, &pools), "the application's own loop");
     }
 }

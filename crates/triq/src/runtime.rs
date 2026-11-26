@@ -40,8 +40,19 @@ impl Drop for Farewell {
 /// Chooses a runtime's thread pools before it starts.
 pub struct Builder {
     name: String,
-    /// Name, thread count, and whether the pool is shared.
-    pools: Vec<(String, usize, bool)>,
+    /// The name, thread count and kind of each pool.
+    pools: Vec<(String, usize, Kind)>,
+}
+
+/// How the threads of a pool take their work.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// A node keeps one thread, which sleeps until there is work for it.
+    Kept,
+    /// Any free thread takes a node that is ready.
+    Shared,
+    /// A node keeps one thread, which looks for work without ever sleeping.
+    Polling,
 }
 
 pub(crate) struct Inner {
@@ -62,7 +73,7 @@ struct Pool {
     /// One per thread, or the single waiting thread of a shared pool.
     executors: Vec<Arc<Executor>>,
     threads: usize,
-    shared: bool,
+    kind: Kind,
 }
 
 #[derive(Default)]
@@ -130,18 +141,27 @@ enum Notice {
 type Notify = Arc<dyn Fn(&str, Notice) -> Result<Value> + Send + Sync>;
 
 impl Builder {
-    /// Add a pool of `threads` threads. A node placed in it keeps one of them,
-    /// which is the fastest arrangement; a node that blocks delays the nodes
-    /// sharing its thread.
+    /// Add a pool of `threads` threads, which sleep until there is work. A
+    /// node placed in it keeps one of them; a node that blocks delays the
+    /// nodes sharing its thread.
     pub fn pool(mut self, name: &str, threads: usize) -> Self {
-        self.pools.push((name.into(), threads, false));
+        self.pools.push((name.into(), threads, Kind::Kept));
         self
     }
 
     /// Add a pool whose free threads take whichever node is ready, so a node
     /// that blocks delays nobody. Each run costs one more thread wake-up.
     pub fn shared_pool(mut self, name: &str, threads: usize) -> Self {
-        self.pools.push((name.into(), threads, true));
+        self.pools.push((name.into(), threads, Kind::Shared));
+        self
+    }
+
+    /// Add a pool whose threads never sleep: each looks for work again and
+    /// again, so a message to a node in it costs no thread wake-up. Each of
+    /// its threads keeps a processor core busy, with work or without. A node
+    /// placed in it keeps one of them, as in [`pool`](Self::pool).
+    pub fn polling_pool(mut self, name: &str, threads: usize) -> Self {
+        self.pools.push((name.into(), threads, Kind::Polling));
         self
     }
 
@@ -155,19 +175,19 @@ impl Builder {
         let claim = Control::claim(&ipc, &self.name)?;
         let announce = Arc::new(announcements(&ipc)?.notifier_builder().create()?);
         let mut pools = BTreeMap::new();
-        for (pool, threads, shared) in &self.pools {
+        for (pool, threads, kind) in &self.pools {
             check_name("pool", pool)?;
             if *threads == 0 {
                 return Err(Error::Mismatch(format!("pool {pool:?} needs at least one thread")));
             }
-            let executors = if *shared {
-                vec![Arc::new(Executor::start(&ipc, &self.name, pool, *threads)?)]
+            let executors = if *kind == Kind::Shared {
+                vec![Arc::new(Executor::start(&ipc, &self.name, pool, *threads, false)?)]
             } else {
-                (0..*threads)
-                    .map(|index| Executor::start(&ipc, &self.name, &format!("{pool}-{index}"), 0).map(Arc::new))
-                    .collect::<Result<_>>()?
+                let polling = *kind == Kind::Polling;
+                let thread = |index| Executor::start(&ipc, &self.name, &format!("{pool}-{index}"), 0, polling);
+                (0..*threads).map(|index| thread(index).map(Arc::new)).collect::<Result<_>>()?
             };
-            let pool_entry = Pool { executors, threads: *threads, shared: *shared };
+            let pool_entry = Pool { executors, threads: *threads, kind: *kind };
             if pools.insert(pool.clone(), pool_entry).is_some() {
                 return Err(Error::Name(format!("pool {pool:?} is declared twice")));
             }
@@ -397,7 +417,8 @@ impl Inner {
         match placement {
             Placement::Dedicated => {
                 check_name("node", node)?;
-                Ok(Arc::new(Executor::start(&self.ipc.lock().unwrap(), &self.name, &format!("node-{node}"), 0)?))
+                let name = format!("node-{node}");
+                Ok(Arc::new(Executor::start(&self.ipc.lock().unwrap(), &self.name, &name, 0, false)?))
             }
             Placement::Pool(pool) => {
                 let pool = self.pools.get(pool).ok_or_else(|| Error::Unknown(format!("pool {pool:?}")))?;
@@ -634,7 +655,12 @@ impl Inner {
             revision: self.revision.load(Ordering::Acquire),
             taken_ns: now_ns(),
             pools: pools
-                .map(|(name, pool)| PoolInfo { name: name.clone(), threads: pool.threads, shared: pool.shared })
+                .map(|(name, pool)| PoolInfo {
+                    name: name.clone(),
+                    threads: pool.threads,
+                    shared: pool.kind == Kind::Shared,
+                    polling: pool.kind == Kind::Polling,
+                })
                 .collect(),
             factories: factories
                 .map(|(kind, factory)| FactoryInfo {

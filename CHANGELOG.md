@@ -1,5 +1,17 @@
 # Changes
 
+## Not yet released
+
+- **A pool whose threads never sleep.** `Runtime::builder("robot").polling_pool("fast", 1)` is a
+  third kind of pool. A node placed in it keeps one of its threads, as in `pool`, and that thread
+  looks for work again and again in place of sleeping until some comes: a message to the node
+  costs no thread wake-up, 5 µs where a thread that had fallen asleep takes 20 to 50, and each
+  thread of the pool keeps a processor core busy. On a machine whose cores are all busy it gains
+  nothing. `triq list` and the workbench say which pools poll.
+- **`PoolInfo` has a field more**, `polling`. A program that builds one itself has to name it;
+  one that reads an inventory goes on as before, and a runtime of 0.2.0 is read as having no
+  pool that polls.
+
 ## 0.2.0
 
 What a project that used 0.1 has to change:

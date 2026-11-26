@@ -34,6 +34,10 @@ pub struct PoolInfo {
     pub threads: usize,
     /// True when any free thread of the pool may run a node; false when each node keeps one thread.
     pub shared: bool,
+    /// True when the pool's threads never sleep, and each keeps a processor core busy. False
+    /// from a runtime too old to say.
+    #[serde(default)]
+    pub polling: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
