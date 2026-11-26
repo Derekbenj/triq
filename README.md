@@ -516,6 +516,7 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 | go one group out | `Tab` again, `Ctrl+Tab`, or `Exit Group` above the graph |
 | move the selected cards one group out, from inside | `P`, or `Move out` in `Details` |
 | take a group apart | select its card and press `Cmd+Option+G`, or `Ungroup` in `Details` |
+| pause, start again or remove every node of a group | click its card, then `Pause all`, `Resume all` or `Remove all` in `Details` |
 
 - The card of a group is outlined in white, or in black on a light background. Its header fades
   through the colours of the runtimes its nodes run in, and has a dot for each of them. It is never
@@ -539,7 +540,15 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
 - What is created while the graph shows the inside of a group is in that group: a node, or a
   group of a kind that its runtime offers, which is then a group inside the one that is shown.
 - The card of a group says how many nodes it has, and how many of them are paused or stopped.
-  Click it to see the group in `Details`: there it can be renamed, and its nodes are listed.
+  Click it to see the group in `Details`: there it can be renamed, and its nodes are listed,
+  each that does not run saying so.
+- `Details` has what all the nodes of a group can be asked together, those of the groups inside
+  it too. `Pause all` pauses every one that runs and `Resume all` starts every one that is
+  paused again: each is there while there is such a node, and a node that cannot be paused, as
+  one an application merely holds the ports of, is passed over. `Remove all` removes every node
+  in the group, and the group is gone with them, as it is whenever its last node goes; `Ungroup`
+  is what takes a group apart and leaves its nodes running. Each is one request for each node:
+  in a draft they are held back with the rest, a change a node.
 - A group can be inside a group. The card of a group is selected and grouped like a node's, and
   `Cmd+G` inside a group makes the new group there. Above the graph it says where you are, such
   as `inside sensing/filters`.

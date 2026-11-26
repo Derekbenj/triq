@@ -2,6 +2,9 @@
 
 ## Not yet released
 
+- **The workbench pauses, starts again and removes a whole group.** The details of a group have
+  `Pause all`, `Resume all` and `Remove all`, which ask every node in it, those of the groups
+  inside it too, and its list of nodes says which of them do not run.
 - **Some of a node's settings can be changed, and the rest left.** `Runtime::change_params` and
   `Remote::change_params` take the settings to change, by name, and `triq change <runtime/node>
   <json>` does the same from a terminal. `set_params` and `triq set` go on replacing all of
