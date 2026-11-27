@@ -304,7 +304,10 @@ input::placeholder { color: var(--faint); }
 .try::before { content: "triq "; color: var(--prompt); }
 .sheet .keys { margin: 1.1rem 0 0.8rem; padding-top: 0.7rem; border-top: 1px solid var(--seam); font-size: 0.82rem; color: var(--dim); }
 
-/* What is asked in front of the page: the settings, and how to quit. */
+/* What is asked in front of the page: the settings, and how to quit. The page behind stays
+   where it is meanwhile: the wheel moves what is in front, or nothing. */
+html:has(dialog[open]) { overflow: hidden; }
+dialog, dialog .log { overscroll-behavior: contain; }
 dialog { width: min(42rem, calc(100% - 2rem)); padding: 1.3rem 1.5rem 1.4rem; background: var(--surface); color: var(--text); border: 1px solid var(--edge); border-radius: 7px; box-shadow: 0 1.2rem 3rem #0008; }
 dialog::backdrop { background: #0b0a12b3; }
 dialog h3 { margin: 1.3rem 0 0.35rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
