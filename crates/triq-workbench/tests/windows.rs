@@ -19,8 +19,25 @@ fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
 }
 
+/// What the runtimes, the graph and the details each say when they are the one seen.
+const SAID: [&str; 3] = ["New filter", "Tidy", "Pause a node with the button on its card. Its details have the rest."];
+
+/// Where the name of a group is, on its bar: the names of what is in it, such as `Details, Runtimes`.
+fn group(harness: &Bench<'_>, named: &str) -> egui::Rect {
+    called(harness, named).first().unwrap_or_else(|| panic!("no bar says {named:?}")).rect()
+}
+
+/// Take a window by its name and let it go at the middle of the name of another, or of a group.
+fn onto_the_name(harness: &mut Bench<'_>, window: &str, of: egui::Rect) {
+    let name = bar(harness, window).expect("an open window").rect();
+    drag(harness, name.center(), of.center());
+    harness.run_steps(10);
+}
+
 #[test]
 fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
+    // One of these tests at a time: the workbench draws the whole machine, the scene of another too.
+    let _alone = alone();
     let scene = Scene::new()?;
     let robot = scene.robot.name().to_owned();
     let mut harness = open()?;
@@ -167,5 +184,76 @@ fn the_windows_are_closed_opened_and_put_elsewhere() -> triq::Result {
     harness.run_steps(3);
     assert!(names(&harness)[1].is_some() && shows(&harness, "Tidy"));
 
+    Ok(())
+}
+
+#[test]
+fn a_window_let_go_on_the_name_of_another_is_beside_it_in_a_group_of_the_two() -> triq::Result {
+    let _alone = alone();
+    let _scene = Scene::new()?;
+    let mut harness = open()?;
+    assert!(until(&mut harness, |harness| harness.query_by_label("raw: Pose").is_some()), "the cards appear");
+    harness.run_steps(4);
+
+    // Each window is alone under its bar, as the workbench opens. The runtimes are taken by their
+    // name and let go on the name of the details.
+    let [runtimes, _, details, _] = names(&harness).map(|name| name.expect("an open window"));
+    onto_the_name(&mut harness, "Runtimes", details);
+    // The two are a group where the details were, under a bar that names both: the details on the
+    // left and the runtimes on the right, each under a bar of its own, and both seen.
+    let both = group(&harness, "Details, Runtimes");
+    let [beside, graph, inner, _] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(
+        both.top() == details.top() && inner.top() > both.bottom() - 1.0,
+        "the bar of the details is under the group's"
+    );
+    assert!(inner.top() == beside.top() && inner.right() < beside.left(), "{inner:?} and {beside:?} are side by side");
+    assert!(shows(&harness, SAID[0]) && shows(&harness, SAID[2]));
+    // The graph has the room the runtimes left.
+    assert_eq!(graph.left(), runtimes.left());
+
+    // One more, let go on the name of the group, joins it at its end.
+    onto_the_name(&mut harness, "Graph", both);
+    let all = group(&harness, "Details, Runtimes, Graph");
+    let [runtimes, graph, details, _] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(details.top() > all.bottom() - 1.0 && details.top() == runtimes.top() && runtimes.top() == graph.top());
+    assert!(details.right() < runtimes.left() && runtimes.right() < graph.left(), "three in a row");
+    assert!(SAID.iter().all(|said| shows(&harness, said)));
+    Ok(())
+}
+
+#[test]
+fn of_the_names_on_one_bar_one_let_go_on_another_makes_a_group_and_let_go_between_two_is_only_moved() -> triq::Result {
+    let _alone = alone();
+    let _scene = Scene::new()?;
+    let mut harness = open()?;
+    assert!(until(&mut harness, |harness| harness.query_by_label("raw: Pose").is_some()), "the cards appear");
+    harness.run_steps(4);
+
+    // Three windows in one place, their names on one bar. The details are put down on the middle of
+    // the runtimes, and share their place.
+    let [runtimes, graph, details, charts] = names(&harness).map(|name| name.expect("an open window"));
+    let middle = egui::pos2((runtimes.left() + graph.left()) / 2.0, (runtimes.bottom() + charts.top()) / 2.0);
+    drag(&mut harness, details.center(), middle);
+    harness.run_steps(10);
+    // The graph is let go on that bar at the edge of a name, between two names or before the first:
+    // it is one more name on the bar there, as it was before a name could be let go on a name.
+    let [first, graph, ..] = names(&harness).map(|name| name.expect("an open window"));
+    drag(&mut harness, graph.center(), egui::pos2(first.left() + 1.0, first.center().y));
+    harness.run_steps(10);
+    let [runtimes, graph, details, _] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(graph.top() == runtimes.top() && runtimes.top() == details.top(), "three names on one bar");
+    assert!(graph.right() <= runtimes.left() && runtimes.right() <= details.left(), "the graph before the others");
+    assert!(shows(&harness, SAID[1]) && !shows(&harness, SAID[0]) && !shows(&harness, SAID[2]), "one of them is seen");
+
+    // The runtimes, let go on the name of the details, are a group with them in the place of that
+    // name, side by side, and the graph is still a name beside the group's.
+    onto_the_name(&mut harness, "Runtimes", details);
+    let both = group(&harness, "Details, Runtimes");
+    let [beside, graph, inner, _] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(both.top() == graph.top() && graph.right() <= both.left(), "the group has the name's place on the bar");
+    assert!(inner.top() > both.bottom() - 1.0 && inner.top() == beside.top() && inner.right() < beside.left());
+    // The group is the one in front: both of its windows are seen, and the graph is behind them.
+    assert!(shows(&harness, SAID[0]) && shows(&harness, SAID[2]) && !shows(&harness, SAID[1]));
     Ok(())
 }
