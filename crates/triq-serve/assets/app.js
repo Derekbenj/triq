@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -15,6 +15,9 @@ const view = {
   search: '',
   of: undefined,
   families: '',
+  // What each program says it takes, in its own words: asked for when its box for arguments
+  // is first opened. Null while it is being asked; `said` is null if it does not say.
+  takes: new Map(),
   // The same for what was started: what is typed to find some, and the family chosen.
   running: { search: '', of: undefined, families: '' },
   // What a program is to be told, as typed in its box, and the programs whose box is open.
@@ -123,6 +126,40 @@ const colourOf = (name) => {
 // A program's name without its family, which is said above it.
 const short = (name) => (family(name) ? name.slice(family(name).length + 1) : name);
 
+// What a program says it takes, asked of the server the first time it is wanted.
+async function takes(name) {
+  if (!view.takes.has(name)) {
+    view.takes.set(name, null);
+    const answer = await api('/api/takes', { program: name }).catch(() => ({ takes: null }));
+    view.takes.set(name, { said: answer.takes });
+  }
+  return view.takes.get(name);
+}
+
+// Under a box for arguments: what the program says it takes, and each option it names as
+// something to click, which `put` then puts in the box.
+function takesOf(name, put) {
+  const known = view.takes.get(name);
+  if (!known) return h('div.takes', {}, h('p.note', {}, 'It is being asked what it takes.'));
+  if (!known.said) return h('div.takes', {}, h('p.note', {}, 'This program does not say what it takes. It would if it answered --help.'));
+  const option = (each) => h('button.told', { type: 'button', onclick: () => put(each), title: 'Put this with the arguments' }, each);
+  const named = options(known.said);
+  return h('div.takes', {}, h('pre', {}, known.said), named.length > 0 && h('div.before', {}, named.map(option)));
+}
+// What is in a box for arguments, with one more word at its end.
+const added = (typed, more) => `${typed.trimEnd()} ${more} `.trimStart();
+
+// Draw the programs again though one of their boxes is being typed in, and leave the keys
+// where they were.
+function redrawPrograms() {
+  const at = document.activeElement?.dataset?.told;
+  drawPrograms(true);
+  const box = at && document.querySelector(`[data-told="${at}"]`);
+  if (!box) return;
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+}
+
 // A program that can be started. With others of it running, one more is started with what the
 // last was, under a name that is free: that is said on the card before it is done.
 function programCard(name) {
@@ -137,6 +174,15 @@ function programCard(name) {
     if (!asked && !view.told[name]) view.told[name] = proposed;
     drawPrograms(true);
     document.querySelector(`[data-told="${name}"]`)?.focus();
+    // What it takes is under the box as soon as it has said.
+    if (!asked) takes(name).then(redrawPrograms);
+  };
+  const more = (option) => {
+    view.told[name] = added(view.told[name] ?? '', option);
+    drawPrograms(true);
+    const box = document.querySelector(`[data-told="${name}"]`);
+    box?.focus();
+    box?.setSelectionRange(box.value.length, box.value.length);
   };
   const box = h('input', { type: 'text', 'data-told': name, value: view.told[name] ?? '', placeholder: 'as after its name in a terminal: a name, --speed 5', spellcheck: 'false', autocomplete: 'off' });
   box.addEventListener('input', () => (view.told[name] = box.value));
@@ -158,6 +204,7 @@ function programCard(name) {
     !asked && proposed && h('div.under', {}, 'the next is started with ', h('span.told', {}, proposed)),
     asked && h('div.tell', {}, box),
     asked && earlier(started, name).length > 0 && h('div.before', {}, earlier(started, name).map(again)),
+    asked && takesOf(name, more),
   );
 }
 
@@ -196,6 +243,7 @@ function startedCard(id) {
   // some programs only say what they take when they are started with nothing.
   const other = h('input', { type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'as after its name in a terminal' });
   const again = h('form.tell', { hidden: true }, other, h('button.button.go', {}, 'Start'));
+  const hints = h('div', { hidden: true });
   const output = h('button.link', {
     onclick: () => {
       if (view.open.has(id)) view.open.delete(id);
@@ -203,7 +251,7 @@ function startedCard(id) {
       draw();
     },
   });
-  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), again, status, h('div.last', {}, last, output), log);
+  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), again, hints, status, h('div.last', {}, last, output), log);
   let buttons = '';
   const update = (one) => {
     const how = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
@@ -227,18 +275,25 @@ function startedCard(id) {
       const about = 'Its runtime did not shut down when it was asked: end the process';
       const renamed = () => start(one.program, named(one.told, unused));
       // The box opens with what it was started with, to be added to or changed.
+      const more = (option) => {
+        other.value = added(other.value, option);
+        other.focus();
+      };
       const argue = () => {
-        again.hidden = !again.hidden;
+        [again.hidden, hints.hidden] = [!again.hidden, !again.hidden];
         if (again.hidden) return;
         other.value ||= line(one.told);
         other.focus();
+        // Under the box, what the program says it takes.
+        hints.replaceChildren(takesOf(one.program, more));
+        takes(one.program).then(() => hints.replaceChildren(takesOf(one.program, more)));
       };
       again.onsubmit = (sent) => {
         sent.preventDefault();
-        again.hidden = true;
+        [again.hidden, hints.hidden] = [true, true];
         start(one.program, other.value);
       };
-      if (!one.ended) again.hidden = true;
+      if (!one.ended) [again.hidden, hints.hidden] = [true, true];
       ends.replaceChildren(
         ...[
           how === 'running' && h('button.button.stop', { onclick: stop }, 'Stop'),

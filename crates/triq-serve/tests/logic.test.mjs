@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -247,4 +247,15 @@ test('of what was started, what is shown is what has the words that were typed, 
   assert.deepEqual([which('running', undefined), which('ended', undefined), which('stopped', undefined)], [[1], [3], [2]]);
   // By its family, and what was typed within that.
   assert.deepEqual([which('', 'simulator'), which('', ''), which('hop', 'stack'), which('nothing like it', undefined)], [[2], [3], [], []]);
+});
+
+test('the options a program says it takes are picked out of what it says', () => {
+  const said = `usage: triq-stack-quadcopter [runtime name] [--speed <times>] [--lock-step]
+  runtime name      what its runtime is called
+  --speed <times>   the world at so many times the wall clock's pace
+  --lock-step       the world waits for every answer
+  --help            this`;
+  // Each once, in the order they are first written in; and not the one that asks for this.
+  assert.deepEqual(options(said), ['--speed', '--lock-step']);
+  assert.deepEqual(options('usage: triq-workbench\n  it takes nothing'), []);
 });

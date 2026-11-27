@@ -375,6 +375,7 @@ usage: measure how long a message takes, and how many are lost
       pairs of nodes sending to each other, in pools of threads";
 
 fn main() -> std::process::ExitCode {
+    triq::help(USAGE);
     let args: Vec<String> = std::env::args().skip(1).collect();
     let done = match args.first().map(String::as_str) {
         Some("worker") => worker(&args[1..]),

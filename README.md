@@ -402,6 +402,17 @@ The folders registered are the lines of one file, `~/.config/triq/folders`, or t
 `TRIQ_FOLDERS` names; `XDG_CONFIG_HOME` is where `.config` is, if it is set. A folder is kept by
 its whole path, once. `triq::programs()` is the same list for a program of your own.
 
+**A program says what it takes.** Started with `--help`, a program of triq prints what it
+takes and ends, for a person at a terminal and for whatever lists programs to start. One line
+first in `main` does it:
+
+```rust
+fn main() -> triq::Result {
+    triq::help("usage: triq-robot [runtime name] [--fast]\n  runtime name   robot, unless another is given\n  --fast         twice the pace");
+    // ...
+}
+```
+
 ## In a browser
 
 ```sh
@@ -416,7 +427,10 @@ hand, is the workbench's, which is one of the programs the page starts.
 - **Start a program.** Every program of triq that is found, as the tool finds them, is on the
   page, family by family: `algorithm-sensors` is under `algorithm`. `Start` starts one as a
   process of its own. `with arguments` opens a box for what would be typed after its name in a
-  terminal, and offers what it was started with before. The box at the top finds a program by
+  terminal, and offers what it was started with before. Under the box the program says what
+  it takes, in its own words, with each option it names to click: the page asks it with
+  `--help`, once, and only a program that has `--help` written in it, since another would take
+  the word for a name and start. The box at the top finds a program by
   part of its name, and Enter starts it when it is the only one found; the list beside the box
   shows the programs of one family alone.
 - **More than one of a program.** A program may be started while others of it run. Two runtimes

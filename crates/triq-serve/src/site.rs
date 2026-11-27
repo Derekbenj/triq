@@ -124,6 +124,14 @@ impl Site {
                 let said = said.map_err(|error| format!("the triq tool could not be run: {error}"))?;
                 Ok(Answer::json(&json!({ "usage": String::from_utf8_lossy(&said.stdout) })))
             }
+            // What a program says it takes, in its own words, or null if it does not say.
+            ("POST", "/api/takes") => {
+                let sent = sent()?;
+                let name = sent["program"].as_str().ok_or("no program is named")?;
+                let program = self.programs.found.iter().position(|(found, _)| found == name);
+                let program = program.ok_or_else(|| format!("there is no program triq-{name} here"))?;
+                Ok(Answer::json(&json!({ "takes": self.programs.takes(program) })))
+            }
             ("GET", "/api/records") => Ok(Answer::json(&json!({ "folder": self.programs.records.folder() }))),
             // Another folder for the records: those there are go with it, and it is remembered.
             ("POST", "/api/records") => {

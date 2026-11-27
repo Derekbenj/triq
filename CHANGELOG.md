@@ -15,6 +15,10 @@
   command. What it starts does not depend on it: a program may be left running when
   `triq-serve` ends, and the next one finds it again by its record. What the page does a
   script or a language model can ask as well, with the token it prints.
+- **A program says what it takes.** `triq::help(takes)`, first in `main`, prints that and ends
+  when the program is started with `--help` or `-h`. `triq-workbench`, `triq-bench` and
+  `triq-serve` answer so, and the page of `triq serve` shows a program's answer where its
+  arguments are typed.
 - **A folder of programs is registered once**, with `triq register <folder>`, in a file, and
   its programs are found from then on with nothing on the `PATH`. `triq::programs()` and
   `triq::program(name)` find them for a program of your own.

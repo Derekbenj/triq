@@ -190,6 +190,10 @@ input::placeholder { color: var(--faint); }
 .tell { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
 .tell input { flex: 1; font-family: var(--mono); font-size: 0.82rem; }
 .before { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+/* What a program says it takes, under the box its arguments are typed in. */
+.takes { margin-top: 0.5rem; }
+.takes pre { margin: 0; padding: 0.5rem 0.65rem; background: var(--well); border: 1px solid var(--line); border-radius: 5px; font: 0.74rem/1.55 var(--mono); color: var(--dim); white-space: pre-wrap; word-break: break-word; max-height: 13rem; overflow: auto; }
+.takes .note { margin-top: 0; }
 .before button { cursor: pointer; }
 .before button:hover { border-color: var(--accent); }
 

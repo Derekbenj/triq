@@ -259,3 +259,7 @@ export function shows(one, search, of) {
   const said = `${one.program} ${one.told.join(' ')} ${one.runtime ?? ''} ${doing(one)}`;
   return (of === undefined || family(one.program) === of) && found(search, said);
 }
+
+// The options a program says it takes, picked out of what it says: each word that begins with
+// two dashes, once, in the order they are first written in. Not the one that asks for this.
+export const options = (takes) => [...new Set(takes.match(/--[a-z][a-z0-9-]*/g) ?? [])].filter((option) => option !== '--help');

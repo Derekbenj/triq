@@ -17,7 +17,9 @@ const USAGE: &str = "\
 usage: triq-serve [--port 7474] [--no-open]
   serves a page to this machine alone, and opens it in the browser:
   start triq's programs there, as many of each as are wanted, stop them,
-  and type the commands of the triq tool, with their answers drawn";
+  and type the commands of the triq tool, with their answers drawn
+  --port 7474   the port the page is served on
+  --no-open     do not open the page in the browser";
 
 /// Show a page in the person's own browser, as each system does it.
 fn open(address: &str) {
@@ -30,6 +32,7 @@ fn open(address: &str) {
 }
 
 fn main() -> ExitCode {
+    triq::help(USAGE);
     let (mut port, mut opens) = (7474u16, true);
     let mut told = std::env::args().skip(1);
     while let Some(word) = told.next() {

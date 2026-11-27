@@ -12,7 +12,7 @@
 //! that prints to this program and ends. Those are listed apart, and only the last few.
 use crate::records::{Record, Records, make};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -32,6 +32,8 @@ const ASKED: usize = 20;
 const LOOK: Duration = Duration::from_secs(3);
 /// How often a program that is not this one's child is looked at, to see whether it still runs.
 const CHECK: Duration = Duration::from_secs(2);
+/// How long a program has to say what it takes, when it is asked.
+const ANSWER: Duration = Duration::from_millis(1500);
 
 /// The lines a program has printed, the newest last, as the thread that reads them leaves them.
 type Lines = Arc<Mutex<VecDeque<String>>>;
@@ -49,6 +51,9 @@ pub struct Programs {
     looked: Option<Instant>,
     /// When those that are not this program's children were last looked at.
     checked: Instant,
+    /// What each program said it takes when it was asked, with when the program was last
+    /// changed on disk: it is asked again when it has been built anew.
+    takes: HashMap<PathBuf, (Option<SystemTime>, Option<String>)>,
 }
 
 /// What became of a line that was typed: a program was started, or the tool was run with it.
@@ -183,6 +188,46 @@ fn about(file: &Path) -> impl Fn(std::io::Error) -> std::io::Error + '_ {
     move |error| std::io::Error::new(error.kind(), format!("{}: {error}", file.display()))
 }
 
+/// Whether a file has those bytes in it somewhere.
+fn mentions(file: &Path, word: &[u8]) -> bool {
+    let Ok(mut file) = File::open(file) else { return false };
+    // Read a piece at a time, each with the end of the one before it in front, so that a word
+    // that lies across two pieces is found.
+    let (mut piece, mut kept) = (vec![0; 1 << 20], 0);
+    loop {
+        let Ok(read) = file.read(&mut piece[kept..]) else { return false };
+        if read == 0 {
+            return false;
+        }
+        let filled = kept + read;
+        if piece[..filled].windows(word.len()).any(|here| here == word) {
+            return true;
+        }
+        kept = filled.min(word.len() - 1);
+        piece.copy_within(filled - kept..filled, 0);
+    }
+}
+
+/// Start a program with `--help`, and take what it prints for what it takes. None if it could
+/// not be started, said nothing, ended badly, or did not end in good time: then it is ended.
+fn asked(program: &Path) -> Option<String> {
+    let mut asking = Command::new(program);
+    asking.arg("--help").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = asking.spawn().ok()?;
+    let deadline = Instant::now() + ANSWER;
+    while child.try_wait().ok()?.is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let said = child.wait_with_output().ok()?;
+    let takes = plain(String::from_utf8_lossy(&said.stdout).trim_end());
+    (said.status.success() && !takes.is_empty()).then_some(takes)
+}
+
 /// Put a line a program printed with those kept of it, and let the oldest go.
 fn keep(lines: &Lines, line: &[u8]) {
     let mut lines = lines.lock().unwrap();
@@ -222,7 +267,8 @@ fn follow(log: PathBuf, lines: Lines, over: Arc<AtomicBool>) {
 impl Programs {
     /// Those programs, and no others for as long as this is kept, with their records there.
     pub fn new(found: Vec<(String, PathBuf)>, records: Records) -> Self {
-        Self { found, started: Vec::new(), records, count: 0, looked: None, checked: Instant::now() }
+        let (looked, checked, takes) = (None, Instant::now(), HashMap::new());
+        Self { found, started: Vec::new(), records, count: 0, looked, checked, takes }
     }
 
     /// The programs of triq found on this machine, and those that an earlier triq-serve
@@ -292,6 +338,23 @@ impl Programs {
             Some((name, path)) => self.begin(name, &path, typed[1..].to_vec()).map(|id| Some(Typed::Started(id))),
             None => self.run(tool, typed).map(|id| Some(Typed::Asked(id))),
         }
+    }
+
+    /// What the program at that place among those found says it takes, in its own words: what
+    /// it prints when it is started with `--help`. It is asked once, and again when it has been
+    /// built anew. Only a program that has `--help` written in it is asked: one that has never
+    /// heard of it would take the word for something else, a name for its runtime, and start.
+    pub fn takes(&mut self, program: usize) -> Option<String> {
+        let path = self.found[program].1.clone();
+        let changed = std::fs::metadata(&path).and_then(|file| file.modified()).ok();
+        if let Some((when, said)) = self.takes.get(&path)
+            && *when == changed
+        {
+            return said.clone();
+        }
+        let said = if mentions(&path, b"--help") { asked(&path) } else { None };
+        self.takes.insert(path, (changed, said.clone()));
+        said
     }
 
     /// A number that nothing was started under, here or as far as the records say.

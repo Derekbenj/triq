@@ -111,6 +111,7 @@ fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() 
     let help = json_of(&site.answer(&request("GET", "/api/help", Some(&token), Value::Null)));
     let asks = ["GET /api/state", "GET /api/machine", "POST /api/command", "POST /api/start", "POST /api/stop"];
     let more = ["POST /api/shutdown", "POST /api/forget", "GET /api/usage", "GET /api/records", "POST /api/records"];
+    let more = more.into_iter().chain(["POST /api/takes"]);
     for asked in asks.into_iter().chain(more) {
         assert!(help["requests"][asked].is_string(), "{asked}");
     }
@@ -327,6 +328,58 @@ fn a_browser_is_answered_over_a_connection_until_the_page_asks_the_program_to_en
     ));
     assert!(quit.starts_with("HTTP/1.1 200 OK"));
     serving.join().expect("the serving ends").expect("without an error");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_program_says_what_it_takes_and_only_one_that_can_say_it_is_asked() {
+    // One that answers --help; one that has never heard of it, and would start; and one that
+    // has the word in it, takes it for nothing, and runs on.
+    let knows = "if [ \"$1\" = \"--help\" ]; then echo 'usage: triq-knows [name] [--fast]'; echo '  --fast   faster'; exit 0; fi\nsleep 30";
+    let (knows, silent) =
+        (script("takes", "knows", knows), script("takes", "silent", "echo started >> \"$0.ran\"\nsleep 30"));
+    let stubborn = script("takes", "stubborn", "# --help is not for this one\necho started >> \"$0.ran\"\nsleep 30");
+    let ran = |program: &(String, std::path::PathBuf)| {
+        program.1.with_extension("ran").exists() || {
+            let mut marked = program.1.clone().into_os_string();
+            marked.push(".ran");
+            std::path::Path::new(&marked).exists()
+        }
+    };
+    let mut site =
+        Site::new(Feed::start(), Programs::new(vec![knows, silent.clone(), stubborn.clone()], kept("takes")), PORT);
+    let token = site.token().to_owned();
+    let takes = |site: &mut Site, program: &str| {
+        let asked = request("POST", "/api/takes", Some(&token), json!({ "program": program }));
+        json_of(&site.answer(&asked))["takes"].clone()
+    };
+    // What it says is had, as it said it; and had again without asking it twice.
+    assert_eq!(takes(&mut site, "knows"), json!("usage: triq-knows [name] [--fast]\n  --fast   faster"));
+    assert_eq!(takes(&mut site, "knows"), json!("usage: triq-knows [name] [--fast]\n  --fast   faster"));
+    // One that has no --help written in it is not started to find out: it would take the word
+    // for something to do.
+    let asked = Instant::now();
+    assert_eq!(takes(&mut site, "silent"), Value::Null);
+    assert!(asked.elapsed() < Duration::from_millis(500) && !ran(&silent), "it was not started");
+    // One that has the word in it and does not end is ended, and has said nothing.
+    assert_eq!(takes(&mut site, "stubborn"), Value::Null);
+    assert!(wait_for(|| ran(&stubborn)), "it was started, to be asked");
+    let still = std::process::Command::new("pgrep").args(["-f", stubborn.1.to_str().unwrap()]).output().unwrap();
+    assert!(still.stdout.is_empty(), "and ended: {}", String::from_utf8_lossy(&still.stdout));
+    // And nothing of the asking is among what was started.
+    let state = json_of(&site.answer(&request("GET", "/api/state", Some(&token), Value::Null)));
+    assert_eq!((&state["programs"]["started"], &state["programs"]["asked"]), (&json!([]), &json!([])));
+    // A program that is not there cannot be asked.
+    let nobody = request("POST", "/api/takes", Some(&token), json!({ "program": "nobody" }));
+    assert_eq!(site.answer(&nobody).status, 400);
+}
+
+/// This program is one of triq's too, and says what it takes like any other.
+#[test]
+fn this_program_says_what_it_takes_and_ends() {
+    let said = std::process::Command::new(env!("CARGO_BIN_EXE_triq-serve")).arg("--help").output().expect("run it");
+    let text = String::from_utf8_lossy(&said.stdout);
+    assert!(said.status.success() && text.starts_with("usage: triq-serve") && text.contains("--port"), "{text}");
 }
 
 /// The page offers a free name to a program that ended because its runtime's name was taken,

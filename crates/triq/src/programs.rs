@@ -7,6 +7,23 @@
 use std::env::consts::EXE_SUFFIX;
 use std::path::{Path, PathBuf};
 
+/// Say what this program takes, and end, if it was started with `--help` or `-h`. Call it
+/// first in `main`, with a line of usage and a line for each thing that can be given:
+///
+/// ```no_run
+/// triq::help("usage: triq-robot [runtime name] [--fast]\n  --fast   twice the pace");
+/// ```
+///
+/// A person asks a program so at a terminal; and whatever lists the programs of triq, as
+/// `triq serve` does, asks each what it takes, to show it where arguments are typed. A program
+/// that does not answer `--help` is not asked, since it would take the word for something else.
+pub fn help(takes: &str) {
+    if std::env::args().skip(1).any(|told| told == "--help" || told == "-h") {
+        println!("{takes}");
+        std::process::exit(0);
+    }
+}
+
 /// The file that lists the folders registered, one to a line: the one `TRIQ_FOLDERS` names,
 /// or else `triq/folders` among the person's own settings, `~/.config` unless
 /// `XDG_CONFIG_HOME` says otherwise. None for a person with no home.
