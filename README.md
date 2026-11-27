@@ -377,13 +377,23 @@ triq set robot/filter_2 '{"alpha":0.1}'      # replace them all: what is left ou
 triq group robot/filter_2 sensing   # put it in a group; without a name, in none
 triq fields robot/imu/pose          # the numbers inside what an output sends
 triq pause | resume | remove robot/filter_2
+triq workbench                      # run the program triq-workbench
 ```
+
+**The tool is the way to the other programs of triq.** A program of triq is called `triq-` and
+a name: `triq-workbench`, or a program of a project built on triq, such as a
+`triq-stack-quadcopter`. `triq <name>` runs the one called `triq-<name>` that is in the folder
+the tool is in, or else on the `PATH`, tells it what was typed after the name, and ends as it
+ends. So `triq workbench` is `triq-workbench`, and whatever `cargo install` has put beside the
+tool is run by its name, from any terminal, with nothing to set up first. Typed alone, `triq`
+says what it can be told and lists the programs it has found. A command of the tool's own is
+never taken for a program.
 
 ## The workbench
 
 ```sh
 cargo install triq-workbench      # on macOS, with the iceoryx2 fork set once per machine: see Platforms
-triq-workbench
+triq-workbench                    # or `triq workbench`, with the tool installed too
 ```
 
 To build what is in this repository now, before it is released, install it
@@ -1002,7 +1012,7 @@ of a message.
 | `control.rs`, `remote.rs` | 548 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 453 | report types, what a change makes of settings, the error type, iceoryx2 type names |
 
-About 3,790 lines including comments, plus the derive macros (108) and the command-line tool (193).
+About 3,790 lines including comments, plus the derive macros (108) and the command-line tool (258).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

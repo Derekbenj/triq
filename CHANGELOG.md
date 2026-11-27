@@ -2,6 +2,9 @@
 
 ## Not yet released
 
+- **`triq <program>` runs the program `triq-<program>`**: the one beside the tool, or on the
+  `PATH`. `triq workbench` starts the workbench, and a program of a project built on triq is run
+  the same way. Typed alone, `triq` lists the programs it has found.
 - **The workbench's list of numbers is node by node, and is searched.** In `Charts`, what a node
   hears and sends is folded away under the node's name until that is clicked, and a box lists
   what has every word typed in it in its name: a runtime, a node, a port, or part of one. The
