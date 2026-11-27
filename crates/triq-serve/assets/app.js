@@ -57,6 +57,8 @@ const view = {
   batch: [],
   // Which of the two is under the line: the answers, or the cheat sheet.
   tab: 'answers',
+  // Which of the two the page shows: the programs, or the command line.
+  page: 'programs',
   // How the page is to be shown: dark, light, or auto for as the system is set.
   theme: 'dark',
 };
@@ -622,6 +624,21 @@ function show(tab) {
   if (tab === 'sheet') look().then(drawSheet);
 }
 
+// Show the programs, or the command line, which then has the whole width of the page. Which
+// it was is remembered in this browser, for the next time the page is opened.
+function turn(page) {
+  view.page = page === 'line' ? 'line' : 'programs';
+  for (const tab of $('pages').children) tab.setAttribute('aria-selected', String(tab.value === view.page));
+  $('page-programs').hidden = view.page !== 'programs';
+  $('page-line').hidden = view.page !== 'line';
+  if (view.page === 'line') $('line').focus();
+  try {
+    localStorage.setItem('triq-page', view.page);
+  } catch (refused) {
+    // A browser that keeps nothing shows the programs the next time.
+  }
+}
+
 // The page is dark, or light, or as the system is set, whichever was chosen: that is
 // remembered in this browser. Left to the system, it changes when the system does.
 const system = window.matchMedia('(prefers-color-scheme: light)');
@@ -635,9 +652,9 @@ function theme(chosen) {
     // A browser that keeps nothing shows the page dark the next time.
   }
 }
-const remembered = () => {
+const remembered = (what) => {
   try {
-    return localStorage.getItem('triq-theme');
+    return localStorage.getItem(what);
   } catch (refused) {
     return null;
   }
@@ -838,7 +855,9 @@ $('line').addEventListener('keydown', (key) => {
 });
 
 mark($('mark'), 'TRIQ');
-theme(remembered());
+theme(remembered('triq-theme'));
+for (const tab of $('pages').children) tab.addEventListener('click', () => turn(tab.value));
+turn(remembered('triq-page'));
 api('/api/usage')
   .then(({ usage }) => (view.known = commands(usage ?? '')))
   .catch(() => {});

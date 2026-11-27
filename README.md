@@ -447,7 +447,8 @@ hand, is the workbench's, which is one of the programs the page starts.
   had: a program that only says what it takes when it is started with nothing. `Stop all`
   stops every one. Runtimes that were started elsewhere are listed under the cards, each with
   `Shut down`.
-- **Command line.** A line for what would be typed after `triq` in a terminal, split into
+- **Command line.** On a tab of its own, at the top of the page beside `Programs`, so that what
+  it answers has the whole width. A line for what would be typed after `triq` in a terminal, split into
   words as a terminal splits it, so that `spawn robot filter f2 --params '{"alpha": 0.5}'` is
   typed as it is there. As a line is typed the page says what the command takes, and offers
   names to end the word being typed, from the machine as it is: runtimes, nodes, ports, the

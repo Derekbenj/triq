@@ -141,13 +141,17 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .count-inner span + span { border-left: 1px solid var(--line); }
 .count-inner b { color: var(--text); font-size: 0.98rem; font-weight: 600; }
 
-/* What runs is across the whole page. Under it, the programs on the left, in a column that is
-   no wider than is read at a glance, and the command line on the right, which has the rest
-   and stays in sight. Everything in a column is as wide as the column, so that what is in it
-   ends at one edge. */
-.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(24rem, 1fr); column-gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
+/* The page shows one of two things, chosen at its top: the programs, or the command line, which
+   then has the whole width for what it answers. */
+main { padding-bottom: 4rem; }
+.pages { margin-top: 1.6rem; }
+.pages button { padding: 0.5rem 1.1rem; font-size: 0.94rem; }
+/* The programs: what runs is across the whole page, and under it the programs to start, in a
+   column that is no wider than is read at a glance. Everything in the column is as wide as
+   the column, so that what is in it ends at one edge. */
+.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); column-gap: 2.4rem; align-items: start; }
 .across { grid-column: 1 / -1; }
-section, .console { margin-top: 2.2rem; }
+section, .console { margin-top: 1.8rem; }
 .section-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .section-line h2 { margin-top: 0.55rem; }
 .none { color: var(--dim); margin-bottom: 0.6rem; }
@@ -234,9 +238,7 @@ input::placeholder { color: var(--faint); }
 .other button:hover { background: var(--stop); color: var(--stop-ink); }
 
 /* The command line: the line to type on, and under it what was typed and what came of it, the
-   newest first; or, on its other tab, the cheat sheet. It stays in sight as the programs are
-   scrolled. */
-.console { position: sticky; top: 0; display: flex; flex-direction: column; max-height: 100vh; padding-block: 2.2rem 1.2rem; margin-top: 0; }
+   newest first; or, on its other tab, the cheat sheet. It has the whole width of the page. */
 .tools { display: flex; align-items: center; gap: 0.6rem; }
 /* A choice of a few: one piece, which is not seen through, with the one chosen raised. */
 .tabs { display: inline-flex; border: 1px solid var(--edge); border-radius: 5px; overflow: hidden; background: var(--surface); }
@@ -244,19 +246,19 @@ input::placeholder { color: var(--faint); }
 .tabs button + button { border-left: 1px solid var(--edge); }
 .tabs button:hover { color: var(--text); }
 .tabs button[aria-selected="true"], .tabs button[aria-checked="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
-.terminal { min-height: 0; display: flex; flex-direction: column; background: var(--well); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.answers, .sheet { min-height: 0; overflow: auto; padding: 0.9rem 1rem 0.2rem; border-top: 1px solid var(--seam); }
+.terminal { background: var(--well); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.answers, .sheet { padding: 0.9rem 1rem 0.2rem; border-top: 1px solid var(--seam); }
 .answer { margin-bottom: 1rem; }
 .typed { font: 0.8rem/1.5 var(--mono); color: var(--text); display: flex; gap: 0.5rem; }
 .typed::before { content: "triq"; color: var(--prompt); }
 .typed em { margin-left: auto; font-style: normal; color: var(--faint); }
 .came { margin-top: 0.35rem; font-size: 0.84rem; }
-.came pre { margin: 0; font: 0.76rem/1.55 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
+.came pre { margin: 0; font: 0.76rem/1.55 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 70vh; overflow: auto; }
 .came .done { color: var(--good); font: 600 0.8rem/1.5 var(--mono); }
 .came .wrong { color: var(--bad); border-left: 2px solid var(--stop); padding-left: 0.7rem; }
 .came .wrong pre { color: inherit; }
 .came .wait { color: var(--dim); font: 0.8rem/1.5 var(--mono); }
-.came .long { max-height: 20rem; overflow: auto; }
+.came .long { max-height: 70vh; overflow: auto; }
 .came table { border-collapse: collapse; width: 100%; font: 0.76rem/1.5 var(--mono); }
 .came th { text-align: left; font-weight: 600; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.66rem; padding: 0 0.8rem 0.2rem 0; }
 .came td { padding: 0.12rem 0.8rem 0.12rem 0; vertical-align: top; color: var(--ink); border-top: 1px solid var(--seam); }
@@ -325,8 +327,6 @@ body.gone .state::before { animation: none; background: var(--faint); }
   .bar { flex-wrap: wrap; gap: 0.9rem; }
   .now { order: 3; flex-basis: 100%; }
   .ends { margin-left: auto; }
-  .console { position: static; max-height: none; }
-  .answers, .sheet { max-height: 30rem; }
 }
 @media (max-width: 44rem) {
   .mark { font-size: 40px; }

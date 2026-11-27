@@ -37,7 +37,12 @@
   </div>
   <div class="counts"><div id="counts" class="wrap count-inner"></div></div>
 </header>
-<main class="wrap layout">
+<main class="wrap">
+  <nav id="pages" class="tabs pages" role="tablist" aria-label="What the page shows">
+    <button role="tab" value="programs" aria-selected="true" title="What runs, and the programs to start">Programs</button>
+    <button role="tab" value="line" aria-selected="false" title="The commands of the triq tool, with the whole width for what they answer">Command line</button>
+  </nav>
+  <div id="page-programs" class="layout">
   <section class="across">
     <div class="section-line">
       <div>
@@ -52,7 +57,7 @@
         <button id="clear" class="button" title="Take those that have ended off the page" hidden>Clear what has ended</button>
       </div>
     </div>
-    <p id="nothing" class="none">Nothing was started yet. Pick a program below, or type its name in the command line: it runs as it would from a terminal.</p>
+    <p id="nothing" class="none">Nothing was started yet. Pick a program below, or type its name on the command line: it runs as it would from a terminal.</p>
     <p id="none-shown" class="none" hidden>Nothing that was started is like that.</p>
     <div id="running" class="cards wide"></div>
     <div id="others"></div>
@@ -72,7 +77,8 @@
       <div id="programs"></div>
     </section>
   </div>
-  <aside class="console">
+  </div>
+  <aside id="page-line" class="console" hidden>
     <div class="section-line">
       <div>
         <p class="eyebrow"><span class="eyebrow-line"></span>The triq tool</p>
