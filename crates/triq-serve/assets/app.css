@@ -238,7 +238,8 @@ input::placeholder { color: var(--faint); }
    scrolled. */
 .console { position: sticky; top: 0; display: flex; flex-direction: column; max-height: 100vh; padding-block: 2.2rem 1.2rem; margin-top: 0; }
 .tools { display: flex; align-items: center; gap: 0.6rem; }
-.tabs { display: inline-flex; border: 1px solid var(--edge); border-radius: 5px; overflow: hidden; }
+/* A choice of a few: one piece, which is not seen through, with the one chosen raised. */
+.tabs { display: inline-flex; border: 1px solid var(--edge); border-radius: 5px; overflow: hidden; background: var(--surface); }
 .tabs button { border: 0; padding: 0.42rem 0.8rem; background: none; color: var(--dim); font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em; cursor: pointer; white-space: nowrap; }
 .tabs button + button { border-left: 1px solid var(--edge); }
 .tabs button:hover { color: var(--text); }
