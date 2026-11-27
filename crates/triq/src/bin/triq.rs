@@ -9,7 +9,6 @@
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::time::Duration;
 use triq::{Error, Inventory, NodeInfo, NodeState, Placement, PortSpec, Remote, Watch};
@@ -95,18 +94,10 @@ fn run(args: &[&str]) -> triq::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The folders a program of triq is looked for in: the one this tool is in, and then the PATH.
-fn folders() -> impl Iterator<Item = PathBuf> {
-    let beside = std::env::current_exe().ok().and_then(|tool| Some(tool.parent()?.to_owned()));
-    let path: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
-    beside.into_iter().chain(path)
-}
-
 /// Run the program `triq-<name>`, told what the tool was told after its name, and end as it ends.
 fn hand_over(name: &str, told: &[&str]) -> triq::Result<ExitCode> {
-    let file = format!("triq-{name}{}", std::env::consts::EXE_SUFFIX);
-    let Some(program) = folders().map(|folder| folder.join(&file)).find(|program| program.is_file()) else {
-        let neither = format!("no command `{name}`, and no program {file} beside triq or on the PATH");
+    let Some(program) = triq::program(name) else {
+        let neither = format!("no command `{name}`, and no program triq-{name} beside triq or on the PATH");
         return Err(Error::Other(format!("{neither}\n{}", usage())));
     };
     let ended = Command::new(program).args(told).status()?;
@@ -116,21 +107,7 @@ fn hand_over(name: &str, told: &[&str]) -> triq::Result<ExitCode> {
 
 /// What the tool can be told, and the programs of triq it has found, by the names it runs them by.
 fn usage() -> String {
-    let mut programs: Vec<String> = Vec::new();
-    for folder in folders() {
-        let files = std::fs::read_dir(folder).into_iter().flatten().flatten();
-        for file in files.filter(|file| file.path().is_file()) {
-            let name = file.file_name().to_string_lossy().into_owned();
-            let program = name.strip_prefix("triq-").and_then(|name| name.strip_suffix(std::env::consts::EXE_SUFFIX));
-            // A file with something after a dot is not a program: `triq-workbench.d` says what one was built from.
-            if let Some(program) =
-                program.filter(|program| !program.contains('.') && !programs.iter().any(|known| known == program))
-            {
-                programs.push(program.to_owned());
-            }
-        }
-    }
-    programs.sort();
+    let programs: Vec<String> = triq::programs().into_iter().map(|(name, _)| name).collect();
     let found = if programs.is_empty() { "none".to_owned() } else { programs.join(", ") };
     format!("{USAGE}\n\nprograms here: {found}")
 }
