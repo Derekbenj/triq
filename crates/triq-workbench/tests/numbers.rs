@@ -123,8 +123,8 @@ fn the_list_is_searched_by_name_and_what_is_found_is_open() -> triq::Result {
     assert_eq!((nodes(&harness), shown(&harness)), ([true, true, false], [true, true, false, false]));
 
     // Several words find what has each of them somewhere, in capitals or not.
-    search(&mut harness, &format!("SMOOTH {}", robot.to_uppercase()));
-    assert_eq!((nodes(&harness), shown(&harness)), ([false, true, true], [false, false, true, true]));
+    search(&mut harness, &format!("RAW {}", robot.to_uppercase()));
+    assert_eq!((nodes(&harness), shown(&harness)), ([false, true, false], [false, true, false, false]));
 
     // What is found can be folded away, and is dragged onto a chart as ever.
     search(&mut harness, &sensor);
