@@ -19,7 +19,7 @@ const view = {
   // is first opened. Null while it is being asked; `said` is null if it does not say.
   takes: new Map(),
   // The same for what was started: what is typed to find some, and the family chosen.
-  running: { search: '', of: undefined, families: '' },
+  running: { search: '', of: undefined, families: undefined },
   // What a program is to be told, as typed in its box, and the programs whose box is open.
   told: {},
   boxes: new Set(),
@@ -345,8 +345,9 @@ function drawRunning() {
   }
   // The families of what was started, to choose one of. They are listed again when they change.
   const all = families(started.map((one) => one.program), '').map((each) => each.family);
-  if (all.join() !== view.running.families) {
-    view.running.families = all.join();
+  // Those of no family are a family too, the one with no name: so the list is told apart as JSON.
+  if (JSON.stringify(all) !== view.running.families) {
+    view.running.families = JSON.stringify(all);
     if (!all.includes(view.running.of)) view.running.of = undefined;
     const option = (of) => h('option', { value: of, selected: of === view.running.of }, of || 'triq');
     $('running-of').replaceChildren(h('option', { value: '*' }, 'every family'), ...all.map(option));
