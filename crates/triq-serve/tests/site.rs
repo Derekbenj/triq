@@ -52,7 +52,8 @@ fn json_of(answer: &Answer) -> Value {
 fn script(tag: &str, name: &str, does: &str) -> (String, std::path::PathBuf) {
     use std::os::unix::fs::PermissionsExt;
     let folder = std::env::temp_dir().join(format!("triq-serve-{}-{tag}", std::process::id()));
-    std::fs::create_dir_all(&folder).expect("a folder");
+    // Made as the program makes its own folders: see `make`, and why.
+    triq_serve::records::make(&folder).expect("a folder");
     let path = folder.join(format!("triq-{name}"));
     std::fs::write(&path, format!("#!/bin/sh\n{does}\n")).expect("a script");
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("a program");

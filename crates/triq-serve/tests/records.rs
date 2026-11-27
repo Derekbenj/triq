@@ -1,7 +1,7 @@
 //! What is kept on disk of the programs that were started: a small file for each, and beside
 //! it what the program printed; and the file that remembers which folder was chosen for them.
 use std::path::{Path, PathBuf};
-use triq_serve::records::{Record, Records, choose, chosen};
+use triq_serve::records::{Record, Records, choose, chosen, make};
 
 /// A folder of the test's own, which is not there yet.
 fn folder(tag: &str) -> PathBuf {
@@ -74,4 +74,25 @@ fn the_folder_that_was_chosen_is_remembered_in_a_file() {
     assert_eq!(chosen(&file), Some(PathBuf::from("/somewhere/of my own")));
     choose(&file, Path::new("/elsewhere")).expect("remember it");
     assert_eq!(chosen(&file), Some(PathBuf::from("/elsewhere")));
+}
+
+/// Another thread of the program may have narrowed, for a moment, what a new folder is let
+/// have: iceoryx2 does as it binds a socket. A folder made here can be gone into regardless.
+#[cfg(unix)]
+#[test]
+fn a_folder_that_is_made_can_be_used_whatever_the_mask_of_the_process_was() {
+    use std::os::unix::fs::PermissionsExt;
+    let folder = folder("made").join("one").join("two");
+    make(&folder).expect("make it");
+    for part in
+        [folder.clone(), folder.parent().unwrap().to_owned(), folder.parent().unwrap().parent().unwrap().to_owned()]
+    {
+        let mode = std::fs::metadata(&part).expect("it is there").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755, "{}", part.display());
+    }
+    // One that is there already is left as it is.
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o700)).expect("its owner's alone");
+    make(&folder).expect("nothing to do");
+    assert_eq!(std::fs::metadata(&folder).unwrap().permissions().mode() & 0o777, 0o700);
+    std::fs::write(folder.join("a file"), "in it").expect("it can be written in");
 }

@@ -10,7 +10,7 @@
 //!
 //! A command of the `triq` tool that is typed on the page is run by the tool, as a process
 //! that prints to this program and ends. Those are listed apart, and only the last few.
-use crate::records::{Record, Records};
+use crate::records::{Record, Records, make};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -177,6 +177,12 @@ fn runs(record: &Record) -> bool {
     alive(record.pid) && String::from_utf8_lossy(&said.stdout).contains(&*name.to_string_lossy())
 }
 
+/// What went wrong with a file, with the file's name before it: an error of the system's
+/// names none.
+fn about(file: &Path) -> impl Fn(std::io::Error) -> std::io::Error + '_ {
+    move |error| std::io::Error::new(error.kind(), format!("{}: {error}", file.display()))
+}
+
 /// Put a line a program printed with those kept of it, and let the oldest go.
 fn keep(lines: &Lines, line: &[u8]) {
     let mut lines = lines.lock().unwrap();
@@ -298,15 +304,16 @@ impl Programs {
     /// group of its own, printing into a file, and on record.
     fn begin(&mut self, name: String, path: &Path, told: Vec<String>) -> std::io::Result<u64> {
         let id = self.number();
-        std::fs::create_dir_all(self.records.folder())?;
-        let log = File::options().create(true).append(true).open(self.records.log(id))?;
+        make(self.records.folder()).map_err(about(self.records.folder()))?;
+        let printed = self.records.log(id);
+        let log = File::options().create(true).append(true).open(&printed).map_err(about(&printed))?;
         let mut program = Command::new(path);
         program.args(&told).stdin(Stdio::null()).stdout(log.try_clone()?).stderr(log);
         // What ends this program at its terminal, Ctrl-C or the window closed, is sent to the
         // group it is in. The program that is started is in one of its own.
         #[cfg(unix)]
         std::os::unix::process::CommandExt::process_group(&mut program, 0);
-        let mut child = program.spawn()?;
+        let mut child = program.spawn().map_err(about(path))?;
         let began = SystemTime::now();
         let since = began.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         let record = Record {
@@ -322,7 +329,7 @@ impl Programs {
             let _ = child.kill();
             let _ = child.wait();
             self.records.forget(id);
-            return Err(error);
+            return Err(about(self.records.folder())(error));
         }
         let (lines, over) = (Lines::default(), Arc::new(AtomicBool::new(false)));
         follow(self.records.log(id), lines.clone(), over.clone());
@@ -346,12 +353,9 @@ impl Programs {
 
     /// Run the tool with a command, as a process that prints to this program and ends.
     fn run(&mut self, tool: &Path, told: Vec<String>) -> std::io::Result<u64> {
-        let mut child = Command::new(tool)
-            .args(&told)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        let mut asked = Command::new(tool);
+        asked.args(&told).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = asked.spawn().map_err(about(tool))?;
         let lines = Lines::default();
         // What it prints, and what it says is wrong, are read as they come, each by a thread.
         let printed = child.stdout.take().map(|printed| Box::new(printed) as Box<dyn Read + Send>);

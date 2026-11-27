@@ -5,6 +5,23 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
+/// Make a folder, and those it is in that are not there yet, each for its owner to use and
+/// for others to read.
+///
+/// A folder is made with what the mask of the process leaves of the mode asked for, and that
+/// mask is the whole process's: iceoryx2 narrows it for the moment in which it binds a socket,
+/// on whatever thread that is. A folder made in that moment could not be gone into. So each
+/// folder that is made here is given its mode again once it is there.
+pub fn make(folder: &Path) -> std::io::Result<()> {
+    let made: Vec<&Path> = folder.ancestors().take_while(|part| !part.exists()).collect();
+    std::fs::create_dir_all(folder)?;
+    #[cfg(unix)]
+    for part in made {
+        std::fs::set_permissions(part, std::os::unix::fs::PermissionsExt::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 /// What is kept of one program that was started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
@@ -71,7 +88,7 @@ impl Records {
     }
 
     pub fn keep(&self, record: &Record) -> std::io::Result<()> {
-        std::fs::create_dir_all(&self.folder)?;
+        make(&self.folder)?;
         let kept = json!({
             "id": record.id,
             "program": record.program,
@@ -104,7 +121,7 @@ impl Records {
     /// there are go with it, and what was printed: a program that runs prints on into its file
     /// wherever that is moved, as long as it stays on the same disk.
     pub fn move_to(&mut self, folder: &Path) -> std::io::Result<()> {
-        std::fs::create_dir_all(folder)?;
+        make(folder)?;
         if folder.canonicalize()? != self.folder.canonicalize().unwrap_or_default() {
             for (_, file) in self.numbered() {
                 let kept = file.extension().is_some_and(|kind| kind == "json" || kind == "log");
@@ -143,7 +160,7 @@ pub fn chosen(file: &Path) -> Option<PathBuf> {
 /// Remember the folder that was chosen for the records.
 pub fn choose(file: &Path, folder: &Path) -> std::io::Result<()> {
     if let Some(within) = file.parent() {
-        std::fs::create_dir_all(within)?;
+        make(within)?;
     }
     std::fs::write(file, format!("{}\n", folder.display()))
 }
