@@ -591,8 +591,16 @@ and Windows, Ctrl takes the place of `Cmd`; on a Mac it works as well.
   second it is losing, the longest recent gap between two samples, and the latency of the newest
   sample. Every output is there too, with the rate it sends at. They are sorted by name, so what a
   node takes in and what it sends appear together, and so does everything of one runtime. Each
-  has a dot in the colour of its runtime before its name. The box at the top of the list names
-  the runtimes, each beside its dot: choose one to list its numbers alone, or `every runtime`.
+  has a dot in the colour of its runtime before its name.
+- The list is node by node. What a node hears and sends is folded away under the node's name,
+  `runtime/node`, until the name is clicked, and is folded away again by another click: a
+  machine with many nodes is a list of their names.
+- Two boxes stay at the top as the list is scrolled. The first names the runtimes, each beside
+  its dot: choose one to list its numbers alone, or `every runtime`. The second searches the
+  list: it lists what has every word typed there in its name, `runtime/node/port`, or in the
+  name of the output it hears, in capitals or not. So `alpha` lists all of a vehicle called so,
+  `estimator` every estimator, and `alpha estimate` what sends or hears an estimate there. What
+  is found is open, and can be folded away; with nothing typed the list is folded as it was.
 - Open an output to see the `numbers inside` its messages, each with its value in the newest
   message: `translation[0]`, `header.width`, the `length` of a slice. They can be dragged onto
   charts like the rest, and are drawn for every message, at the time it was sent.
