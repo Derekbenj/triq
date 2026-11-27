@@ -428,7 +428,9 @@ hand, is the workbench's, which is one of the programs the page starts.
   it is and how many nodes that has, for how long, and the last line it printed, or all of it.
   `Stop` asks its runtime to shut down, so that it clears its own things away, and ends the
   process if it is no runtime. Pressed again on one that did not shut down, it ends it. One
-  that ended by itself with something wrong shows what it printed, which says why. `Stop all`
+  that ended by itself with something wrong shows what it printed, which says why. One that
+  has ended is started again as it was, or `With arguments`, in a box that opens with those it
+  had: a program that only says what it takes when it is started with nothing. `Stop all`
   stops every one. Runtimes that were started elsewhere are listed under the cards, each with
   `Shut down`.
 - **Command line.** A line for what would be typed after `triq` in a terminal, split into

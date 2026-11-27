@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, registered, running, said, sheet, shown, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, others, registered, running, said, sheet, shown, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -190,6 +190,10 @@ function drawPrograms(now = false) {
 function startedCard(id) {
   const [status, last, log] = [h('div.state'), h('span'), h('pre.log', { hidden: true })];
   const [name, told, ends] = [h('div.name'), h('div.sub'), h('div.row')];
+  // For one that has ended: a box to start it again with other arguments than it had, since
+  // some programs only say what they take when they are started with nothing.
+  const other = h('input', { type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'as after its name in a terminal' });
+  const again = h('form.tell', { hidden: true }, other, h('button.button.go', {}, 'Start'));
   const output = h('button.link', {
     onclick: () => {
       if (view.open.has(id)) view.open.delete(id);
@@ -197,7 +201,7 @@ function startedCard(id) {
       draw();
     },
   });
-  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), status, h('div.last', {}, last, output), log);
+  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), again, status, h('div.last', {}, last, output), log);
   let buttons = '';
   const update = (one) => {
     const how = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
@@ -220,12 +224,26 @@ function startedCard(id) {
       const stop = () => send('/api/stop', { id });
       const about = 'Its runtime did not shut down when it was asked: end the process';
       const renamed = () => start(one.program, named(one.told, unused));
+      // The box opens with what it was started with, to be added to or changed.
+      const argue = () => {
+        again.hidden = !again.hidden;
+        if (again.hidden) return;
+        other.value ||= line(one.told);
+        other.focus();
+      };
+      again.onsubmit = (sent) => {
+        sent.preventDefault();
+        again.hidden = true;
+        start(one.program, other.value);
+      };
+      if (!one.ended) again.hidden = true;
       ends.replaceChildren(
         ...[
           how === 'running' && h('button.button.stop', { onclick: stop }, 'Stop'),
           how === 'stopping' && h('button.button.stop', { onclick: stop, title: about }, 'End it now'),
           unused && h('button.button.go', { onclick: renamed, title: `The name ${clash(one)} is taken: start it under this one` }, `Start as ${unused}`),
-          one.ended && !unused && h('button.button', { onclick: () => start(one.program, one.told.join(' ')), title: 'Start it as it was started' }, 'Start again'),
+          one.ended && !unused && h('button.button', { onclick: () => start(one.program, line(one.told)), title: 'Start it as it was started' }, 'Start again'),
+          one.ended && h('button.button', { onclick: argue, title: 'Start it again with other arguments than it had' }, 'With arguments'),
           one.ended && h('button.button', { onclick: () => send('/api/forget', { id }), title: 'Take it off the page' }, 'Clear'),
         ].filter(Boolean),
       );

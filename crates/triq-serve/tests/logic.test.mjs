@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, registered, running, said, sheet, shown, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, others, registered, running, said, sheet, shown, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -219,4 +219,17 @@ folders registered in /Users/someone/.config/triq/folders:
   assert.deepEqual(registered(none), { file: '/home/someone/.config/triq/folders', folders: [] });
   // A tool that says nothing of folders has none to show.
   assert.deepEqual(registered(USAGE), { file: '', folders: [] });
+});
+
+test('what a program was told is written as a line that tells it the same again', () => {
+  // A word with nothing in it that would end it is as it is; one with a space is in quotes;
+  // one that has such a quote itself has a backslash before what would end it.
+  assert.equal(line(['quad', '--params', '{"position": [0, 0, -1]}']), `quad --params '{"position": [0, 0, -1]}'`);
+  assert.equal(line(["it's", '', 'a b']), `it\\'s '' 'a b'`);
+  assert.equal(line([]), '');
+  // So one more of a program, and what it was told before, are told the words whole.
+  const spawned = { ...one(1, 'physics-rapier', ''), told: ['--gravity', '0 0 9.81'], runtime: 'physics' };
+  assert.equal(another('physics-rapier', [spawned], [home('physics', 1)]), `physics2 --gravity '0 0 9.81'`);
+  assert.deepEqual(earlier([spawned], 'physics-rapier'), [`--gravity '0 0 9.81'`]);
+  assert.equal(named(['old name', 'a b'], 'new'), `new 'a b'`);
 });

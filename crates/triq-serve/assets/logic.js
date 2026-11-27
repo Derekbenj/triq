@@ -26,10 +26,21 @@ export function families(programs, search, of) {
 // Those of a program that were started and still run.
 export const running = (started, program) => started.filter((each) => each.program === program && !each.ended);
 
+// A word as it is typed for a terminal to take it whole: as it is, if nothing in it would
+// end it; in quotes, if something would; and if it has such a quote itself, with a backslash
+// before each letter that would.
+const quoted = (word) => {
+  if (/^[^\s'"\\]+$/.test(word)) return word;
+  return word.includes("'") ? word.replace(/([\s'"\\])/g, '\\$1') : `'${word}'`;
+};
+
+// What a program was told, as a line that tells it the same again.
+export const line = (told) => told.map(quoted).join(' ');
+
 // What a program was told before, the newest first and each once: to be told it again.
 export function earlier(started, program) {
   const told = started.filter((each) => each.program === program && each.told.length > 0);
-  return [...new Set(told.map((each) => each.told.join(' ')).reverse())];
+  return [...new Set(told.map((each) => line(each.told)).reverse())];
 }
 
 // What one more of a program is told, while others of it run: what the last of them was told.
@@ -41,7 +52,7 @@ export function another(program, started, runtimes) {
   if (runs.length === 0) return '';
   const told = [...runs[runs.length - 1].told];
   const first = runs.find((each) => each.runtime);
-  return first ? named(told, free(first.runtime, runtimes)) : told.join(' ');
+  return first ? named(told, free(first.runtime, runtimes)) : line(told);
 }
 
 // A name that no runtime has: the one given without the number it may end in, or that with the
@@ -58,7 +69,7 @@ export function free(name, runtimes) {
 // is no option, since that is the name it was given before; or else in front.
 export function named(told, name) {
   const rest = told.length > 0 && !told[0].startsWith('-') ? told.slice(1) : told;
-  return [name, ...rest].join(' ');
+  return [name, line(rest)].join(' ').trim();
 }
 
 // The name one that was started found taken, if that is what it ended of: triq says so in

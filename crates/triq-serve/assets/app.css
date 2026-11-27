@@ -140,10 +140,12 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .count-inner span + span { border-left: 1px solid var(--line); }
 .count-inner b { color: var(--text); font-size: 0.98rem; font-weight: 600; }
 
-/* The programs on the left, in a column that is no wider than is read at a glance, and the
-   command line on the right, which has the rest and stays in sight. Everything in a column is
-   as wide as the column, so that what is in it ends at one edge. */
-.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(24rem, 1fr); gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
+/* What runs is across the whole page. Under it, the programs on the left, in a column that is
+   no wider than is read at a glance, and the command line on the right, which has the rest
+   and stays in sight. Everything in a column is as wide as the column, so that what is in it
+   ends at one edge. */
+.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(24rem, 1fr); column-gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
+.across { grid-column: 1 / -1; }
 section, .console { margin-top: 2.2rem; }
 .section-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .section-line h2 { margin-top: 0.55rem; }
@@ -171,7 +173,8 @@ input::placeholder { color: var(--faint); }
 
 /* Cards, in as many columns as fit. */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 0.8rem; align-items: start; }
-.cards.wide { grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr)); }
+/* Those that run share the width between them: one has all of it, two a half each. */
+.cards.wide { grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr)); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 0.85rem 1rem; min-width: 0; transition: border-color 0.18s; }
 .card:hover { border-color: var(--edge); }
 .row { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
@@ -201,7 +204,10 @@ input::placeholder { color: var(--faint); }
 .family h3 { margin-bottom: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: color-mix(in srgb, var(--colour) var(--tint), var(--text)); display: flex; align-items: center; gap: 0.5rem; }
 .family h3::before { content: ""; width: 8px; height: 8px; background: var(--colour); }
 
-/* One that was started. A square says how it is: green while it runs. */
+/* One that was started. Its name keeps room to be read: what is done with it goes under the
+   name where there is not room beside it. A square says how it is: green while it runs. */
+#running .card > .row, #running .card > .row > .row { flex-wrap: wrap; row-gap: 0.5rem; }
+#running .card > .row > .grow { flex-basis: 13rem; }
 .state { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.6rem; font-size: 0.86rem; color: var(--ink); }
 .state::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--good); animation: alive 1.6s ease-in-out infinite; }
 .card.stopping .state::before { background: var(--warn); }
@@ -308,14 +314,14 @@ body.gone main { opacity: 0.45; pointer-events: none; }
 body.gone .state::before { animation: none; background: var(--faint); }
 
 @media (max-width: 68rem) {
-  .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .bar { flex-wrap: wrap; gap: 0.9rem; }
+  .now { order: 3; flex-basis: 100%; }
+  .ends { margin-left: auto; }
   .console { position: static; max-height: none; }
   .answers, .sheet { max-height: 30rem; }
 }
 @media (max-width: 44rem) {
-  .bar { flex-wrap: wrap; gap: 0.9rem; }
-  .now { order: 3; flex-basis: 100%; }
-  .ends { margin-left: auto; }
   .mark { font-size: 40px; }
   .cards, .cards.wide { grid-template-columns: 1fr; }
   #search { flex: 1; width: auto; }
