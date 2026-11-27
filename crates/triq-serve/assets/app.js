@@ -14,7 +14,7 @@ const view = {
   // chosen: the empty name is the family of those that have none.
   search: '',
   of: undefined,
-  families: '',
+  families: undefined,
   // What each program says it takes, in its own words: asked for when its box for arguments
   // is first opened. Null while it is being asked; `said` is null if it does not say.
   takes: new Map(),
@@ -218,8 +218,9 @@ function drawPrograms(now = false) {
   const { found, started } = state.programs;
   // The families there are, to choose one of. They are listed again when they change.
   const all = families(found, '').map((each) => each.family);
-  if (all.join() !== view.families) {
-    view.families = all.join();
+  // Those of no family are a family too, the one with no name: so the list is told apart as JSON.
+  if (JSON.stringify(all) !== view.families) {
+    view.families = JSON.stringify(all);
     if (!all.includes(view.of)) view.of = undefined;
     const option = (of) => h('option', { value: of, selected: of === view.of }, of || 'triq');
     $('of').replaceChildren(h('option', { value: '*' }, 'every family'), ...all.map(option));
@@ -712,7 +713,8 @@ function suggest() {
   const line = $('line').value;
   $('hint').textContent = hint(line, view.known) ?? '';
   const known = view.known.map((each) => each.command);
-  const names = line.trim() ? offers(line, known, state.programs.found, view.machine).slice(0, 10) : [];
+  // All of them: Tab takes what they all begin with, and one that is not shown cannot be seen to be there.
+  const names = line.trim() ? offers(line, known, state.programs.found, view.machine) : [];
   $('offers').replaceChildren(...names.map((name) => h('button', { type: 'button', onclick: () => take(name) }, name)));
   return names;
 }

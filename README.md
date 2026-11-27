@@ -465,7 +465,7 @@ hand, is the workbench's, which is one of the programs the page starts.
   typed as it is there. As a line is typed the page says what the command takes, and offers
   names to end the word being typed, from the machine as it is: runtimes, nodes, ports, the
   kinds a runtime offers, and for the second end of a wire only the inputs that take what the
-  output sends. Tab takes what is offered, and the arrows bring back what was typed before.
+  output sends. All of them are shown, in a few rows that scroll. Tab takes what is offered, and the arrows bring back what was typed before.
   What comes of a line is under it, drawn for what it is: `list` as the runtimes with their
   kinds and their nodes, a node's ports under it at a click, and `watch` the same, kept up to
   date; `fields` and `help` as tables; a command that printed nothing as `done`; one that

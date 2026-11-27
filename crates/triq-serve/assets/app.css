@@ -272,7 +272,8 @@ input::placeholder { color: var(--faint); }
 .node span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ports { padding: 0.25rem 0.65rem 0.45rem 1.9rem; font: 0.72rem/1.6 var(--mono); color: var(--faint); border-top: 1px dashed var(--seam); word-break: break-all; }
 .ports b { color: var(--ink); font-weight: 600; }
-.offers { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 1rem; }
+/* What is offered for the word being typed: all of it, in a few rows that are scrolled where there is more. */
+.offers { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 1rem; max-height: 7.4rem; overflow: auto; }
 .offers:not(:empty) { padding-block: 0.1rem 0.7rem; }
 .offers button, .try { font: 0.74rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.4rem; color: var(--ink); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .offers button:first-child { border-color: var(--accent-line); color: var(--accent); }
