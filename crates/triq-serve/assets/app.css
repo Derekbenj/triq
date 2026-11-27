@@ -2,11 +2,13 @@
    name and its headings, in neon colours. One font is in the program for those letters. */
 @font-face { font-family: "Press Start 2P"; src: url("/press-start-2p.ttf") format("truetype"); font-display: block; }
 
-/* The colours, by what they are for. The top of the page has the dark ones whichever is
-   chosen, as the sign over an arcade machine is lit in a bright room too. */
-:root, .top {
+/* The colours, by what they are for: a dark set, and a light one beside it. */
+:root {
   color-scheme: dark;
   --bg: #11111b;
+  --top: #151424;
+  --strip: #1c1a29;
+  --marks: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='180' fill='none' stroke='%23262338' stroke-width='3'%3E%3Cpath d='M22 28l12 12m0-12l-12 12M150 96l12 12m0-12l-12 12M92 150l10 10m0-10l-10 10'/%3E%3Ccircle cx='108' cy='44' r='8'/%3E%3Ccircle cx='190' cy='150' r='6'/%3E%3Ccircle cx='40' cy='118' r='7'/%3E%3C/svg%3E");
   --surface: #1a1927;
   --raised: #211e30;
   --lifted: #302a42;
@@ -37,6 +39,9 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --bg: #f6f5fb;
+  --top: #e9e8f1;
+  --strip: #dfdde9;
+  --marks: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='180' fill='none' stroke='%23d5d2e2' stroke-width='3'%3E%3Cpath d='M22 28l12 12m0-12l-12 12M150 96l12 12m0-12l-12 12M92 150l10 10m0-10l-10 10'/%3E%3Ccircle cx='108' cy='44' r='8'/%3E%3Ccircle cx='190' cy='150' r='6'/%3E%3Ccircle cx='40' cy='118' r='7'/%3E%3C/svg%3E");
   --surface: #ffffff;
   --raised: #efedf7;
   --lifted: #e3dff1;
@@ -98,7 +103,7 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 
 /* The top: the name, what is running in a sentence, and what ends things. Behind it, faint
    crosses and rings, as on the screen of such a machine. */
-.top { color: var(--text); background: #151424 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='180' fill='none' stroke='%23262338' stroke-width='3'%3E%3Cpath d='M22 28l12 12m0-12l-12 12M150 96l12 12m0-12l-12 12M92 150l10 10m0-10l-10 10'/%3E%3Ccircle cx='108' cy='44' r='8'/%3E%3Ccircle cx='190' cy='150' r='6'/%3E%3Ccircle cx='40' cy='118' r='7'/%3E%3C/svg%3E"); border-bottom: 1px solid var(--line); }
+.top { background: var(--top) var(--marks); border-bottom: 1px solid var(--line); }
 .bar { display: flex; align-items: center; gap: 2.2rem; padding-block: 1.6rem 1.5rem; }
 .now { flex: 1; min-width: 0; }
 .now h1 { font-size: clamp(1.5rem, 2.4vw, 2.1rem); font-weight: 560; letter-spacing: -0.03em; line-height: 1.15; margin-top: 0.3rem; }
@@ -114,9 +119,15 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .mark span:nth-child(4n + 2) { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; --light: #fff4a8; --x: 0px; --y: 5px; --r: 3deg; }
 .mark span:nth-child(4n + 3) { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; --light: #b4f1ff; --x: 0px; --y: -4px; --r: -2deg; }
 .mark span:nth-child(4n + 4) { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; --light: #c6ffd8; --x: 0px; --y: 4px; --r: 5deg; }
+/* On the light page the faces are deeper, and the edge up and to the left is dark, not light:
+   it is what a bright letter is told from a bright page by. */
+:root[data-theme="light"] .mark span:nth-child(4n + 1) { --face: #ff4d9d; --side: #c41f79; --deep: #7a1050; --light: #c41f79; }
+:root[data-theme="light"] .mark span:nth-child(4n + 2) { --face: #ffc21f; --side: #e07a0c; --deep: #9a4508; --light: #e07a0c; }
+:root[data-theme="light"] .mark span:nth-child(4n + 3) { --face: #2cc6f5; --side: #1180bd; --deep: #0a5380; --light: #1180bd; }
+:root[data-theme="light"] .mark span:nth-child(4n + 4) { --face: #44dc78; --side: #189a4d; --deep: #0d6633; --light: #189a4d; }
 
 /* A strip of counts under the top. */
-.counts { background: #1c1a29; border-top: 1px solid #2c2939; }
+.counts { background: var(--strip); border-top: 1px solid var(--line); }
 .count-inner { display: grid; grid-template-columns: repeat(3, 1fr); min-height: 3rem; align-items: center; }
 .count-inner span { display: flex; align-items: center; justify-content: center; gap: 0.6rem; font: 0.8rem/1.5 var(--mono); color: var(--dim); }
 .count-inner span + span { border-left: 1px solid var(--line); }
@@ -136,8 +147,8 @@ section, .console { margin-top: 2.2rem; }
 .button.stop { color: var(--stop-ink); background: var(--stop); border-color: var(--stop-rim); box-shadow: 0 2px 0 var(--stop-under); }
 .button.stop:hover { background: #ff84bb; border-color: var(--stop-rim); }
 .button:active { transform: translateY(1px); }
-:root[data-theme="light"] main .button.go { border-color: var(--go-under); }
-:root[data-theme="light"] main .button.stop { border-color: var(--stop-under); }
+:root[data-theme="light"] .button.go { border-color: var(--go-under); }
+:root[data-theme="light"] .button.stop { border-color: var(--stop-under); }
 .link { border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; font-size: 0.84rem; font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 3px; }
 .link:hover { text-decoration-color: currentColor; }
 input[type=search], input[type=text], select { border: 1px solid var(--edge); border-radius: 5px; padding: 0.42rem 0.75rem; background: var(--field); outline: none; min-width: 0; }
