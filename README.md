@@ -515,7 +515,14 @@ where it will land, and it matters how high on the other pane you drop it:
 - Drag a group by its name, as you would a pane; it is still a group where you drop it. Dragging
   a bar by the space beside its names moves everything on that bar. The cross beside a group's
   name closes everything in the group.
-- A pane dropped on a bar, among its names, becomes one more name on that bar.
+- **The short way to a group is the name of another pane.** Drop a pane on the name of
+  another, on that one's bar, and the two are a group where the other was: side by side, the
+  other on the left. It is the way to put two of the panes that share one bar side by side, when
+  only one of them is seen at a time. Dropped on the name of a group, a pane joins the group at
+  its end. While it is held over a name, what the name is of comes to the front, and the
+  highlight is where the pane will land beside it.
+- That is for the middle of a name. Dropped at an end of a name, between two names or beside
+  the last, a pane becomes one more name on that bar.
 - Clicking a name on a bar brings its pane to the front.
 - A group that is left with only one pane stops being a group, and its bar disappears.
 - `Runtimes`, `Details` and the list of numbers in `Charts` are laid out in the width they are

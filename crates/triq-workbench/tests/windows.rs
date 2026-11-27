@@ -255,5 +255,17 @@ fn of_the_names_on_one_bar_one_let_go_on_another_makes_a_group_and_let_go_betwee
     assert!(inner.top() > both.bottom() - 1.0 && inner.top() == beside.top() && inner.right() < beside.left());
     // The group is the one in front: both of its windows are seen, and the graph is behind them.
     assert!(shows(&harness, SAID[0]) && shows(&harness, SAID[2]) && !shows(&harness, SAID[1]));
+
+    // A group is taken by its name as a window is. Let go on the name of the graph, it is beside
+    // the graph and still a group: under its own bar, which is under the bar of all three.
+    drag(&mut harness, both.center(), graph.center());
+    harness.run_steps(10);
+    let (all, both) = (group(&harness, "Graph, Details, Runtimes"), group(&harness, "Details, Runtimes"));
+    let [runtimes, graph, details, _] = names(&harness).map(|name| name.expect("an open window"));
+    assert!(graph.top() > all.bottom() - 1.0 && both.top() == graph.top() && graph.right() < both.left());
+    assert!(
+        details.top() > both.bottom() - 1.0 && details.top() == runtimes.top() && details.right() < runtimes.left()
+    );
+    assert!(SAID.iter().all(|said| shows(&harness, said)));
     Ok(())
 }

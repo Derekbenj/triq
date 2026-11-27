@@ -284,6 +284,31 @@ fn charts_are_added_put_where_they_should_be_resized_and_closed() -> triq::Resul
 }
 
 #[test]
+fn a_chart_let_go_on_the_name_of_another_is_beside_it_in_a_group_of_the_two() -> triq::Result {
+    let _alone = alone();
+    let scene = Scene::new()?;
+    let mut harness = arranging(&scene, Charts::default())?;
+    // Two charts, the second under the first. The second is taken by its name and let go on the
+    // name of the first.
+    add(&mut harness);
+    let under = beside(&harness, "Chart 1", egui::vec2(0.0, 1.0));
+    put(&mut harness, "Chart 2", under);
+    let was = name(&harness, "Chart 1");
+    put(&mut harness, "Chart 2", was.center());
+    // They are a group where the first was, under a bar that names both: the first on the left and
+    // the second on the right, each under its own bar.
+    let both = name(&harness, "Charts 1, 2");
+    let (first, second) = (name(&harness, "Chart 1"), name(&harness, "Chart 2"));
+    assert!(both.top() == was.top() && first.top() > both.bottom() - 1.0, "the bar of the first is under the group's");
+    assert!(
+        second.top() == first.top() && second.left() > first.left() + 300.0,
+        "{first:?} and {second:?} side by side"
+    );
+    assert!(room(&harness, "Chart 1").right() <= room(&harness, "Chart 2").left());
+    Ok(())
+}
+
+#[test]
 fn a_chart_is_put_down_beside_another_or_in_its_place() -> triq::Result {
     let _alone = alone();
     let scene = Scene::new()?;

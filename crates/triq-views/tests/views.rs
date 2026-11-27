@@ -118,6 +118,28 @@ fn node(remote: &Remote, name: &str) -> Option<NodeInfo> {
 const EDGE: egui::Pos2 = egui::pos2(1192.0, 800.0);
 
 #[test]
+fn a_view_let_go_on_the_name_of_another_is_beside_it_in_a_group_of_the_two() -> triq::Result {
+    let home = unique("joined");
+    let mut harness = window(&home, None);
+    let remote = Remote::open(&home)?;
+    remote.spawn("gauge", "attic", Placement::Dedicated, json!(null))?;
+    remote.spawn("counter", "clicks", Placement::Dedicated, json!(null))?;
+    assert!(until(&mut harness, |harness| pane(harness, "attic").is_some() && pane(harness, "clicks").is_some()));
+    harness.run_steps(3);
+    // Two views, neighbours. The first is taken by its name and let go on the name of the second.
+    let (attic, clicks) = (pane(&harness, "attic").unwrap(), pane(&harness, "clicks").unwrap());
+    assert!(attic.left() < clicks.left() && group(&harness, "clicks, attic").is_none());
+    drag(&mut harness, attic.center(), clicks.center());
+    // They are a group, under a bar that names both: the second on the left now, and the first on
+    // its right, each under its own bar.
+    let both = group(&harness, "clicks, attic").expect("a bar for the two");
+    let (attic, clicks) = (pane(&harness, "attic").unwrap(), pane(&harness, "clicks").unwrap());
+    assert!(clicks.top() > both.bottom() - 1.0 && attic.top() == clicks.top(), "their bars are under the group's");
+    assert!(clicks.left() == both.left() && attic.left() > clicks.left() + 300.0, "{clicks:?} and {attic:?}");
+    Ok(())
+}
+
+#[test]
 fn every_view_has_a_pane_that_the_user_arranges_and_the_next_run_remembers() -> triq::Result {
     let (home, there) = (unique("views"), unique("station"));
     let station_runtime = Runtime::new(&there)?;

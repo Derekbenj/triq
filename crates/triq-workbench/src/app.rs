@@ -348,8 +348,8 @@ impl Workbench {
                 ui.weak("Every window is closed. Their names above open them.");
             }
             let idle = panes::idle_bars(&self.windows.tiles);
-            let mut shown = Shown { contents: &mut self.contents, idle, closed: None };
-            let carried = self.windows.dragged_id(ui.ctx());
+            let carried = panes::Carried::of(&self.windows, ui.ctx());
+            let mut shown = Shown { contents: &mut self.contents, idle, closed: None, carried };
             self.windows.ui(&mut shown, ui);
             // A window that is closed is only out of sight. It keeps its place, for when it is opened again.
             if let Some(place) = shown.closed {
@@ -357,7 +357,7 @@ impl Workbench {
                     self.windows.set_visible(window, false);
                 }
             }
-            if panes::tidy(&mut self.windows, carried) {
+            if panes::tidy(&mut self.windows, &shown.carried) {
                 ui.ctx().request_repaint();
             }
         });
@@ -421,6 +421,8 @@ struct Shown<'a> {
     idle: Vec<TileId>,
     /// The place whose cross was pressed, to be closed once everything is drawn.
     closed: Option<TileId>,
+    /// The window that is carried by its name, and the name of another it is held over.
+    carried: panes::Carried,
 }
 
 impl Behavior<Window> for Shown<'_> {
@@ -453,10 +455,22 @@ impl Behavior<Window> for Shown<'_> {
         !self.idle.contains(&place)
     }
 
-    fn on_tab_button(&mut self, _: &mut Tiles<Window>, _: TileId, name: egui::Response) -> egui::Response {
+    fn on_tab_button(&mut self, tiles: &mut Tiles<Window>, place: TileId, name: egui::Response) -> egui::Response {
+        self.carried.name(tiles, place, &name);
         name.on_hover_text(
-            "Drag the name to put the window beside another, or onto the middle of one to share its place",
+            "Drag the name to put the window beside another, onto the middle of one to share its place, \
+             or onto the name of one to be side by side with it",
         )
+    }
+
+    fn paint_drag_preview(
+        &self,
+        visuals: &egui::Visuals,
+        painter: &egui::Painter,
+        around: Option<Rect>,
+        landing: Rect,
+    ) {
+        self.carried.highlight(visuals, painter, around, landing);
     }
 
     fn is_tab_closable(&self, _: &Tiles<Window>, _: TileId) -> bool {

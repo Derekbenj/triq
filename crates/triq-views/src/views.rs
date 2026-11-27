@@ -125,16 +125,17 @@ impl Views {
                 );
             }
             let idle = panes::idle_bars(&self.panes.tiles);
-            let mut drawn = Drawn { kinds: &mut self.kinds, views: &views, idle, closed: None };
-            let carried = self.panes.dragged_id(ui.ctx());
+            let carried = panes::Carried::of(&self.panes, ui.ctx());
+            let mut drawn = Drawn { kinds: &mut self.kinds, views: &views, idle, closed: None, carried };
             self.panes.ui(&mut drawn, ui);
+            let Drawn { closed, carried, .. } = drawn;
             // A view that is closed is only out of sight. Its pane keeps its place, for when it is opened again.
-            if let Some(place) = drawn.closed {
+            if let Some(place) = closed {
                 for pane in panes::panes_in(&self.panes.tiles, place) {
                     self.open(pane, false);
                 }
             }
-            if panes::tidy(&mut self.panes, carried) {
+            if panes::tidy(&mut self.panes, &carried) {
                 ui.ctx().request_repaint();
             }
         });
@@ -203,6 +204,8 @@ struct Drawn<'a> {
     idle: Vec<TileId>,
     /// The place whose cross was pressed, to be closed once everything is drawn.
     closed: Option<TileId>,
+    /// The view that is carried by its name, and the name of another it is held over.
+    carried: panes::Carried,
 }
 
 impl Behavior<Place> for Drawn<'_> {
@@ -226,10 +229,22 @@ impl Behavior<Place> for Drawn<'_> {
         names.join(", ").into()
     }
 
-    fn on_tab_button(&mut self, _: &mut Tiles<Place>, _: TileId, name: egui::Response) -> egui::Response {
+    fn on_tab_button(&mut self, tiles: &mut Tiles<Place>, place: TileId, name: egui::Response) -> egui::Response {
+        self.carried.name(tiles, place, &name);
         name.on_hover_text(
-            "Drag the name to put the view beside another, in with it, or onto its middle to share its place",
+            "Drag the name to put the view beside another, in with it, onto its middle to share its place, \
+             or onto its name to be side by side with it",
         )
+    }
+
+    fn paint_drag_preview(
+        &self,
+        visuals: &egui::Visuals,
+        painter: &egui::Painter,
+        around: Option<egui::Rect>,
+        landing: egui::Rect,
+    ) {
+        self.carried.highlight(visuals, painter, around, landing);
     }
 
     fn is_tab_bar_visible(&self, place: TileId, _: &Tabs) -> bool {

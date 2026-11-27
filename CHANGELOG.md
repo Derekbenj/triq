@@ -2,6 +2,12 @@
 
 ## Not yet released
 
+- **A pane dropped on the name of another is side by side with it.** In the workbench, and in a
+  views program, a window, chart or view that is dragged by its name and let go on the name of
+  another, on that one's bar, becomes a group with it where the other was, the two side by
+  side. On the name of a group it joins the group. Dropped at an end of a name, it is one more
+  name on the bar, as before. `triq_views::panes::tidy` takes a `panes::Carried` now, which a
+  `Behavior` tells of each name and asks for the highlight.
 - **`triq serve`: triq's programs in a browser.** `triq-serve` serves a page to this machine
   alone that starts triq's programs as processes, more than one of each under names of their
   own, shows what they print, and stops them. What the page does a script or a language model

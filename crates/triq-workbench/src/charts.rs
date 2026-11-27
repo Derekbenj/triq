@@ -351,10 +351,10 @@ impl Charts {
             if self.charts().next().is_none() {
                 ui.weak("There is no chart. The buttons above make one.");
             }
-            let mut drawn = Drawn { recorded, now, forward: None, moved: None };
-            let carried = self.panes.dragged_id(ui.ctx());
+            let carried = panes::Carried::of(&self.panes, ui.ctx());
+            let mut drawn = Drawn { recorded, now, forward: None, moved: None, carried };
             self.panes.ui(&mut drawn, ui);
-            if panes::tidy(&mut self.panes, carried) {
+            if panes::tidy(&mut self.panes, &drawn.carried) {
                 ui.ctx().request_repaint();
             }
             if let Some(chart) = drawn.forward {
@@ -473,6 +473,8 @@ struct Drawn<'a> {
     /// A line that was put down on a chart: the number of the chart it is on, which of that
     /// chart's colours it was given, and the number of the chart it was put down on.
     moved: Option<(usize, usize, usize)>,
+    /// The chart that is carried by its name, and the name of another it is held over.
+    carried: panes::Carried,
 }
 
 impl Behavior<Chart> for Drawn<'_> {
@@ -514,13 +516,25 @@ impl Behavior<Chart> for Drawn<'_> {
     }
 
     /// What is held over the name of a chart brings the chart forward, to be put down on it.
-    fn on_tab_button(&mut self, _: &mut Tiles<Chart>, chart: TileId, name: egui::Response) -> egui::Response {
+    fn on_tab_button(&mut self, tiles: &mut Tiles<Chart>, chart: TileId, name: egui::Response) -> egui::Response {
         if name.dnd_hover_payload::<Carried>().is_some() {
             self.forward = Some(chart);
         }
+        self.carried.name(tiles, chart, &name);
         name.on_hover_text(
-            "Drag the name to put the chart beside another, or onto the middle of one to share its place",
+            "Drag the name to put the chart beside another, onto the middle of one to share its place, \
+             or onto the name of one to be side by side with it",
         )
+    }
+
+    fn paint_drag_preview(
+        &self,
+        visuals: &egui::Visuals,
+        painter: &egui::Painter,
+        around: Option<egui::Rect>,
+        landing: egui::Rect,
+    ) {
+        self.carried.highlight(visuals, painter, around, landing);
     }
 
     /// What is behind a name is closed with it: a chart, or every chart of a group. The last
