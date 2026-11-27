@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, running, said, sheet, shown, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -107,16 +107,12 @@ function h(what, attributes = {}, ...children) {
   return element;
 }
 
-// Each family of programs has a colour, and a program's picture is drawn in it.
+// Each family of programs has a colour: its name is written in it, and its programs have an edge of it.
 const COLOURS = { '': '#c7afff', algorithm: '#38d6ff', peripheral: '#ffd23f', physics: '#62f08a', simulator: '#ff9a3d', stack: '#ff5fa8' };
 const SPARE = ['#7de3d0', '#c7afff', '#ff9a3d', '#38d6ff', '#ff5fa8'];
 const colourOf = (name) => {
   const letters = [...family(name)].reduce((sum, letter) => sum + letter.codePointAt(0), 0);
   return COLOURS[family(name)] ?? SPARE[letters % SPARE.length];
-};
-const pictured = (name) => {
-  const squares = picture(name).flat().map((on) => h(on ? 'i.on' : 'i'));
-  return h('span.picture', { style: `--colour: ${colourOf(name)}`, 'aria-hidden': 'true' }, squares);
 };
 // A program's name without its family, which is said above it.
 const short = (name) => (family(name) ? name.slice(family(name).length + 1) : name);
@@ -140,22 +136,20 @@ function programCard(name) {
   box.addEventListener('input', () => (view.told[name] = box.value));
   box.addEventListener('keydown', (key) => key.key === 'Enter' && go());
   const again = (told) => h('button.told', { title: 'It was started with these before', onclick: () => ((view.told[name] = told), drawPrograms(true)) }, told);
+  // One line for a program: its name, how many of it run, and what starts it. More only when
+  // there is more to say: what the next would be started with, and the box for arguments.
   return h(
-    'div.card',
+    'div.card.item',
     {},
     h(
       'div.row',
       {},
-      pictured(name),
-      h('div.grow', {}, h('div.name', {}, short(name)), h('div.sub', {}, runs ? h('span.badge', {}, `${runs} running`) : `triq ${name}`)),
-      h('button.button.go', { onclick: go, title: `triq ${name}` }, runs ? 'Start another' : 'Start'),
+      h('div.name.grow', { title: `triq ${name}` }, short(name)),
+      runs > 0 && h('span.badge', {}, `${runs} running`),
+      h('button.link', { onclick: ask, title: 'What would be typed after its name in a terminal' }, asked ? 'no arguments' : 'arguments'),
+      h('button.button.go.small', { onclick: go, title: `triq ${name}` }, runs ? 'Start another' : 'Start'),
     ),
-    h(
-      'div.under',
-      {},
-      h('button.link', { onclick: ask }, asked ? 'without arguments of my own' : 'with arguments'),
-      !asked && proposed && h('span', {}, 'the next is started with ', h('span.told', {}, proposed)),
-    ),
+    !asked && proposed && h('div.under', {}, 'the next is started with ', h('span.told', {}, proposed)),
     asked && h('div.tell', {}, box),
     asked && earlier(started, name).length > 0 && h('div.before', {}, earlier(started, name).map(again)),
   );
@@ -199,13 +193,12 @@ function startedCard(id) {
       draw();
     },
   });
-  const face = h('span');
-  const root = h('div.card', {}, h('div.row', {}, face, h('div.grow', {}, name, told), ends), status, h('div.last', {}, last, output), log);
+  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), status, h('div.last', {}, last, output), log);
   let buttons = '';
   const update = (one) => {
     const how = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
     root.className = `card ${how}`;
-    if (face.isConnected && !face.firstChild) face.replaceWith(pictured(one.program));
+    root.style.setProperty('--colour', colourOf(one.program));
     name.textContent = one.program;
     told.replaceChildren(one.told.length ? h('span', {}, 'started with ', h('span.told', {}, one.told.join(' '))) : 'started with no arguments');
     const lasted = one.ended ? `after ${age(one.seconds)}` : `for ${age(one.seconds)}`;

@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, running, said, sheet, shown, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -80,17 +80,6 @@ test('what one that was started is doing is said in words, and for how long', ()
 
 test('the runtimes that were started elsewhere are those no program started here is', () => {
   assert.deepEqual(others([home('quadcopter', 1), home('bevy'), home('xbox')]).map((each) => each.runtime), ['bevy', 'xbox']);
-});
-
-test('a program has a picture of its own: five rows of five squares, the same on both sides, and always the same', () => {
-  for (const name of ['workbench', 'stack-quadcopter', 'algorithm-sensors', 'x']) {
-    const squares = picture(name);
-    assert.equal(squares.length, 5);
-    assert.ok(squares.every((row) => row.length === 5 && row[0] === row[4] && row[1] === row[3]));
-    assert.ok(squares.flat().filter(Boolean).length >= 6, `${name} is not nearly empty`);
-    assert.deepEqual(picture(name), squares);
-  }
-  assert.notDeepEqual(picture('algorithm-sensors'), picture('algorithm-estimators'));
 });
 
 // What the tool says it can be told, as far as the tests need it; and a machine of two runtimes.

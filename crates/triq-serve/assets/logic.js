@@ -87,23 +87,6 @@ export function age(seconds) {
 // The runtimes that no program started here is: they were started elsewhere.
 export const others = (runtimes) => runtimes.filter((each) => each.started === null);
 
-// A picture for a name: five rows of five squares, each there or not, the same on both sides.
-// The same name always has the same picture, so that a program is known by it at a glance.
-export function picture(name) {
-  // A number made of the name, mixed until each of its bits depends on every letter.
-  let number = 2166136261;
-  for (const letter of name) number = Math.imul(number ^ letter.codePointAt(0), 16777619);
-  number = Math.imul(number ^ (number >>> 15), 2246822519);
-  number = (number ^ (number >>> 13)) >>> 0;
-  const rows = [0, 1, 2, 3, 4].map((down) => {
-    const [a, b, c] = [0, 1, 2].map((across) => ((number >>> (down * 3 + across)) & 1) === 1);
-    return [a, b, c, b, a];
-  });
-  // A picture with next to nothing in it is turned inside out.
-  const sparse = rows.flat().filter(Boolean).length < 9;
-  return sparse ? rows.map((row) => row.map((on) => !on)) : rows;
-}
-
 // What the tool can be told, read from what it says when asked: of each command its name, what
 // it takes, and what it is for. The line about programs is no command of its own.
 export function commands(usage) {
