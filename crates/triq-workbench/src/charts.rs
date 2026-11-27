@@ -44,7 +44,7 @@ mod view;
 
 pub use curves::sparse;
 pub use lines::{Trace, extent, thinned, written};
-pub use list::{by_runtime, runtime_of};
+pub use list::{by_runtime, found, runtime_of};
 pub use pen::{color, pieces};
 pub use view::{Frame, Ground, Lens, Point, clipped, ground_reach, marks, round_step, tick};
 

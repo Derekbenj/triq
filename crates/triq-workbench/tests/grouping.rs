@@ -50,7 +50,8 @@ fn fresh(harness: &Bench<'_>, inside: Option<&str>) -> String {
 /// Ask the robot for something of a kind it offers: pick the kind among the runtimes, and create
 /// it under the name the form proposes. The list of runtimes may be long, with the kind out of sight.
 fn create(harness: &mut Bench<'_>, kind: &str) {
-    let button = format!("New {kind}");
+    // A kind that makes a group says so on its button.
+    let button = if kind == "filter" { format!("New {kind}") } else { format!("New group {kind}") };
     harness.get_all_by_label(&button).next().expect("the factory").scroll_to_me();
     harness.run_steps(3);
     harness.get_all_by_label(&button).next().expect("the factory").click();

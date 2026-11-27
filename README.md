@@ -614,9 +614,12 @@ In `Runtimes`, `Graph` and `Details`:
   Every other card goes grey, with its wires. A node that merely hears the same output is one of
   those: with two rigs on one controller, a click on one rig greys the other and what hangs on
   it. A click beside the cards brings the colours back.
+- The box over `Runtimes` finds runtimes: type part of a name, or a process as `Runtimes` writes
+  it, and those that have every word in their name or in their process are listed alone.
 - Click a kind in `Runtimes` to create a node: name, thread or pool, settings. The form stays after
   `Create`, under the next name that is free, for another node of the kind. A kind that is a group
-  of nodes asks only for a name, and says which nodes it creates.
+  of nodes says so on its button, `New group pair` beside `New filter`, and has a line around
+  it; it asks only for a name, and says which nodes it creates.
 - Drag from an output pin to an input pin to connect them. Only pins of the same message type snap together.
 - Right-click a wire or a pin to disconnect it.
 - Click a node to see where it runs (its runtime, the process, the thread or pool), its counters

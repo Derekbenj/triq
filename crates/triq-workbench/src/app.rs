@@ -123,6 +123,8 @@ struct Contents {
     colors: Colors,
     charts: Charts,
     focus: Focus,
+    /// What is typed in the box over the list of runtimes, to find some of them by.
+    find: String,
     /// Something was clicked that the details are now about: their window is to be seen.
     reveal: bool,
     /// What was asked for that changes what the graph shows, to be done once the frame is drawn.
@@ -227,6 +229,7 @@ impl Workbench {
             colors: Colors::default(),
             charts: Charts::default(),
             focus: Focus::Nothing,
+            find: String::new(),
             reveal: false,
             wish: None,
             tabbed: false,
@@ -539,20 +542,34 @@ impl Contents {
         }
     }
 
-    /// Every runtime with its pools, the kinds of node it offers, and its nodes.
+    /// Every runtime with its pools, the kinds of node it offers, and its nodes. The box over
+    /// the list finds runtimes: those that have every word typed there in their name or in
+    /// their process are listed, and the others are not.
     fn runtimes(&mut self, ui: &mut Ui) {
         let inventories = self.inventories.clone();
+        // The box stays where it is, over the list as it is scrolled.
+        ui.horizontal(|ui| {
+            let label = ui.weak("Find");
+            let about = "List the runtimes that have every word typed here in their name or in their process";
+            let words = egui::TextEdit::singleline(&mut self.find).hint_text("by name or process");
+            ui.add(words.desired_width(f32::INFINITY)).labelled_by(label.id).on_hover_text(about);
+        });
+        ui.separator();
+        let process = |inventory: &Inventory| format!("process {}", inventory.pid);
+        let found = |inventory: &&Inventory| crate::charts::found(&self.find, &inventory.runtime, &process(inventory));
+        let found: Vec<&Inventory> = inventories.iter().filter(found).collect();
         column(ui, NARROWEST_LIST, |ui| {
             if inventories.is_empty() {
                 ui.weak("No runtime is running on this machine.");
+            } else if found.is_empty() {
+                ui.weak("No runtime has that in its name or its process.");
             }
-            for inventory in inventories.iter() {
+            for inventory in found {
                 ui.horizontal_wrapped(|ui| {
                     paint(ui, &mut self.colors, &inventory.runtime);
                     ui.strong(&inventory.runtime);
                     // Kept in one piece: where the row is too short for it, it goes under the name.
-                    let process = egui::RichText::new(format!("process {}", inventory.pid)).weak();
-                    ui.add(egui::Label::new(process).extend());
+                    ui.add(egui::Label::new(egui::RichText::new(process(inventory)).weak()).extend());
                 });
                 for pool in &inventory.pools {
                     let kind = match (pool.shared, pool.polling) {
@@ -563,11 +580,17 @@ impl Contents {
                     ui.weak(format!("pool {}: {} threads{kind}", pool.name, pool.threads));
                 }
                 for factory in &inventory.factories {
-                    let mut new = ui.button(format!("New {}", factory.kind));
-                    // A kind may be several nodes that are created together, as a group.
-                    if let Some(group) = &factory.group {
-                        new = new.on_hover_text(format!("A group of {} nodes, wired to each other", group.nodes.len()));
-                    }
+                    // A kind may be several nodes that are created together, as a group. Its
+                    // button says so, and is told from one that makes a node by the line around it.
+                    let new = match &factory.group {
+                        None => ui.button(format!("New {}", factory.kind)),
+                        Some(group) => {
+                            let line = ui.visuals().widgets.inactive.fg_stroke;
+                            let new = egui::Button::new(format!("New group {}", factory.kind)).stroke(line);
+                            ui.add(new)
+                                .on_hover_text(format!("A group of {} nodes, wired to each other", group.nodes.len()))
+                        }
+                    };
                     if new.clicked() {
                         (self.focus, self.reveal) = (Focus::Form(Form::new(inventory, factory)), true);
                     }

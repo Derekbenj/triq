@@ -2,6 +2,10 @@
 
 ## Not yet released
 
+- **The workbench's runtimes are found by name or by process, and a kind that makes a group
+  says so.** A box over `Runtimes` lists the runtimes that have what is typed in their name or
+  in their process. A kind that is a group of nodes has `New group` on its button, and a line
+  around it.
 - **`triq json --kind <kind>` prints what is of one kind.** Each runtime with its nodes of that
   kind and the factory that makes them, in the shape `triq json` has, and no runtime that has
   nothing of the kind. The command line of `triq serve` takes it too, and offers the kinds
