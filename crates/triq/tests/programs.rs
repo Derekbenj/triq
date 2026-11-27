@@ -54,9 +54,16 @@ fn the_tool_says_which_programs_there_are_and_when_there_is_none_of_a_name() {
     assert!(output.status.success() && problem.is_empty(), "{problem}");
     assert!(usage.starts_with("usage:") && usage.contains("triq <program>"), "{usage}");
     assert_eq!(said(&triq(&folder, &["help"])).0, usage);
-    let programs = usage.lines().find(|line| line.contains("programs here")).unwrap_or_else(|| panic!("{usage}"));
-    assert!(programs.contains("hello") && programs.contains("workbench"), "{programs}");
-    assert!(!programs.contains("hello.d"), "{programs}");
+    // Each has a line of its own, under what says so, as the commands above have.
+    let (_, programs) = usage.split_once("programs here").unwrap_or_else(|| panic!("{usage}"));
+    let programs: Vec<&str> = programs.lines().skip(1).collect();
+    for program in ["  hello", "  workbench"] {
+        assert!(programs.contains(&program), "{program:?} is not a line of {programs:?}");
+    }
+    assert!(
+        programs.iter().all(|line| line.starts_with("  ") && !line.contains(',') && !line.contains(".d")),
+        "{programs:?}"
+    );
 
     // A name that is neither a command nor a program is said to be neither.
     let output = triq(&folder, &["nope", "x"]);

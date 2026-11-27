@@ -107,9 +107,14 @@ fn hand_over(name: &str, told: &[&str]) -> triq::Result<ExitCode> {
 
 /// What the tool can be told, and the programs of triq it has found, by the names it runs them by.
 fn usage() -> String {
-    let programs: Vec<String> = triq::programs().into_iter().map(|(name, _)| name).collect();
-    let found = if programs.is_empty() { "none".to_owned() } else { programs.join(", ") };
-    format!("{USAGE}\n\nprograms here: {found}")
+    // Each on a line of its own, as the commands are.
+    let programs: Vec<String> = triq::programs().into_iter().map(|(name, _)| format!("\n  {name}")).collect();
+    let found = if programs.is_empty() {
+        " none".to_owned()
+    } else {
+        format!(", each run as triq <its name>:{}", programs.concat())
+    };
+    format!("{USAGE}\n\nprograms here{found}")
 }
 
 /// Redraw the list when a runtime says it changed, and once a second for the counters.
