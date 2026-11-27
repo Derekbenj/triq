@@ -30,6 +30,44 @@ fn received(runtime: &str, name: &str) -> u64 {
 }
 
 #[test]
+fn the_tool_prints_what_is_of_one_kind_and_leaves_out_the_rest() {
+    let (here, there) = (unique("kinds"), unique("others"));
+    let (_first, _second) = (station(&here), station(&there));
+    assert!(wait_for(|| inventory(&here).is_some() && inventory(&there).is_some()));
+    for (runtime, kind, name) in [(&here, "counter", "one"), (&here, "counter", "two"), (&here, "logger", "log")] {
+        triq(&["spawn", runtime, kind, name]).unwrap();
+    }
+    triq(&["spawn", &there, "logger", "log"]).unwrap();
+    let of =
+        |kind: &str| -> Vec<Inventory> { serde_json::from_str(&triq(&["json", "--kind", kind]).unwrap()).unwrap() };
+    let had = |all: &[Inventory], runtime: &str| -> Option<(Vec<String>, Vec<String>)> {
+        let found = all.iter().find(|inventory| inventory.runtime == runtime)?;
+        let mut nodes: Vec<String> = found.nodes.iter().map(|node| node.name.clone()).collect();
+        nodes.sort();
+        Some((nodes, found.factories.iter().map(|factory| factory.kind.clone()).collect()))
+    };
+    // A runtime is printed with what it has of the kind: its nodes of it, and the factory that
+    // makes them. What is the runtime's own stays as it was.
+    let counters = of("counter");
+    assert_eq!(had(&counters, &here), Some((vec!["one".into(), "two".into()], vec!["counter".into()])));
+    let whole = inventory(&here).unwrap();
+    let narrowed = counters.iter().find(|inventory| inventory.runtime == here).unwrap();
+    assert_eq!((narrowed.pid, narrowed.pools.len()), (whole.pid, whole.pools.len()));
+    // One that offers the kind and has no node of it is printed with the factory alone.
+    assert_eq!(had(&counters, &there), Some((vec![], vec!["counter".into()])));
+    assert_eq!(had(&of("logger"), &there), Some((vec!["log".into()], vec!["logger".into()])));
+    // A runtime that has nothing of the kind is left out: here, every one.
+    assert_eq!(triq(&["json", "--kind", &unique("no-such-kind")]).unwrap().trim(), "[]");
+    // All of it is printed as before, and the kind is a word of its own.
+    assert_eq!(
+        had(&serde_json::from_str::<Vec<Inventory>>(&triq(&["json"]).unwrap()).unwrap(), &here).unwrap().0.len(),
+        3
+    );
+    assert!(triq(&["json", "--kind"]).is_err() && triq(&["json", "counter"]).is_err());
+    assert!(triq(&["help"]).unwrap().contains("triq json [--kind <kind>]"));
+}
+
+#[test]
 fn a_third_program_wires_two_others_and_a_crash_takes_its_wiring_with_it() {
     let (left, right) = (unique("left"), unique("right"));
     let mut producer = station(&left);

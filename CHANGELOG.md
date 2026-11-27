@@ -2,6 +2,10 @@
 
 ## Not yet released
 
+- **`triq json --kind <kind>` prints what is of one kind.** Each runtime with its nodes of that
+  kind and the factory that makes them, in the shape `triq json` has, and no runtime that has
+  nothing of the kind. The command line of `triq serve` takes it too, and offers the kinds
+  there are.
 - **A pane dropped on the name of another is side by side with it.** In the workbench, and in a
   views program, a window, chart or view that is dragged by its name and let go on the name of
   another, on that one's bar, becomes a group with it where the other was, the two side by

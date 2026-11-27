@@ -147,8 +147,24 @@ export function offers(line, known, programs, machine) {
   else if (['connect', 'disconnect'].includes(command) && place === 2) names = inputs.filter((input) => !from || carries(input.port) === carries(from.port)).map((input) => input.name);
   else if (['set', 'change', 'group', 'pause', 'resume', 'remove'].includes(command) && place === 1) names = nodes;
   else if (command === 'shutdown' && place === 1) names = runtimes;
+  else if (command === 'json' && place === 1) names = ['--kind'];
+  else if (command === 'json' && place === 2 && typed[1] === '--kind') names = kinds(machine);
   return names.filter((name) => name.startsWith(piece) && name !== piece);
 }
+
+// The kinds there are on the machine, each once: those that are offered, and those of its nodes.
+const kinds = (machine) => [...new Set(machine.flatMap((each) => [...each.factories, ...each.nodes].map((of) => of.kind)))].filter(Boolean).sort();
+
+// The kind that a line asks the machine's JSON of, as `json --kind imu` does. None for `json`
+// alone, which is all of it, and for any other line.
+export const kindIn = (typed) => typed.match(/^json\s+--kind\s+(\S+)$/)?.[1];
+
+// What the tool prints for `json --kind`: each runtime with its nodes of that kind and the
+// factory that makes them, and without its others. One that has nothing of the kind is left out.
+export const ofKind = (machine, kind) => {
+  const narrowed = machine.map((each) => ({ ...each, factories: each.factories.filter((factory) => factory.kind === kind), nodes: each.nodes.filter((node) => node.kind === kind) }));
+  return narrowed.filter((each) => each.factories.length + each.nodes.length > 0);
+};
 
 // A line with an offer taken: it stands where the last word was being typed, with a space
 // after it for the next.
@@ -174,7 +190,7 @@ export const standing = (node) => (typeof node.state === 'string' ? node.state.t
 
 // The cheat sheet: what each command of the tool is for, and which go together.
 const SHEET = [
-  ['Look', { list: 'Every runtime, the kinds of node it offers, and its nodes. Click a node for its ports.', watch: 'The list, kept up to date until something else is typed.', json: 'The same as JSON, as a program would read it.', fields: 'The numbers inside what an output sends, each by its name.' }],
+  ['Look', { list: 'Every runtime, the kinds of node it offers, and its nodes. Click a node for its ports.', watch: 'The list, kept up to date until something else is typed.', json: 'The same as JSON, as a program would read it: all of it, or with --kind what is of one kind, its nodes and the factory that makes them.', fields: 'The numbers inside what an output sends, each by its name.' }],
   ['Make and remove', { spawn: 'Make a node of a kind that the runtime offers. Its settings are JSON, in quotes.', remove: 'Take a node away.' }],
   ['Wire', { connect: 'Have an input hear an output. Both must carry the same message.', disconnect: 'Cut that wire.' }],
   ['Change', { change: 'Change the settings named, and leave the others.', set: 'Give a node all of its settings anew: one that is left out is its default again.', group: 'Put a node in a group, or with no name in none.', pause: 'Keep a node from running.', resume: 'Let it run again.' }],
@@ -195,6 +211,7 @@ function example(command, machine) {
   const wired = inputs.flatMap((input) => input.sources.map((source) => `${source.output} ${input.name}`))[0];
   const [setting, value] = Object.entries(nodes[0]?.params ?? {})[0] ?? ['alpha', 0.1];
   const lines = {
+    json: kinds(machine).length > 0 ? `json --kind ${kinds(machine)[0]}` : 'json',
     fields: `fields ${outputs[0]?.service ?? 'robot/imu/pose'}`,
     spawn: offers ? `spawn ${offers.runtime} ${offers.factories[0].kind} ${offers.factories[0].kind}1` : `spawn robot filter filter1 --params '{"alpha": 0.5}'`,
     remove: `remove ${node}`,

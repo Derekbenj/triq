@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -142,6 +142,23 @@ test('what is being typed is offered its ending: a command, a program, or a name
   // An offer taken stands in the place of what was being typed, with room for the next word.
   assert.equal(completed('triq connect robot/imu', 'robot/imu/pose'), 'triq connect robot/imu/pose ');
   assert.equal(completed('sp', 'spawn'), 'spawn ');
+});
+
+test('of the machine as JSON, what is of one kind is its nodes and the factory that makes them', () => {
+  const [, robot] = MACHINE;
+  // As the tool prints it for `json --kind`: a runtime with what it has of the kind, and no runtime that has nothing of it.
+  assert.deepEqual(ofKind(MACHINE, 'filter'), [{ ...robot, factories: [{ kind: 'filter' }], nodes: [robot.nodes[1]] }]);
+  assert.deepEqual(ofKind(MACHINE, 'fuser'), [{ ...robot, factories: [{ kind: 'fuser' }], nodes: [] }]);
+  assert.deepEqual(ofKind(MACHINE, 'no such kind'), []);
+  // The line that asks for one kind names it; `json` alone is all of it, and any other line is the tool's to read.
+  assert.deepEqual(['json --kind filter', 'json   --kind  fuser'].map(kindIn), ['filter', 'fuser']);
+  assert.deepEqual(['json', 'json --kind', 'json --kind a b', 'json filter', 'list --kind filter'].map(kindIn), [undefined, undefined, undefined, undefined, undefined]);
+  // The word is offered after the command, and then the kinds there are on the machine.
+  const offer = (line) => offers(line, ['json'], [], MACHINE);
+  assert.deepEqual([offer('json '), offer('json --kind '), offer('json --kind fu'), offer('json --kind filter ')], [['--kind'], ['filter', 'fuser'], ['fuser'], []]);
+  // The line to try is of a kind that is there, or all of it where there is none.
+  const tried = (machine) => sheet([{ command: 'json', takes: '[--kind <kind>]', about: '' }], machine, [])[0].entries[0].example;
+  assert.deepEqual([tried(MACHINE), tried([])], ['json --kind filter', 'json']);
 });
 
 test('what the tool printed is read as what it is', () => {

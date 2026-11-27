@@ -370,6 +370,8 @@ which builds it on the fork. Its commands:
 
 ```text
 triq list                 # or `triq watch` to keep it on screen
+triq json                 # the same as JSON, for a program to read
+triq json --kind filter   # only what is of one kind: its nodes, and the factory that makes them
 triq spawn robot filter filter_2 --pool dsp --params '{"alpha":0.5}'
 triq connect robot/imu/pose robot/filter_2/raw
 triq change robot/filter_2 '{"alpha":0.1}'   # change the settings named, and leave the rest
@@ -470,6 +472,8 @@ hand, is the workbench's, which is one of the programs the page starts.
   failed with what the tool said. The name of a program typed there starts the program, as its
   button does. The tool itself is run for each line, so a command does what it does in a
   terminal; the list is drawn from what the runtimes report, which is what `triq json` prints.
+  `json --kind` and a kind is what there is of that kind alone, and the kinds on the machine
+  are offered as it is typed.
   Beside the answers, on a tab of its own, is a cheat sheet: the commands the tool has, by
   what they are for, each with what it takes, a sentence, and a line to try that is made of
   the names on the machine. A click puts that line on the command line.

@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -489,7 +489,11 @@ function answered(entry) {
     const unfolded = [...view.unfolded].filter((key) => key.startsWith(`${entry.key}|`));
     return { note: entry.live ? 'kept up to date' : '', shape: `${entry.stamp}|${unfolded}`, parts: () => listed(entry) };
   }
-  if (entry.kind === 'json') return { note: '', shape: 'json', parts: () => [h('pre', {}, JSON.stringify(entry.machine, null, 2))] };
+  // All of the machine, or what is of the kind that was asked for.
+  if (entry.kind === 'json') {
+    const asked = entry.only ? ofKind(entry.machine, entry.only) : entry.machine;
+    return { note: '', shape: 'json', parts: () => [h('pre', {}, JSON.stringify(asked, null, 2))] };
+  }
   // Of lines that were pasted together, the first that fails is the last that is run.
   if (entry.rest) {
     const rest = h('div.rest', {}, `${entry.rest === 1 ? 'the line' : `the ${entry.rest} lines`} after it ${entry.rest === 1 ? 'was' : 'were'} not run`);
@@ -612,8 +616,9 @@ async function run(line) {
   view.lines = [...view.lines, entry].slice(-40);
   $('answers').scrollTop = 0;
   drawAnswers();
-  if (['list', 'watch', 'json'].includes(typed)) {
-    Object.assign(entry, { machine: await look(), kind: typed === 'json' ? 'json' : 'list', live: typed === 'watch' });
+  const only = kindIn(typed);
+  if (['list', 'watch', 'json'].includes(typed) || only) {
+    Object.assign(entry, { machine: await look(), kind: typed === 'json' || only ? 'json' : 'list', only, live: typed === 'watch' });
   } else {
     try {
       const { started, asked } = await api('/api/command', { line: typed });

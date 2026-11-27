@@ -16,7 +16,7 @@ use triq::{Error, Inventory, NodeInfo, NodeState, Placement, PortSpec, Remote, W
 const USAGE: &str = "\
 usage:
   triq list                                   runtimes, factories, nodes and connections
-  triq json                                   the same, as JSON
+  triq json [--kind <kind>]                   the same, as JSON: all of it, or what is of one kind
   triq watch                                  the list, redrawn whenever something changes
   triq spawn <runtime> <kind> <name> [--pool <pool>] [--params <json>]
   triq connect <runtime/node/output> <runtime/node/input>
@@ -74,6 +74,7 @@ fn run(args: &[&str]) -> triq::Result<ExitCode> {
         [] | ["help" | "--help" | "-h"] => println!("{}", usage()),
         ["list"] => triq::discover()?.iter().for_each(|inventory| print!("{}", describe(inventory))),
         ["json"] => println!("{}", serde_json::to_string_pretty(&triq::discover()?)?),
+        ["json", "--kind", kind] => println!("{}", serde_json::to_string_pretty(&of_kind(triq::discover()?, kind))?),
         ["watch"] => watch()?,
         ["spawn", runtime, kind, name, options @ ..] => {
             let (placement, params) = spawn_options(options)?;
@@ -139,6 +140,17 @@ fn usage() -> String {
     };
     let looked = "looked for beside triq, in the folders registered, and on the PATH";
     format!("{USAGE}\n\nprograms here{found}\n\n{looked}\n{registered}")
+}
+
+/// What the runtimes have of one kind: each with its nodes of that kind and the factory that
+/// makes them, and without its others. A runtime that has nothing of the kind is left out.
+fn of_kind(machine: Vec<Inventory>, kind: &str) -> Vec<Inventory> {
+    let narrowed = machine.into_iter().map(|mut inventory| {
+        inventory.factories.retain(|factory| factory.kind == kind);
+        inventory.nodes.retain(|node| node.kind == kind);
+        inventory
+    });
+    narrowed.filter(|inventory| !(inventory.factories.is_empty() && inventory.nodes.is_empty())).collect()
 }
 
 /// Redraw the list when a runtime says it changed, and once a second for the counters.
