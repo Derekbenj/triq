@@ -16,7 +16,7 @@ use triq_workbench::charts::{self, Charts, Trace};
 use triq_workbench::egui::{self, accesskit::Role};
 use triq_workbench::history::{Connection, History, Stat};
 use triq_workbench::signals::Signals;
-use window::{alone, click, click_holding, discs, drag, drag_by_way_of};
+use window::{alone, click, click_holding, discs, drag, drag_by_way_of, unfold};
 
 /// As the workbench kept its charts when they all showed the same stretch of the past, and drew
 /// nothing but lines over time: one chart, with two lines. The second was given a colour by hand.
@@ -56,6 +56,11 @@ fn numbers_of_connections_are_dragged_onto_charts() -> triq::Result {
     let now = history.newest().expect("points");
     let mut harness = open(Shown { charts: Charts::default(), history, signals: Signals::start()?, now });
 
+    // What a node hears and sends is folded away under its name in the list: the scene's nodes
+    // are opened.
+    for entry in [&filtered, &viewed, &format!("{robot}/imu/pose")] {
+        unfold(&mut harness, entry);
+    }
     // The list holds every connection, with where it comes from and its numbers as they stand.
     for label in [filtered.clone(), format!("from {robot}/imu/pose"), viewed.clone()] {
         assert!(shows(&harness, &label), "{label:?} is listed");

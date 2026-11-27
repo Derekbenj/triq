@@ -23,6 +23,14 @@ fn fold(harness: &mut Window<'_>, node: &str) {
     harness.run_steps(6);
 }
 
+/// Save a picture of the window, for a human to look at. Drawing it needs a GPU.
+fn picture(harness: &mut Window<'_>, name: &str) {
+    match harness.render() {
+        Ok(image) => image.save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name)).expect("save a picture"),
+        Err(reason) => eprintln!("no picture: {reason}"),
+    }
+}
+
 /// Write in the box that searches the list, in place of what is written there.
 fn search(harness: &mut Window<'_>, words: &str) {
     harness.get_by_role_and_label(Role::TextInput, "Search").click();
@@ -70,6 +78,7 @@ fn the_numbers_of_a_node_are_folded_away_under_its_name_until_it_is_clicked() ->
     assert!(number(&harness, &entries[1], "rate").rect().is_positive());
     fold(&mut harness, &viewer);
     assert_eq!(shown(&harness), [false, true, true, true]);
+    picture(&mut harness, "numbers-folded.png");
     // Click it again: they are folded away.
     fold(&mut harness, &filter);
     assert_eq!(shown(&harness), [false, false, false, true]);
@@ -117,6 +126,7 @@ fn the_list_is_searched_by_name_and_what_is_found_is_open() -> triq::Result {
     // is from the filter. The name is that of this test's robot, as other programs may run.
     search(&mut harness, &filter);
     assert_eq!((nodes(&harness), shown(&harness)), ([false, true, true], [false, true, true, true]));
+    picture(&mut harness, "numbers-searched.png");
 
     // A whole name finds the one thing called so, and what hears it.
     search(&mut harness, &entries[0]);
@@ -133,7 +143,7 @@ fn the_list_is_searched_by_name_and_what_is_found_is_open() -> triq::Result {
     harness.run_steps(3);
     assert!(empty(&harness).is_empty(), "the number is on the chart");
     fold(&mut harness, &sensor);
-    assert_eq!(shown(&harness)[0], false);
+    assert!(!shown(&harness)[0]);
 
     // Nothing is called this: the list says so.
     search(&mut harness, "nothing-on-this-machine-is-called-this");

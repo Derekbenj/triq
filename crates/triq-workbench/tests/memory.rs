@@ -62,6 +62,9 @@ fn the_workbench_is_as_it_was_when_it_was_last_closed() -> triq::Result {
     let pose = Pose { translation: [2.5, 0.0, 0.0], ..Pose::default() };
     let (runtime, imu) = start()?;
     let mut harness = open()?;
+    // In the list of numbers, what a node sends is folded away under its name until that is clicked.
+    assert!(until(&mut harness, |harness| shows(harness, &format!("{robot}/imu"))), "the sensor is in the list");
+    unfold(&mut harness, &sensor);
     let listed = until(&mut harness, |harness| {
         imu.pose.send(pose).expect("send");
         let output = harness.query_by_label(&sensor).and_then(|name| name.parent());
