@@ -29,10 +29,12 @@ usage:
   triq resume <runtime/node>
   triq remove <runtime/node>
   triq shutdown <runtime>
-  triq <program> [what it is told]            run triq-<program>, as triq workbench runs triq-workbench";
+  triq <program> [what it is told]            run triq-<program>, as triq workbench runs triq-workbench
+  triq register <folder>                      find the programs of a folder from now on
+  triq unregister <folder>";
 
 /// What the tool does itself. A program is never run in the place of one of these.
-const COMMANDS: [&str; 14] = [
+const COMMANDS: [&str; 16] = [
     "list",
     "json",
     "watch",
@@ -47,6 +49,8 @@ const COMMANDS: [&str; 14] = [
     "resume",
     "remove",
     "shutdown",
+    "register",
+    "unregister",
 ];
 
 fn main() -> ExitCode {
@@ -88,6 +92,16 @@ fn run(args: &[&str]) -> triq::Result<ExitCode> {
         ["resume", node] => on(node, Remote::resume)?,
         ["remove", node] => on(node, Remote::remove)?,
         ["shutdown", runtime] => Remote::open(runtime)?.shutdown()?,
+        ["register", folder] => {
+            let cannot = |error| Error::Other(format!("could not register {folder}: {error}"));
+            let whole = triq::register(std::path::Path::new(folder)).map_err(cannot)?;
+            println!("registered {}: its programs are run by name from now on", whole.display());
+        }
+        ["unregister", folder] => {
+            if !triq::unregister(std::path::Path::new(folder))? {
+                return Err(Error::Other(format!("{folder} was not registered")));
+            }
+        }
         [program, told @ ..] if !COMMANDS.contains(program) => return hand_over(program, told),
         _ => return Err(Error::Other(usage())),
     }
@@ -97,7 +111,9 @@ fn run(args: &[&str]) -> triq::Result<ExitCode> {
 /// Run the program `triq-<name>`, told what the tool was told after its name, and end as it ends.
 fn hand_over(name: &str, told: &[&str]) -> triq::Result<ExitCode> {
     let Some(program) = triq::program(name) else {
-        let neither = format!("no command `{name}`, and no program triq-{name} beside triq or on the PATH");
+        let neither = format!(
+            "no command `{name}`, and no program triq-{name} beside triq, in a folder that was registered, or on the PATH"
+        );
         return Err(Error::Other(format!("{neither}\n{}", usage())));
     };
     let ended = Command::new(program).args(told).status()?;
@@ -114,7 +130,15 @@ fn usage() -> String {
     } else {
         format!(", each run as triq <its name>:{}", programs.concat())
     };
-    format!("{USAGE}\n\nprograms here{found}")
+    // Where they are looked for, with the file that lists the folders registered.
+    let folders: Vec<String> = triq::registered().iter().map(|folder| format!("\n  {}", folder.display())).collect();
+    let file = triq::registry().map_or(String::new(), |file| format!(" in {}", file.display()));
+    let registered = match folders.is_empty() {
+        true => format!("no folder is registered{file}"),
+        false => format!("folders registered{file}:{}", folders.concat()),
+    };
+    let looked = "looked for beside triq, in the folders registered, and on the PATH";
+    format!("{USAGE}\n\nprograms here{found}\n\n{looked}\n{registered}")
 }
 
 /// Redraw the list when a runtime says it changed, and once a second for the counters.

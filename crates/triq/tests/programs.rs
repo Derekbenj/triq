@@ -1,6 +1,8 @@
 //! `triq <program>` runs a program of triq: the one called `triq-<program>` that is beside the
-//! tool or on the PATH, as `triq workbench` runs `triq-workbench`. The programs here are small
-//! scripts in a folder of the test's own, which it puts on the PATH of the tool it runs.
+//! tool, in a folder that was registered, or on the PATH, as `triq workbench` runs
+//! `triq-workbench`. The programs here are small scripts in a folder of the test's own, which
+//! it puts on the PATH of the tool it runs, or registers. The file that lists the folders
+//! registered is one of the test's own too, so that a person's own is neither read nor changed.
 #![cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -21,12 +23,16 @@ fn folder(tag: &str, programs: &[(&str, u8)]) -> PathBuf {
     folder
 }
 
-/// Run the tool with `folder` on its PATH, before what is there already.
+/// Run the tool with `folder` on its PATH, before what is there already, and with no folder
+/// registered but those in a file beside `folder`.
 fn triq(folder: &Path, args: &[&str]) -> Output {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path =
         std::env::join_paths(std::iter::once(folder.to_owned()).chain(std::env::split_paths(&path))).expect("a PATH");
-    Command::new(env!("CARGO_BIN_EXE_triq")).args(args).env("PATH", path).output().expect("run triq")
+    let registered = folder.with_extension("registered");
+    let tool =
+        Command::new(env!("CARGO_BIN_EXE_triq")).args(args).env("PATH", path).env("TRIQ_FOLDERS", registered).output();
+    tool.expect("run triq")
 }
 
 fn said(output: &Output) -> (String, String) {
@@ -56,7 +62,7 @@ fn the_tool_says_which_programs_there_are_and_when_there_is_none_of_a_name() {
     assert_eq!(said(&triq(&folder, &["help"])).0, usage);
     // Each has a line of its own, under what says so, as the commands above have.
     let (_, programs) = usage.split_once("programs here").unwrap_or_else(|| panic!("{usage}"));
-    let programs: Vec<&str> = programs.lines().skip(1).collect();
+    let programs: Vec<&str> = programs.lines().skip(1).take_while(|line| !line.is_empty()).collect();
     for program in ["  hello", "  workbench"] {
         assert!(programs.contains(&program), "{program:?} is not a line of {programs:?}");
     }
@@ -83,4 +89,34 @@ fn a_command_of_the_tool_is_never_taken_for_a_program() {
     let output = triq(&folder, &["spawn", "robot"]);
     let (out, usage) = said(&output);
     assert!(!output.status.success() && out.is_empty() && usage.contains("usage:"), "{out}{usage}");
+}
+
+#[test]
+fn a_folder_is_registered_once_and_its_programs_are_found_from_then_on_with_nothing_on_the_path() {
+    // The programs are in a folder that is not on the PATH: the folder on it is an empty one.
+    let (empty, kept) = (folder("nopath", &[]), folder("kept", &[("greeter", 0)]));
+    assert!(!triq(&empty, &["greeter"]).status.success(), "it is not found before its folder is registered");
+
+    // Registered, by a path that need not be whole, its programs are run by name and listed.
+    let part = kept.parent().unwrap().join(".").join(kept.file_name().unwrap());
+    let output = triq(&empty, &["register", part.to_str().unwrap()]);
+    assert!(output.status.success(), "{:?}", said(&output));
+    assert_eq!(said(&triq(&empty, &["greeter", "now"])).0, "greeter was told: now\n");
+    assert!(said(&triq(&empty, &[])).0.contains("\n  greeter\n"), "it is listed");
+    // The file has the folder once, whole, however often it is registered.
+    assert!(triq(&empty, &["register", kept.to_str().unwrap()]).status.success());
+    let file = std::fs::read_to_string(empty.with_extension("registered")).expect("the file");
+    let whole = kept.canonicalize().unwrap();
+    assert_eq!(file.lines().collect::<Vec<_>>(), [whole.to_str().unwrap()]);
+    // The tool says where it looks, with the file named.
+    assert!(said(&triq(&empty, &[])).0.contains(empty.with_extension("registered").to_str().unwrap()));
+
+    // A folder that is not there is not registered, and that is said.
+    let output = triq(&empty, &["register", "/no/such/folder/anywhere"]);
+    assert!(!output.status.success() && said(&output).1.contains("/no/such/folder/anywhere"), "{:?}", said(&output));
+
+    // Unregistered, its programs are found no more.
+    assert!(triq(&empty, &["unregister", kept.to_str().unwrap()]).status.success());
+    assert!(!triq(&empty, &["greeter"]).status.success());
+    assert_eq!(std::fs::read_to_string(empty.with_extension("registered")).expect("the file"), "");
 }
