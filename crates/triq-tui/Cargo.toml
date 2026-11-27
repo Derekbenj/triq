@@ -1,0 +1,20 @@
+[package]
+name = "triq-tui"
+description = "triq in a terminal: the programs, runtimes, nodes and wires of a machine, handled with the keyboard"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords = ["ipc", "robotics", "tui", "iceoryx2"]
+categories = ["command-line-utilities", "science::robotics"]
+
+[dependencies]
+triq.workspace = true
+serde_json.workspace = true
+# The terminal: what is drawn in it, and the keys that are read from it.
+ratatui = "0.30"
+
+[dev-dependencies]
+# The tests' own kind of node has settings.
+serde.workspace = true
