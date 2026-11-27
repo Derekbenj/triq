@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, others, registered, running, said, sheet, shown, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, line, named, offers, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -15,6 +15,8 @@ const view = {
   search: '',
   of: undefined,
   families: '',
+  // The same for what was started: what is typed to find some, and the family chosen.
+  running: { search: '', of: undefined, families: '' },
   // What a program is to be told, as typed in its box, and the programs whose box is open.
   told: {},
   boxes: new Set(),
@@ -281,7 +283,19 @@ function drawRunning() {
       $('running').prepend(view.cards.get(one.id).root);
     }
     view.cards.get(one.id).update(one);
+    // Only those are shown that are like what was typed, and of the family that was chosen.
+    view.cards.get(one.id).root.hidden = !shows(one, view.running.search, view.running.of);
   }
+  // The families of what was started, to choose one of. They are listed again when they change.
+  const all = families(started.map((one) => one.program), '').map((each) => each.family);
+  if (all.join() !== view.running.families) {
+    view.running.families = all.join();
+    if (!all.includes(view.running.of)) view.running.of = undefined;
+    const option = (of) => h('option', { value: of, selected: of === view.running.of }, of || 'triq');
+    $('running-of').replaceChildren(h('option', { value: '*' }, 'every family'), ...all.map(option));
+  }
+  $('running-finding').hidden = started.length === 0;
+  $('none-shown').hidden = started.length === 0 || started.some((one) => shows(one, view.running.search, view.running.of));
   const runs = started.filter((one) => !one.ended).length;
   const elsewhere = others(state.runtimes);
   $('nothing').hidden = started.length > 0;
@@ -622,6 +636,14 @@ async function refresh() {
 $('search').addEventListener('input', () => {
   view.search = $('search').value;
   drawPrograms(true);
+});
+$('running-find').addEventListener('input', () => {
+  view.running.search = $('running-find').value;
+  drawRunning();
+});
+$('running-of').addEventListener('change', () => {
+  view.running.of = $('running-of').value === '*' ? undefined : $('running-of').value;
+  drawRunning();
 });
 // Enter starts the program, when what was typed leaves only one.
 $('of').addEventListener('change', () => {

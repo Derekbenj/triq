@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, others, registered, running, said, sheet, shown, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, line, named, offers, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -232,4 +232,19 @@ test('what a program was told is written as a line that tells it the same again'
   assert.equal(another('physics-rapier', [spawned], [home('physics', 1)]), `physics2 --gravity '0 0 9.81'`);
   assert.deepEqual(earlier([spawned], 'physics-rapier'), [`--gravity '0 0 9.81'`]);
   assert.equal(named(['old name', 'a b'], 'new'), `new 'a b'`);
+});
+
+test('of what was started, what is shown is what has the words that were typed, of the family that was chosen', () => {
+  const quad = one(1, 'stack-quadcopter', 'quadcopter2 --speed 5', { runtime: 'quadcopter2', nodes: 16 });
+  const bevy = one(2, 'simulator-bevy', '--headless', { ended: 'stopped' });
+  const bench = one(3, 'bench', 'hop', { ended: 'ended with status 1', failed: true });
+  const all = [quad, bevy, bench];
+  const which = (search, of) => all.filter((each) => shows(each, search, of)).map((each) => each.id);
+  assert.deepEqual(which('', undefined), [1, 2, 3]);
+  // By the program's name, what it was started with, or the runtime it is.
+  assert.deepEqual([which('QUAD', undefined), which('headless', undefined), which('quadcopter2 stack', undefined)], [[1], [2], [1]]);
+  // By what it is doing: so that those that run, or those that have ended, are had alone.
+  assert.deepEqual([which('running', undefined), which('ended', undefined), which('stopped', undefined)], [[1], [3], [2]]);
+  // By its family, and what was typed within that.
+  assert.deepEqual([which('', 'simulator'), which('', ''), which('hop', 'stack'), which('nothing like it', undefined)], [[2], [3], [], []]);
 });

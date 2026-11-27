@@ -250,3 +250,12 @@ export function registered(usage) {
   const listed = lines.slice(at + 1).filter((line) => line.startsWith('  '));
   return { file, folders: listed.map((line) => line.trim()) };
 }
+
+// Whether one that was started is shown, for what was typed to find some and the family that
+// was chosen: it has every word typed in its program's name, in what it was started with, in
+// the name of the runtime it is, or in what it is doing; and is of that family, if one was
+// chosen.
+export function shows(one, search, of) {
+  const said = `${one.program} ${one.told.join(' ')} ${one.runtime ?? ''} ${doing(one)}`;
+  return (of === undefined || family(one.program) === of) && found(search, said);
+}

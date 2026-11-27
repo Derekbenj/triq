@@ -44,9 +44,16 @@
         <p class="eyebrow"><span class="eyebrow-line"></span>Started here</p>
         <h2 class="arcade green">Running</h2>
       </div>
-      <button id="clear" class="button" title="Take those that have ended off the page" hidden>Clear what has ended</button>
+      <div class="tools">
+        <div id="running-finding" class="finding" hidden>
+          <select id="running-of" title="Show what was started of one family, or of every one"></select>
+          <input id="running-find" type="search" placeholder="find what runs" autocomplete="off" title="By its name, what it was started with, the runtime it is, or what it is doing: running, ended, stopped">
+        </div>
+        <button id="clear" class="button" title="Take those that have ended off the page" hidden>Clear what has ended</button>
+      </div>
     </div>
     <p id="nothing" class="none">Nothing was started yet. Pick a program below, or type its name in the command line: it runs as it would from a terminal.</p>
+    <p id="none-shown" class="none" hidden>Nothing that was started is like that.</p>
     <div id="running" class="cards wide"></div>
     <div id="others"></div>
   </section>
