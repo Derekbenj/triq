@@ -9,7 +9,8 @@
 //! in the browser can read.
 use crate::feed::Feed;
 use crate::http::{Answer, Request};
-use crate::programs::{Programs, Typed};
+use crate::programs::{Programs, Typed, at_home};
+use crate::records;
 use serde_json::{Value, json};
 use std::hash::{BuildHasher, Hasher};
 use std::path::PathBuf;
@@ -32,14 +33,16 @@ pub struct Site {
     pub programs: Programs,
     /// The `triq` tool, which is run with the commands that are typed on the page.
     pub tool: PathBuf,
-    /// What the tool says it can be told, once it has been asked.
-    usage: Option<String>,
+    /// The file that remembers which folder was chosen for the records of what is started.
+    pub choice: PathBuf,
     port: u16,
     token: String,
     /// What went wrong last, and how many things have: the page shows each once.
     said: (u64, Option<String>),
-    /// Set when the page asks this program to end.
+    /// Set when the page asks this program to end; and whether the programs that run are to
+    /// be left running then.
     pub quit: bool,
+    pub leave: bool,
 }
 
 /// A token nobody can guess: the standard library keys its hashes from the system's own
@@ -58,7 +61,8 @@ fn tool() -> PathBuf {
 
 impl Site {
     pub fn new(feed: Feed, programs: Programs, port: u16) -> Self {
-        Self { feed, programs, tool: tool(), usage: None, port, token: token(), said: (0, None), quit: false }
+        let (tool, choice) = (tool(), records::choice());
+        Self { feed, programs, tool, choice, port, token: token(), said: (0, None), quit: false, leave: false }
     }
 
     pub fn token(&self) -> &str {
@@ -114,13 +118,26 @@ impl Site {
                 let machine = serde_json::to_value(self.feed.machine()).map_err(|error| error.to_string())?;
                 Ok(Answer::json(&machine))
             }
+            // Asked of the tool each time: it also says which folders are registered, which changes.
             ("GET", "/api/usage") => {
-                if self.usage.is_none() {
-                    let said = Command::new(&self.tool).arg("help").output();
-                    let said = said.map_err(|error| format!("the triq tool could not be run: {error}"))?;
-                    self.usage = Some(String::from_utf8_lossy(&said.stdout).into_owned());
+                let said = Command::new(&self.tool).arg("help").output();
+                let said = said.map_err(|error| format!("the triq tool could not be run: {error}"))?;
+                Ok(Answer::json(&json!({ "usage": String::from_utf8_lossy(&said.stdout) })))
+            }
+            ("GET", "/api/records") => Ok(Answer::json(&json!({ "folder": self.programs.records.folder() }))),
+            // Another folder for the records: those there are go with it, and it is remembered.
+            ("POST", "/api/records") => {
+                let named = sent()?["folder"].as_str().unwrap_or_default().to_owned();
+                // As a terminal has it: ~ is the person's own folder.
+                let folder = PathBuf::from(at_home(named.trim()));
+                if !folder.is_absolute() {
+                    return Err(format!("{} is not a folder by its whole path, from /", folder.display()));
                 }
-                Ok(Answer::json(&json!({ "usage": self.usage })))
+                let moved = self.programs.records.move_to(&folder);
+                moved.map_err(|error| format!("the records could not be moved to {}: {error}", folder.display()))?;
+                let kept = records::choose(&self.choice, &folder);
+                kept.map_err(|error| format!("{} could not be written: {error}", self.choice.display()))?;
+                Ok(Answer::json(&json!({ "folder": folder })))
             }
             ("POST", "/api/command") => {
                 let line = sent()?["line"].as_str().unwrap_or_default().to_owned();
@@ -167,8 +184,9 @@ impl Site {
                 self.programs.forget(sent().ok().and_then(|sent| sent["id"].as_u64()));
                 Ok(done)
             }
+            // With `leave`, the programs that run are left running.
             ("POST", "/api/quit") => {
-                self.quit = true;
+                (self.quit, self.leave) = (true, sent().is_ok_and(|sent| sent["leave"] == true));
                 Ok(done)
             }
             _ => Err("there is no such thing to ask".to_owned()),

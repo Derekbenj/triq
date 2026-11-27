@@ -12,8 +12,9 @@
   alone that starts triq's programs as processes, more than one of each under names of their
   own, shows what they print, and stops them. It has a line for the commands of the `triq`
   tool, which offers the names of the machine as they are typed and draws what comes of a
-  command. What the page does a script or a language model can ask as well, with the token it
-  prints.
+  command. What it starts does not depend on it: a program may be left running when
+  `triq-serve` ends, and the next one finds it again by its record. What the page does a
+  script or a language model can ask as well, with the token it prints.
 - **A folder of programs is registered once**, with `triq register <folder>`, in a file, and
   its programs are found from then on with nothing on the `PATH`. `triq::programs()` and
   `triq::program(name)` find them for a program of your own.

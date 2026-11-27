@@ -447,11 +447,23 @@ hand, is the workbench's, which is one of the programs the page starts.
   what they are for, each with what it takes, a sentence, and a line to try that is made of
   the names on the machine. A click puts that line on the command line.
 
-The page is dark, unless `Light` is chosen at its top, or `Auto`, which shows it as the system
-is set and changes with it; what was chosen is remembered by the browser. The
-page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
-ends anything. A page that is left open says that `triq-serve` has ended, and comes back when
-it is run again.
+**What is started does not depend on `triq-serve`.** Each program is in a group of processes of
+its own and prints into a file, so it outlives the page and the program that serves it. `Quit`
+asks which it is to be: stop what was started, or leave it running. Ended at its terminal with
+Ctrl-C, `triq-serve` ends alone, and what it started runs on. The next `triq-serve` finds what
+was left running by its record, with what it has printed, and stops it like one of its own. A
+page that is left open says that `triq-serve` has ended, and comes back when it is run again.
+
+The records are in one folder, `~/.config/triq/started` unless another is chosen: for each
+program `7.json`, which says what it is, and `7.log`, which is all it has printed. They go
+when a program that has ended is cleared from the page, and when `Quit` stops everything.
+
+**Settings**, at the top of the page, has what is otherwise done by hand. The folders that
+are registered for programs to be looked for in are listed there, to add one or take one
+out, which is what `triq register` and `triq unregister` do. And the folder the records are
+kept in can be changed there; those there are go with it. Beside it, `Dark`, `Light` and `Auto`
+choose how the page is shown: `Auto` is as the system is set, and changes with it. Dark is
+what a browser that has chosen nothing is shown, and the choice is remembered by the browser.
 
 **It starts programs, so it is served with care.** It listens on `127.0.0.1` alone. A request
 that does not name this machine as its host is refused, and so is one under `/api/` without
@@ -475,7 +487,8 @@ curl -H 'x-triq-token: ...' -d '{"line": "pause robot/filter"}' http://127.0.0.1
 | --- | --- |
 | `src/http.rs` | as much of HTTP as one page needs: a request read, an answer written |
 | `src/site.rs` | the page and its parts, the requests under `/api/`, and who is answered |
-| `src/programs.rs` | programs started as processes, the tool run with a line that was typed, what they print, and stopping them |
+| `src/programs.rs` | programs started as processes of their own, those an earlier `triq-serve` left running, the tool run with a line that was typed, what they print, and stopping them |
+| `src/records.rs` | what is kept on disk of each program that was started, and the folder that was chosen for it |
 | `src/feed.rs` | the runtimes of the machine as they are seen, and one asked to shut down, off the thread that answers |
 | `assets/app.js`, `logic.js` | the page: what it draws and sends, and what it works out, which `node --test` tries |
 | `assets/hero.js`, `app.css` | the name at the top, which jiggles under the pointer, and how the page looks |

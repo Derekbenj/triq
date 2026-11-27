@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, running, said, sheet, shown, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, registered, running, said, sheet, shown, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -204,4 +204,19 @@ $ triq pause physics/quad\r
   assert.deepEqual(batch(pasted), ['physics-rapier', `triq spawn physics multirotor quad --params '{"position": [0, 0, -1]}'`, 'triq pause physics/quad']);
   // A single line is a single line, with whatever ends it; and nothing is nothing.
   assert.deepEqual([batch('list\n'), batch('  \n\n')], [['list'], []]);
+});
+
+test('the folders that are registered are read from what the tool says', () => {
+  const some = `${USAGE}
+
+looked for beside triq, in the folders registered, and on the PATH
+folders registered in /Users/someone/.config/triq/folders:
+  /Users/someone/robot/target/release
+  /opt/my robots/bin
+`;
+  assert.deepEqual(registered(some), { file: '/Users/someone/.config/triq/folders', folders: ['/Users/someone/robot/target/release', '/opt/my robots/bin'] });
+  const none = `${USAGE}\n\nlooked for beside triq, in the folders registered, and on the PATH\nno folder is registered in /home/someone/.config/triq/folders\n`;
+  assert.deepEqual(registered(none), { file: '/home/someone/.config/triq/folders', folders: [] });
+  // A tool that says nothing of folders has none to show.
+  assert.deepEqual(registered(USAGE), { file: '', folders: [] });
 });

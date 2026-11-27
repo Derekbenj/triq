@@ -2,13 +2,15 @@
 //! this machine alone, and opens it. The page starts triq's programs, as processes of their
 //! own, shows what they print, and stops them; and it has a line to type the tool's commands on.
 //!
-//! `triq serve` runs it, with the `triq` tool beside it. The programs it started are stopped
-//! when the page's Quit is pressed; Ctrl-C ends it as it ends anything.
+//! `triq serve` runs it, with the `triq` tool beside it. The programs it started do not
+//! depend on it: the page's Quit stops them or leaves them running, as is chosen there, and
+//! Ctrl-C ends this program alone. The next triq-serve finds what was left running.
 use std::net::TcpListener;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::{Arc, Mutex};
 use triq_serve::feed::Feed;
 use triq_serve::programs::Programs;
+use triq_serve::records::{self, Records};
 use triq_serve::site::Site;
 
 const USAGE: &str = "\
@@ -54,7 +56,10 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let site = Arc::new(Mutex::new(Site::new(Feed::start(), Programs::here(), port)));
+    // The records of what was started are in the folder that was chosen for them, or the usual
+    // one. What an earlier triq-serve left running is found by them.
+    let records = Records::in_folder(records::chosen(&records::choice()).unwrap_or_else(records::usual));
+    let site = Arc::new(Mutex::new(Site::new(Feed::start(), Programs::here(records), port)));
     let address = format!("http://127.0.0.1:{port}/");
     println!("triq-serve: the page is at {address}");
     println!("  for a tool: curl -H 'x-triq-token: {}' {address}api/help", site.lock().unwrap().token());
@@ -62,10 +67,11 @@ fn main() -> ExitCode {
         open(&address);
     }
     let served = triq_serve::serve(&listener, &site);
-    // What was started here ends with it: each runtime is asked to shut down first.
+    // What was started here is stopped, each runtime asked to shut down first: unless the page
+    // asked for it to be left running.
     let mut site = site.lock().unwrap();
-    let machine = site.feed.machine();
-    site.programs.close(&machine);
+    let (machine, leave) = (site.feed.machine(), site.leave);
+    site.programs.close(&machine, leave);
     match served {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

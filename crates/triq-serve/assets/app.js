@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, running, said, sheet, shown, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, registered, running, said, sheet, shown, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -29,9 +29,11 @@ const view = {
   elsewhere: '',
   counted: '',
   shown: 0,
-  // How many times in a row the server did not answer; and whether it is taken to have ended.
+  // How many times in a row the server did not answer; whether it is taken to have ended;
+  // and whether the page asked it to, stopping what it had started: 'stopped' then.
   missed: 0,
   gone: false,
+  quit: null,
   // The command line. What the tool can be told; the machine as it was last looked at, and
   // when; the lines that were typed, the newest last, each with what came of it, and how each
   // was last drawn; the nodes of a list whose ports are shown; and what to bring back with
@@ -76,8 +78,10 @@ function ended(gone) {
   if (gone === view.gone) return;
   view.gone = gone;
   document.body.classList.toggle('gone', gone);
-  if (gone) say('triq serve has ended, and the programs it started with it. Run triq serve again, and this page comes back.', true);
-  else $('said').hidden = true;
+  const stopped = 'triq serve has ended, and the programs it had started were stopped. Run triq serve again, and this page comes back.';
+  const left = 'triq serve has ended. What it had started does not depend on it, and runs on: run triq serve again, and this page comes back with it.';
+  if (gone) say(view.quit === 'stopped' ? stopped : left, true);
+  else [$('said').hidden, view.quit] = [true, null];
   draw();
 }
 
@@ -199,11 +203,14 @@ function startedCard(id) {
     const how = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
     root.className = `card ${how}`;
     root.style.setProperty('--colour', colourOf(one.program));
-    name.textContent = one.program;
+    // One that a triq serve before this one started, and left running, is here by its record.
+    const before = one.adopted && h('span.badge.kept', { title: 'A triq serve before this one started it, and left it running' }, 'from before');
+    name.replaceChildren(one.program, before || '');
     told.replaceChildren(one.told.length ? h('span', {}, 'started with ', h('span.told', {}, one.told.join(' '))) : 'started with no arguments');
     const lasted = one.ended ? `after ${age(one.seconds)}` : `for ${age(one.seconds)}`;
-    // What still ran when triq serve ended, ended with it.
-    const does = view.gone && !one.ended ? 'ended with triq serve' : doing(one);
+    // What still ran when triq serve ended was stopped with it, if that was asked: or runs on.
+    const without = view.quit === 'stopped' ? 'stopped with triq serve' : 'left running';
+    const does = view.gone && !one.ended ? without : doing(one);
     status.textContent = `${does} · ${lasted} · process ${one.pid}`;
     // One that found its runtime's name taken is offered a name that is free.
     const unused = clash(one) && free(clash(one), state.runtimes);
@@ -235,6 +242,7 @@ function startedCard(id) {
     const below = log.scrollHeight - log.scrollTop - log.clientHeight < 30;
     log.hidden = !open;
     log.textContent = one.printed.join('\n') || 'It has printed nothing.';
+    log.title = `All of it is in ${one.log}`;
     if (open && below) log.scrollTop = log.scrollHeight;
   };
   return { root, update };
@@ -612,10 +620,82 @@ $('stop-all').addEventListener('click', () => {
   if (runs.length > 1 && !confirm(`Stop the ${runs.length} programs that were started here?`)) return;
   for (const one of runs) send('/api/stop', { id: one.id });
 });
-$('quit').addEventListener('click', async () => {
-  if (!confirm('End triq serve, and the programs it started?')) return;
-  await api('/api/quit', {}).catch((problem) => say(problem.message));
+// Quitting. What was started does not depend on triq serve: it is stopped with it, or left
+// running for the next triq serve to find, as is chosen.
+$('quit').addEventListener('click', () => {
+  const runs = state.programs.started.filter((one) => !one.ended).length;
+  const some = `${runs === 1 ? 'One program that was started here is' : `${runs} programs that were started here are`} running. ${runs === 1 ? 'It does' : 'They do'} not depend on triq serve: stop ${runs === 1 ? 'it' : 'them'} with it, or leave ${runs === 1 ? 'it' : 'them'} running, and the next triq serve finds ${runs === 1 ? 'it' : 'them'} again.`;
+  $('quitting-about').textContent = runs ? some : 'Nothing that was started here is running.';
+  $('quit-stop').hidden = runs === 0;
+  $('quit-stop').textContent = runs === 1 ? 'Stop it and quit' : 'Stop them and quit';
+  $('quit-leave').textContent = runs === 0 ? 'Quit' : runs === 1 ? 'Leave it running' : 'Leave them running';
+  $('quitting').showModal();
+});
+async function quit(leave) {
+  $('quitting').close();
+  await api('/api/quit', { leave }).catch((problem) => say(problem.message));
+  view.quit = leave ? 'left' : 'stopped';
   ended(true);
+}
+$('quit-stop').addEventListener('click', () => quit(false));
+$('quit-leave').addEventListener('click', () => quit(true));
+$('quit-not').addEventListener('click', () => $('quitting').close());
+
+// ---- The settings ----
+
+// Run the tool with a line, off the answers, and wait for it: what it said, once it has ended.
+async function tool(line) {
+  const { asked } = await api('/api/command', { line });
+  for (;;) {
+    await refresh();
+    const one = state.programs.asked.find((one) => one.id === asked);
+    if (!one || one.ended) return one;
+    await new Promise((later) => setTimeout(later, 120));
+  }
+}
+// A folder's name as one word of a line: what would end the word has a backslash before it.
+// It is not put in quotes, so that a ~ it begins with is still the person's own folder.
+const word = (folder) => folder.replace(/([\s'"\\])/g, '\\$1');
+
+// The folders that are registered, as the tool tells them, each with what takes it out again;
+// and the folder the records of what was started are in.
+async function drawSettings() {
+  const { usage } = await api('/api/usage');
+  view.known = commands(usage ?? '');
+  const { file, folders } = registered(usage ?? '');
+  const folder = (each) => h('div.row.folder', {}, h('span.told.grow', { title: each }, each), h('button.button.small', { onclick: () => register(`unregister ${word(each)}`) }, 'Remove'));
+  $('folders').replaceChildren(...(folders.length ? folders.map(folder) : [h('p.note', {}, 'No folder is registered.')]));
+  $('registry').textContent = file ? `They are the lines of ${file}, which triq register writes too.` : '';
+  if (document.activeElement !== $('records')) $('records').value = (await api('/api/records')).folder;
+}
+// Register a folder or take one out, by the tool, and say what it said if that went wrong.
+async function register(line) {
+  $('settings-said').textContent = '';
+  const one = await tool(line).catch((problem) => ({ failed: true, printed: [problem.message] }));
+  if (one?.failed) $('settings-said').textContent = said(one.printed).join(' ');
+  await drawSettings();
+  return !one?.failed;
+}
+$('settings-open').addEventListener('click', () => {
+  [$('settings-said').textContent, $('kept-said').textContent] = ['', ''];
+  $('settings').showModal();
+  drawSettings();
+});
+$('settings-close').addEventListener('click', () => $('settings').close());
+$('register').addEventListener('submit', async (sent) => {
+  sent.preventDefault();
+  const folder = $('folder').value.trim();
+  if (folder && (await register(`register ${word(folder)}`))) $('folder').value = '';
+});
+$('keep').addEventListener('submit', async (sent) => {
+  sent.preventDefault();
+  [$('settings-said').textContent, $('kept-said').textContent] = ['', ''];
+  try {
+    $('records').value = (await api('/api/records', { folder: $('records').value })).folder;
+    $('kept-said').textContent = 'What is started is kept there from now on, and what was kept before was moved there.';
+  } catch (problem) {
+    $('settings-said').textContent = problem.message;
+  }
 });
 
 for (const choice of $('theme').children) choice.addEventListener('click', () => theme(choice.value));

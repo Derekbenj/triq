@@ -10,9 +10,17 @@ use triq::prelude::*;
 use triq_serve::feed::Feed;
 use triq_serve::http::{Answer, Request};
 use triq_serve::programs::Programs;
+use triq_serve::records::{Records, chosen};
 use triq_serve::site::Site;
 
 const PORT: u16 = 7474;
+
+/// A folder for the records of a test, which is empty.
+fn kept(tag: &str) -> Records {
+    let folder = std::env::temp_dir().join(format!("triq-serve-{}-{tag}-site", std::process::id()));
+    let _ = std::fs::remove_dir_all(&folder);
+    Records::in_folder(folder)
+}
 
 fn wait_for(mut done: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -53,10 +61,10 @@ fn script(tag: &str, name: &str, does: &str) -> (String, std::path::PathBuf) {
 
 #[test]
 fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() {
-    let mut site = Site::new(Feed::start(), Programs::new(Vec::new()), PORT);
+    let mut site = Site::new(Feed::start(), Programs::new(Vec::new(), kept("served")), PORT);
     let token = site.token().to_owned();
     assert!(
-        token.len() == 32 && token != Site::new(Feed::start(), Programs::new(Vec::new()), PORT).token(),
+        token.len() == 32 && token != Site::new(Feed::start(), Programs::new(Vec::new(), kept("other")), PORT).token(),
         "a token of its own"
     );
 
@@ -101,18 +109,56 @@ fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() 
     // With it, the help says what can be asked, and Quit is taken.
     let help = json_of(&site.answer(&request("GET", "/api/help", Some(&token), Value::Null)));
     let asks = ["GET /api/state", "GET /api/machine", "POST /api/command", "POST /api/start", "POST /api/stop"];
-    for asked in asks.into_iter().chain(["POST /api/shutdown", "POST /api/forget", "GET /api/usage"]) {
+    let more = ["POST /api/shutdown", "POST /api/forget", "GET /api/usage", "GET /api/records", "POST /api/records"];
+    for asked in asks.into_iter().chain(more) {
         assert!(help["requests"][asked].is_string(), "{asked}");
     }
     json_of(&site.answer(&request("POST", "/api/quit", Some(&token), json!({}))));
-    assert!(site.quit);
+    assert!(site.quit && !site.leave, "what was started is stopped, unless it is said otherwise");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_page_says_where_the_records_are_kept_and_whether_what_runs_is_left_running() {
+    let talker = script("kept", "talker", "echo hello\nsleep 30");
+    let records = kept("where");
+    let (from, to) = (records.folder().to_owned(), kept("where-to").folder().join("of my own"));
+    let mut site = Site::new(Feed::start(), Programs::new(vec![talker], records), PORT);
+    site.choice = from.with_extension("choice");
+    let token = site.token().to_owned();
+    let ask = |site: &mut Site, method: &str, path: &str, body: Value| {
+        site.answer(&request(method, path, Some(&token), body))
+    };
+    assert_eq!(json_of(&ask(&mut site, "GET", "/api/records", Value::Null)), json!({ "folder": from }));
+    json_of(&ask(&mut site, "POST", "/api/start", json!({ "program": "talker", "told": "" })));
+    assert_eq!(Records::in_folder(&from).all().len(), 1);
+
+    // Another folder is chosen: the records there are go with it, and the choice is remembered.
+    let moved = ask(&mut site, "POST", "/api/records", json!({ "folder": to }));
+    assert_eq!(json_of(&moved), json!({ "folder": to }));
+    assert_eq!((Records::in_folder(&from).all().len(), Records::in_folder(&to).all().len()), (0, 1));
+    assert_eq!(chosen(&site.choice), Some(to.clone()));
+    assert_eq!(json_of(&ask(&mut site, "GET", "/api/records", Value::Null)), json!({ "folder": to }));
+    // The program prints on into its file where that is now, and is told of there.
+    let started = json_of(&ask(&mut site, "GET", "/api/state", Value::Null))["programs"]["started"][0].clone();
+    assert_eq!(started["log"], to.join("1.log").to_str().unwrap());
+    // What is no folder by its whole path is refused, and nothing is moved.
+    for folder in [json!({ "folder": "somewhere/near" }), json!({ "folder": "  " }), json!({})] {
+        assert_eq!(ask(&mut site, "POST", "/api/records", folder).status, 400);
+    }
+    assert_eq!(chosen(&site.choice), Some(to));
+
+    // The page may ask for what runs to be left running as this program ends.
+    json_of(&ask(&mut site, "POST", "/api/quit", json!({ "leave": true })));
+    assert!(site.quit && site.leave);
+    site.programs.close(&[], false);
 }
 
 #[test]
 fn the_page_is_told_which_runtimes_there_are_and_one_it_names_is_shut_down() -> triq::Result {
     let name = format!("srv{}-site", std::process::id());
     let runtime = Runtime::new(&name)?;
-    let mut site = Site::new(Feed::start(), Programs::new(Vec::new()), PORT);
+    let mut site = Site::new(Feed::start(), Programs::new(Vec::new(), kept("runtimes")), PORT);
     let token = site.token().to_owned();
     let state = |site: &mut Site| json_of(&site.answer(&request("GET", "/api/state", Some(&token), Value::Null)));
     let home = |state: &Value| {
@@ -158,7 +204,7 @@ fn the_page_is_told_which_runtimes_there_are_and_one_it_names_is_shut_down() -> 
 #[test]
 fn programs_are_started_from_the_page_more_than_one_of_each_and_stopped() {
     let talker = script("page", "talker", "echo \"told: $*\"\nsleep 30");
-    let mut site = Site::new(Feed::start(), Programs::new(vec![talker]), PORT);
+    let mut site = Site::new(Feed::start(), Programs::new(vec![talker], kept("page")), PORT);
     let token = site.token().to_owned();
     let ask = |site: &mut Site, method: &str, path: &str, body: Value| {
         json_of(&site.answer(&request(method, path, Some(&token), body)))
@@ -204,7 +250,7 @@ fn a_line_typed_on_the_page_is_a_command_for_the_tool_or_a_program_to_start() {
         "tool",
         "if [ \"$1\" = help ]; then echo 'usage:'; echo '  triq list   runtimes'; else echo \"asked: $*\"; fi",
     );
-    let mut site = Site::new(Feed::start(), Programs::new(vec![talker]), PORT);
+    let mut site = Site::new(Feed::start(), Programs::new(vec![talker], kept("line")), PORT);
     site.tool = tool;
     let token = site.token().to_owned();
     let ask = |site: &mut Site, method: &str, path: &str, body: Value| {
@@ -249,7 +295,7 @@ fn a_line_typed_on_the_page_is_a_command_for_the_tool_or_a_program_to_start() {
 fn a_browser_is_answered_over_a_connection_until_the_page_asks_the_program_to_end() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("a port");
     let port = listener.local_addr().unwrap().port();
-    let site = Arc::new(Mutex::new(Site::new(Feed::start(), Programs::new(Vec::new()), port)));
+    let site = Arc::new(Mutex::new(Site::new(Feed::start(), Programs::new(Vec::new(), kept("browser")), port)));
     let token = site.lock().unwrap().token().to_owned();
     let serving = std::thread::spawn({
         let site = site.clone();

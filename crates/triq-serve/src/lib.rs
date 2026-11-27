@@ -4,6 +4,7 @@
 pub mod feed;
 pub mod http;
 pub mod programs;
+pub mod records;
 pub mod site;
 
 use http::{Answer, Request};

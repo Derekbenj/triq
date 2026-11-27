@@ -1,18 +1,21 @@
 {
-  "what": "triq-serve: the page at / starts the programs of triq on this machine, shows what they print, stops them, and runs the triq tool with commands that are typed. Everything the page does goes through the requests below, each with the header x-triq-token.",
+  "what": "triq-serve: the page at / starts the programs of triq on this machine, shows what they print, stops them, and runs the triq tool with commands that are typed. Everything the page does goes through the requests below, each with the header x-triq-token. A program that is started does not depend on triq-serve: it may be left running when triq-serve ends, and the next triq-serve finds it by its record.",
   "requests": {
-    "GET /api/state": "programs.found: the programs that can be started, by name. programs.started: each program started here and not forgotten, with id, what it was told, pid, the runtime it is and how many nodes that has, for how many seconds it has run, whether it is being stopped, how it ended and whether that was a failure, and the last lines it printed. programs.asked: the last commands of the tool that were typed, each told the same way. runtimes: every runtime on the machine, with its pid, how many nodes it has, and in started the id of the program started here that it is, or null for one started elsewhere. said: a count, and what went wrong last.",
+    "GET /api/state": "programs.found: the programs that can be started, by name. programs.started: each program started here and not forgotten, and each that an earlier triq-serve left running (adopted: true), with id, what it was told, pid, the runtime it is and how many nodes that has, for how many seconds it has run, whether it is being stopped, how it ended and whether that was a failure, the last lines it printed, and in log the file all of them are in. programs.asked: the last commands of the tool that were typed, each told the same way. runtimes: every runtime on the machine, with its pid, how many nodes it has, and in started the id of the program started here that it is, or null for one started elsewhere. said: a count, and what went wrong last.",
     "GET /api/machine": "everything the runtimes report, as triq json prints it: each runtime with its pools, the kinds it offers and its nodes, their settings, inputs and outputs.",
-    "POST /api/command": "{\"line\": \"connect robot/imu/pose desk/viewer/input\"} is a line as it is typed in a terminal after triq, split into words as a terminal splits it. The name of a program starts that program, told the rest: answers {\"started\": n}. Anything else is run by the triq tool: answers {\"asked\": n}, and what it printed is in programs.asked once it has.",
-    "GET /api/usage": "what the triq tool says it can be told.",
+    "POST /api/command": "{\"line\": \"connect robot/imu/pose desk/viewer/input\"} is a line as it is typed in a terminal after triq, split into words as a terminal splits it. The name of a program starts that program, told the rest: answers {\"started\": n}. Anything else is run by the triq tool: answers {\"asked\": n}, and what it printed is in programs.asked once it has. register <folder> and unregister <folder> are such commands: they change where programs are looked for.",
+    "GET /api/usage": "what the triq tool says it can be told, and after that the folders that are registered for programs to be looked for in.",
     "POST /api/start": "{\"program\": \"stack-quadcopter\", \"told\": \"quadcopter2 --speed 5\"} starts the program triq-stack-quadcopter as a process, told those words. Answers {\"id\": n}. A program may be started while others of it run.",
-    "POST /api/stop": "{\"id\": n} stops a program that was started here: its runtime is asked to shut down, or the process is ended if it is no runtime, or if it was asked before and still runs.",
+    "POST /api/stop": "{\"id\": n} stops a program that was started here, or found again: its runtime is asked to shut down, or the process is ended if it is no runtime, or if it was asked before and still runs.",
     "POST /api/shutdown": "{\"runtime\": \"quadcopter\"} asks any runtime on the machine to shut down, also one that was started elsewhere.",
-    "POST /api/forget": "{\"id\": n} forgets a program that has ended; {} forgets every one that has.",
-    "POST /api/quit": "ends triq-serve, and the programs it started."
+    "POST /api/forget": "{\"id\": n} forgets a program that has ended, with its record and what it printed; {} forgets every one that has.",
+    "GET /api/records": "the folder the records of what was started are kept in: for each program a small file that says what it is, n.json, and the file it prints into, n.log.",
+    "POST /api/records": "{\"folder\": \"/a/folder\"} keeps the records in that folder from now on, moves those there are into it, and remembers the choice.",
+    "POST /api/quit": "{} ends triq-serve and stops the programs it started. {\"leave\": true} ends triq-serve and leaves them running."
   },
   "notes": [
     "Two runtimes cannot have one name. A program that is a runtime takes its name as the first word it is told, where it takes one: told nothing, a second of it finds the name taken and ends.",
-    "What is asked is done a moment later, and shows in the next state. What could not be done is said in state.said."
+    "What is asked is done a moment later, and shows in the next state. What could not be done is said in state.said.",
+    "Ended at its terminal, with Ctrl-C, triq-serve ends alone: what it started runs on."
   ]
 }

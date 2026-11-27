@@ -30,8 +30,9 @@
         <button role="radio" value="light" aria-checked="false" title="Show the page light">Light</button>
         <button role="radio" value="auto" aria-checked="false" title="Show the page as the system is set, light or dark, and change with it">Auto</button>
       </div>
+      <button id="settings-open" class="button" title="Where programs are looked for, and where what was started is kept">Settings</button>
       <button id="stop-all" class="button" title="Stop every program that was started here" hidden>Stop all</button>
-      <button id="quit" class="button" title="End triq serve, and the programs it started">Quit</button>
+      <button id="quit" class="button" title="End triq serve: what it started is stopped, or left running">Quit</button>
     </div>
   </div>
   <div class="counts"><div id="counts" class="wrap count-inner"></div></div>
@@ -94,6 +95,41 @@
     </div>
   </aside>
 </main>
+<dialog id="settings">
+  <div class="section-line">
+    <div>
+      <p class="eyebrow"><span class="eyebrow-line"></span>On this machine</p>
+      <h2 class="arcade pink">Settings</h2>
+    </div>
+    <button id="settings-close" class="button">Close</button>
+  </div>
+  <h3>Where programs are looked for</h3>
+  <p class="none">Beside the <code>triq</code> tool, on the <code>PATH</code>, and in the folders registered here. A folder to register is one that holds programs called <code>triq-…</code>, such as the <code>target/release</code> of a project.</p>
+  <div id="folders"></div>
+  <form id="register" class="tell" autocomplete="off">
+    <input id="folder" type="text" spellcheck="false" placeholder="a folder, such as ~/robot/target/release">
+    <button class="button go">Register</button>
+  </form>
+  <p id="registry" class="note"></p>
+  <h3>Where what was started is kept</h3>
+  <p class="none">Of each program that is started there is a small file that says what it is, and beside it the file the program prints into. A program that is left running is found again by them.</p>
+  <form id="keep" class="tell" autocomplete="off">
+    <input id="records" type="text" spellcheck="false" placeholder="a folder, by its whole path">
+    <button class="button">Keep them here</button>
+  </form>
+  <p id="kept-said" class="note"></p>
+  <p id="settings-said" class="note bad"></p>
+</dialog>
+<dialog id="quitting">
+  <p class="eyebrow"><span class="eyebrow-line"></span>End triq serve</p>
+  <h2 class="arcade pink">Quit</h2>
+  <p id="quitting-about" class="none"></p>
+  <div class="row">
+    <button id="quit-stop" class="button stop">Stop them and quit</button>
+    <button id="quit-leave" class="button">Leave them running</button>
+    <button id="quit-not" class="button">Stay</button>
+  </div>
+</dialog>
 <div id="said" role="status" hidden></div>
 <script type="module" src="/app.js"></script>
 </body>

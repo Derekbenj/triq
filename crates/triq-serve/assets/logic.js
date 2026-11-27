@@ -228,3 +228,14 @@ export const batch = (pasted) => {
   const lines = pasted.split(/\r?\n/).map((line) => line.trim().replace(/^\$\s+/, ''));
   return lines.filter((line) => line && !line.startsWith('#'));
 };
+
+// The folders that are registered for programs to be looked for in, and the file that lists
+// them, read from what the tool says when asked what it can be told: it ends with them.
+export function registered(usage) {
+  const lines = usage.split('\n');
+  const at = lines.findIndex((line) => /^(folders registered|no folder is registered) in /.test(line));
+  if (at < 0) return { file: '', folders: [] };
+  const file = lines[at].replace(/^(folders registered|no folder is registered) in /, '').replace(/:$/, '');
+  const listed = lines.slice(at + 1).filter((line) => line.startsWith('  '));
+  return { file, folders: listed.map((line) => line.trim()) };
+}
