@@ -47,11 +47,13 @@ fn a_program_of_triq_is_run_by_its_name_told_what_was_typed_after_it_and_the_too
 #[test]
 fn the_tool_says_which_programs_there_are_and_when_there_is_none_of_a_name() {
     let folder = folder("list", &[("hello", 0), ("workbench", 0)]);
-    // Told nothing, it says what it can be told, and the programs it has found, by name.
+    // Told nothing, it says what it can be told, and the programs it has found, by name. That
+    // is what was asked of it: it is said plainly, and nothing has gone wrong.
     let output = triq(&folder, &[]);
-    let (_, usage) = said(&output);
-    assert!(!output.status.success());
-    assert!(usage.contains("triq <program>"), "{usage}");
+    let (usage, problem) = said(&output);
+    assert!(output.status.success() && problem.is_empty(), "{problem}");
+    assert!(usage.starts_with("usage:") && usage.contains("triq <program>"), "{usage}");
+    assert_eq!(said(&triq(&folder, &["help"])).0, usage);
     let programs = usage.lines().find(|line| line.contains("programs here")).unwrap_or_else(|| panic!("{usage}"));
     assert!(programs.contains("hello") && programs.contains("workbench"), "{programs}");
     assert!(!programs.contains("hello.d"), "{programs}");

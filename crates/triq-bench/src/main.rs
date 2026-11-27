@@ -366,12 +366,31 @@ fn mesh(options: &Options) -> Result {
     Ok(())
 }
 
-fn main() -> Result {
+const USAGE: &str = "\
+usage: measure how long a message takes, and how many are lost
+  triq-bench hop  [--rate 10000] [--bytes 128] [--seconds 10] [--loan] [--polling]
+      one node sending to one node in another program
+  triq-bench mesh [--nodes 30] [--rate 5000] [--bytes 200] [--seconds 20]
+                  [--groups 3] [--threads 10] [--processes] [--shared] [--polling] [--dedicated]
+      pairs of nodes sending to each other, in pools of threads";
+
+fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
+    let done = match args.first().map(String::as_str) {
         Some("worker") => worker(&args[1..]),
         Some("hop") => hop(&Options::parse(&args[1..])),
         Some("mesh") => mesh(&Options::parse(&args[1..])),
-        _ => Err(Error::Other("usage: triq-bench hop|mesh [options]; see the top of main.rs".into())),
+        // Asked for nothing it knows: what it can be told is said plainly.
+        _ => {
+            println!("{USAGE}");
+            return std::process::ExitCode::SUCCESS;
+        }
+    };
+    match done {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("triq-bench: {error}");
+            std::process::ExitCode::FAILURE
+        }
     }
 }

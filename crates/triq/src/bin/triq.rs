@@ -67,6 +67,8 @@ fn main() -> ExitCode {
 
 fn run(args: &[&str]) -> triq::Result<ExitCode> {
     match args {
+        // Asked for nothing, or for what it can be told: that is said, and nothing has gone wrong.
+        [] | ["help" | "--help" | "-h"] => println!("{}", usage()),
         ["list"] => triq::discover()?.iter().for_each(|inventory| print!("{}", describe(inventory))),
         ["json"] => println!("{}", serde_json::to_string_pretty(&triq::discover()?)?),
         ["watch"] => watch()?,
