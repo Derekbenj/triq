@@ -16,13 +16,19 @@ use std::path::{Path, PathBuf};
 ///
 /// A person asks a program so at a terminal; and whatever lists the programs of triq, as
 /// `triq serve` does, asks each what it takes, to show it where arguments are typed. A program
-/// that does not answer `--help` is not asked, since it would take the word for something else.
+/// that does not answer `--help` is not asked, since it would take the word for something else:
+/// one that answers is known by the word being written in its file, which [`HELP`] sees to.
 pub fn help(takes: &str) {
     if std::env::args().skip(1).any(|told| told == "--help" || told == "-h") {
-        println!("{takes}");
+        println!("{takes}\n{HELP}");
         std::process::exit(0);
     }
 }
+
+/// The last line of what a program says it takes. With it, `--help` is written in the file of
+/// every program that calls [`help`], also one built for release, in which the word that is
+/// compared with what the program was told is not kept as it is written.
+const HELP: &str = "  --help            say this, and do nothing else";
 
 /// The file that lists the folders registered, one to a line: the one `TRIQ_FOLDERS` names,
 /// or else `triq/folders` among the person's own settings, `~/.config` unless

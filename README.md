@@ -413,6 +413,12 @@ fn main() -> triq::Result {
 }
 ```
 
+It says a last line of its own, about `--help` itself. A program that parses what it is told
+itself, and does not call `triq::help`, has that line in what it says too: whatever lists
+programs asks only one that has the word `--help` written in its file, since another would
+take the word for a name and start, and a program built for release does not keep the word it
+only compares with.
+
 ## In a browser
 
 ```sh
@@ -429,8 +435,8 @@ hand, is the workbench's, which is one of the programs the page starts.
   process of its own. `with arguments` opens a box for what would be typed after its name in a
   terminal, and offers what it was started with before. Under the box the program says what
   it takes, in its own words, with each option it names to click: the page asks it with
-  `--help`, once, and only a program that has `--help` written in it, since another would take
-  the word for a name and start. The box at the top finds a program by
+  `--help`, once, and only a program that has `--help` written in its file, since another would
+  take the word for a name and start. The box at the top finds a program by
   part of its name, and Enter starts it when it is the only one found; the list beside the box
   shows the programs of one family alone.
 - **More than one of a program.** A program may be started while others of it run. Two runtimes
