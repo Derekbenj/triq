@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="triq-token" content="__TOKEN__">
+<title>triq</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="hero">
+  <div class="top">
+    <div id="mark" role="img" aria-label="triq"></div>
+    <div class="title">
+      <p class="over">On this machine</p>
+      <h1 id="headline">Nothing is running</h1>
+    </div>
+    <div class="ends">
+      <button id="stop-all" class="pill glass" title="Stop every program that was started here" hidden>Stop all</button>
+      <button id="quit" class="pill glass" title="End triq serve, and the programs it started">Quit</button>
+    </div>
+  </div>
+  <canvas id="edge" aria-hidden="true"></canvas>
+</header>
+<main>
+  <section>
+    <div class="heading">
+      <div>
+        <p class="over">Started here</p>
+        <h2>Running</h2>
+      </div>
+      <button id="clear" class="pill plain" title="Take those that have ended off the page" hidden>Clear what has ended</button>
+    </div>
+    <p id="nothing" class="none">Nothing was started yet. Pick a program below: it runs as it would from a terminal.</p>
+    <div id="running" class="cards wide"></div>
+    <div id="others"></div>
+  </section>
+  <section>
+    <div class="heading">
+      <div>
+        <p class="over">As from a terminal</p>
+        <h2>Start a program</h2>
+      </div>
+      <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
+    </div>
+    <div id="programs"></div>
+  </section>
+</main>
+<div id="said" role="status" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

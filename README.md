@@ -383,11 +383,82 @@ triq workbench                      # run the program triq-workbench
 **The tool is the way to the other programs of triq.** A program of triq is called `triq-` and
 a name: `triq-workbench`, or a program of a project built on triq, such as a
 `triq-stack-quadcopter`. `triq <name>` runs the one called `triq-<name>` that is in the folder
-the tool is in, or else on the `PATH`, tells it what was typed after the name, and ends as it
-ends. So `triq workbench` is `triq-workbench`, and whatever `cargo install` has put beside the
-tool is run by its name, from any terminal, with nothing to set up first. Typed alone, `triq`
-says what it can be told and lists the programs it has found. A command of the tool's own is
-never taken for a program.
+the tool is in, in a folder that was registered, or else on the `PATH`, tells it what was typed
+after the name, and ends as it ends. So `triq workbench` is `triq-workbench`, and whatever
+`cargo install` has put beside the tool is run by its name, from any terminal, with nothing to
+set up first. Typed alone, `triq` says what it can be told, lists the programs it has found,
+each on a line, and says where it looked. A command of the tool's own is never taken for a
+program.
+
+**A folder of programs is registered once.** A project that builds its programs into a folder
+of its own need not put that folder on the `PATH` of every terminal:
+
+```sh
+triq register ~/robot/target/release   # its programs are run by name from now on
+triq unregister ~/robot/target/release
+```
+
+The folders registered are the lines of one file, `~/.config/triq/folders`, or the file
+`TRIQ_FOLDERS` names; `XDG_CONFIG_HOME` is where `.config` is, if it is set. A folder is kept by
+its whole path, once. `triq::programs()` is the same list for a program of your own.
+
+## In a browser
+
+```sh
+triq serve                # or triq-serve [--port 7474] [--no-open]
+```
+
+`triq-serve` serves one page, to this machine alone, and opens it in the browser. The page
+starts the programs of triq and stops them, as a terminal would, with less typing. What is
+inside a runtime, its nodes, their settings and their wires, is the workbench's to show, and
+the workbench is one of the programs the page starts.
+
+- **Start a program.** Every program of triq that is found, as the tool finds them, is on the
+  page, family by family: `algorithm-sensors` is under `algorithm`. `Start` starts one as a
+  process of its own. `with arguments` opens a box for what would be typed after its name in a
+  terminal, and offers what it was started with before. The box at the top finds a program by
+  part of its name, and Enter starts it when it is the only one found.
+- **More than one of a program.** A program may be started while others of it run. Two runtimes
+  cannot have one name, so the page gives the next one a name that is free, `physics2` beside
+  `physics`, where a program takes its runtime's name as the first word it is told. The card
+  says what the next will be started with before it is. A program that ended because its name
+  was taken by something started elsewhere is offered a free name in the same way.
+- **Running.** Each program that was started has a card: what it was started with, the runtime
+  it is and how many nodes that has, for how long, and the last line it printed, or all of it.
+  `Stop` asks its runtime to shut down, so that it clears its own things away, and ends the
+  process if it is no runtime. Pressed again on one that did not shut down, it ends it. One
+  that ended by itself with something wrong shows what it printed, which says why. `Stop all`
+  stops every one. Runtimes that were started elsewhere are listed under the cards, each with
+  `Shut down`.
+
+The page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
+ends anything. A page that is left open says that `triq-serve` has ended, and comes back when
+it is run again.
+
+**It starts programs, so it is served with care.** It listens on `127.0.0.1` alone. A request
+that does not name this machine as its host is refused, and so is one under `/api/` without
+the token `triq-serve` makes as it starts, which the page it serves is given and no other
+page in the browser can read. Nothing is fetched from elsewhere: the page is in the program,
+and works on a machine with no network.
+
+**For a language model, or a script.** Everything the page does is a request it could make
+too, and `triq-serve` prints how as it starts:
+
+```sh
+curl -H 'x-triq-token: <the token it printed>' http://127.0.0.1:7474/api/help    # what can be asked
+curl -H 'x-triq-token: ...' http://127.0.0.1:7474/api/state                     # the programs, and what runs
+curl -H 'x-triq-token: ...' -d '{"program": "workbench", "told": ""}' http://127.0.0.1:7474/api/start
+curl -H 'x-triq-token: ...' -d '{"id": 1}' http://127.0.0.1:7474/api/stop
+```
+
+| File of `crates/triq-serve` | What it holds |
+| --- | --- |
+| `src/http.rs` | as much of HTTP as one page needs: a request read, an answer written |
+| `src/site.rs` | the page and its parts, the requests under `/api/`, and who is answered |
+| `src/programs.rs` | programs started as processes, what they print, and stopping them |
+| `src/feed.rs` | the runtimes of the machine as they are seen, and one asked to shut down, off the thread that answers |
+| `assets/app.js`, `logic.js` | the page: what it draws and sends, and what it works out, which `node --test` tries |
+| `assets/hero.js`, `app.css` | the name in squares and the edge under it, and how the page looks |
 
 ## The workbench
 
@@ -1011,8 +1082,9 @@ of a message.
 | `runtime/group.rs` | 133 | which group a node is in, and kinds that create a group of nodes |
 | `control.rs`, `remote.rs` | 548 | requests between programs, discovery, change announcements |
 | `inventory.rs`, `error.rs`, `raw.rs`, `lib.rs` | 453 | report types, what a change makes of settings, the error type, iceoryx2 type names |
+| `programs.rs` | 101 | the programs of triq on the machine, and the folders registered to hold them |
 
-About 3,790 lines including comments, plus the derive macros (108) and the command-line tool (258).
+About 3,890 lines including comments, plus the derive macros (108) and the command-line tool (266).
 Tests are in `crates/triq/tests`, one file per subject.
 
 ## Measurements

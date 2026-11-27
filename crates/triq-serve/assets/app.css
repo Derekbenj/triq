@@ -1,0 +1,127 @@
+/* The page: a band of colour at the top that breaks up into squares, and under it a light page
+   of rounded cards. Flat throughout. */
+:root {
+  --ink: #2f3447;
+  --soft: #6d7690;
+  --page: #f7f9fd;
+  --card: #ffffff;
+  --line: #dde6f5;
+  --blue: #4a8fe0;
+  --night: #262554;
+  --go: #6fc03b;
+  --go-edge: #55a026;
+  --stop: #f0527f;
+  --stop-edge: #cf3565;
+  --sans: "Avenir Next", "Nunito Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.45 var(--sans); }
+button, input { font: inherit; color: inherit; }
+.over { margin: 0; font-weight: 400; font-size: 14px; letter-spacing: 0.04em; text-transform: uppercase; }
+h1, h2 { margin: 0; font-weight: 800; font-size: 27px; line-height: 1.1; letter-spacing: 0.01em; text-transform: uppercase; }
+
+/* The band at the top. */
+.hero { background: linear-gradient(100deg, #2e3180 0%, #57308b 46%, #b32f91 100%); color: #fff; }
+.top { max-width: 1180px; margin: 0 auto; padding: 26px 24px 0; display: flex; align-items: center; gap: 28px; }
+.title { flex: 1; min-width: 0; }
+.title .over { opacity: 0.85; }
+.ends { display: flex; gap: 10px; }
+#edge { display: block; width: 100%; height: 96px; image-rendering: pixelated; }
+
+/* The name, in squares: each changes colour and hops, a moment after the one on its left. */
+#mark { display: grid; grid-auto-columns: 9px; grid-auto-rows: 9px; gap: 2px; }
+#mark span { background: #39ff7a; box-shadow: 2px 2px 0 rgba(20, 16, 70, 0.35); animation: colours 6.6s linear infinite, hop 2.6s ease-in-out infinite; }
+@keyframes colours {
+  0%, 100% { background: #c264ff; }
+  17% { background: #2fc3ff; }
+  33% { background: #39ff7a; }
+  50% { background: #fff04a; }
+  67% { background: #ffa22e; }
+  83% { background: #ff5cb8; }
+}
+@keyframes hop {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
+main { max-width: 1180px; margin: 0 auto; padding: 8px 24px 80px; }
+section { margin-top: 30px; }
+.heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; color: var(--blue); }
+.none { color: var(--soft); margin: 0 0 8px; }
+
+/* Buttons are pills. One that starts something is green, one that stops something is red. */
+.pill { border: 0; border-radius: 999px; padding: 7px 20px; font-weight: 600; cursor: pointer; white-space: nowrap; color: #fff; background: var(--go); box-shadow: 0 3px 0 var(--go-edge); }
+.pill:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--go-edge); }
+.pill.stop { background: var(--stop); box-shadow: 0 3px 0 var(--stop-edge); }
+.pill.plain { background: var(--card); color: var(--ink); box-shadow: inset 0 0 0 2px var(--line); }
+.pill.plain:hover { box-shadow: inset 0 0 0 2px var(--blue); }
+.pill.glass { background: rgba(255, 255, 255, 0.14); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.55); }
+.pill.glass:hover { background: rgba(255, 255, 255, 0.26); }
+.link { border: 0; padding: 0; background: none; color: var(--blue); cursor: pointer; font-size: 13px; }
+.link:hover { text-decoration: underline; }
+
+input[type=search], input[type=text] { border: 2px solid var(--line); border-radius: 999px; padding: 7px 16px; background: var(--card); outline: none; min-width: 0; }
+input:focus { border-color: var(--blue); }
+#search { width: 260px; }
+
+/* Cards, in as many columns as fit. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; align-items: start; }
+.cards.wide { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); }
+.card { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 14px 16px; min-width: 0; }
+.row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.grow { flex: 1; min-width: 0; }
+.name { font-weight: 700; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub { color: var(--soft); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.under { display: flex; align-items: center; gap: 10px; margin-top: 10px; min-height: 22px; font-size: 13px; color: var(--soft); }
+code, .told { font-family: var(--mono); font-size: 12.5px; background: #eef2fb; border-radius: 6px; padding: 2px 7px; color: var(--ink); }
+.badge { display: inline-block; background: #e6f6dc; color: #3d7d1a; border-radius: 999px; padding: 0 9px; font-weight: 600; font-size: 12.5px; }
+.tell { display: flex; gap: 8px; margin-top: 10px; }
+.tell input { flex: 1; font-family: var(--mono); font-size: 13px; border-radius: 10px; padding: 7px 10px; }
+.before { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.before button { border: 0; cursor: pointer; }
+.before button:hover { background: #dde8fb; }
+
+/* A program's picture: its squares, in the colour of its family. */
+.picture { flex: none; display: grid; grid-template-columns: repeat(5, 6px); grid-auto-rows: 6px; gap: 1px; padding: 6px; border-radius: 12px; background: color-mix(in srgb, var(--colour) 13%, white); }
+.picture i.on { background: var(--colour); }
+.family { margin-bottom: 22px; }
+.family h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--soft); display: flex; align-items: center; gap: 8px; }
+.family h3::before { content: ""; width: 10px; height: 10px; background: var(--colour); }
+
+/* One that was started. A square says how it is: green while it runs. */
+.state { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13.5px; }
+.state::before { content: ""; flex: none; width: 9px; height: 9px; background: var(--go); animation: alive 1.6s ease-in-out infinite; }
+.card.stopping .state::before { background: #f2a900; }
+.card.ended .state::before { background: #b4bccd; animation: none; }
+.card.failed .state::before { background: var(--stop); animation: none; }
+.card.failed { border-color: #f7c3d2; }
+.card.ended .name, .card.failed .name { color: var(--soft); }
+@keyframes alive { 50% { opacity: 0.35; } }
+.last { margin-top: 8px; display: flex; align-items: center; gap: 10px; }
+.last span { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12.5px; color: var(--soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log { margin: 10px 0 0; background: var(--night); color: #e7eaff; border-radius: 12px; padding: 10px 12px; max-height: 260px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+/* The runtimes that were started elsewhere. */
+#others { margin-top: 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--soft); font-size: 13.5px; }
+.other { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 2px solid var(--line); border-radius: 999px; padding: 3px 5px 3px 14px; color: var(--ink); }
+.other button { border: 0; border-radius: 999px; padding: 2px 10px; background: #fde7ee; color: var(--stop-edge); cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.other button:hover { background: var(--stop); color: #fff; }
+
+/* What went wrong, said at the foot of the window for a while. */
+#said { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); max-width: min(760px, 92vw); background: var(--night); color: #fff; border-radius: 14px; padding: 10px 18px; box-shadow: 0 8px 24px rgba(38, 37, 84, 0.3); }
+body.gone main { opacity: 0.45; pointer-events: none; }
+body.gone .state::before { animation: none; background: #b4bccd; }
+
+@media (max-width: 720px) {
+  .top { flex-wrap: wrap; gap: 14px; }
+  .title { order: 3; flex-basis: 100%; }
+  .ends { margin-left: auto; }
+  .cards, .cards.wide { grid-template-columns: 1fr; }
+  #search { width: 100%; }
+  .heading { flex-direction: column; align-items: stretch; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #mark span, .state::before { animation: none; }
+}

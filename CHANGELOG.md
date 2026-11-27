@@ -2,6 +2,13 @@
 
 ## Not yet released
 
+- **`triq serve`: triq's programs in a browser.** `triq-serve` serves a page to this machine
+  alone that starts triq's programs as processes, more than one of each under names of their
+  own, shows what they print, and stops them. What the page does a script or a language model
+  can ask as well, with the token it prints.
+- **A folder of programs is registered once**, with `triq register <folder>`, in a file, and
+  its programs are found from then on with nothing on the `PATH`. `triq::programs()` and
+  `triq::program(name)` find them for a program of your own.
 - **`triq <program>` runs the program `triq-<program>`**: the one beside the tool, or on the
   `PATH`. `triq workbench` starts the workbench, and a program of a project built on triq is run
   the same way. Typed alone, `triq` lists the programs it has found.
