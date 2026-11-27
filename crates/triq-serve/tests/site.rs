@@ -111,7 +111,7 @@ fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() 
     let help = json_of(&site.answer(&request("GET", "/api/help", Some(&token), Value::Null)));
     let asks = ["GET /api/state", "GET /api/machine", "POST /api/command", "POST /api/start", "POST /api/stop"];
     let more = ["POST /api/shutdown", "POST /api/forget", "GET /api/usage", "GET /api/records", "POST /api/records"];
-    let more = more.into_iter().chain(["POST /api/takes"]);
+    let more = more.into_iter().chain(["POST /api/takes", "POST /api/printed"]);
     for asked in asks.into_iter().chain(more) {
         assert!(help["requests"][asked].is_string(), "{asked}");
     }
@@ -228,6 +228,11 @@ fn programs_are_started_from_the_page_more_than_one_of_each_and_stopped() {
     assert_eq!(both[0]["told"], json!(["one", "--speed", "5"]));
     assert_eq!(both[0]["printed"], json!(["told: one --speed 5"]));
     assert_eq!((&both[1]["told"], &both[1]["ended"]), (&json!(["two"]), &Value::Null));
+
+    // More of what one printed than the page is sent as it looks is had when it is asked for.
+    let more = ask(&mut site, "POST", "/api/printed", json!({ "id": 1 }));
+    assert_eq!(more["printed"], json!(["told: one --speed 5"]));
+    assert_eq!(site.answer(&request("POST", "/api/printed", Some(&token), json!({ "id": 99 }))).status, 400);
 
     // One is stopped, and the other runs on. Forgotten, the one that ended is listed no more.
     ask(&mut site, "POST", "/api/stop", json!({ "id": 1 }));

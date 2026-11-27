@@ -14,7 +14,7 @@ use crate::records::{Record, Records, make};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,10 @@ use triq::{Inventory, Remote};
 /// those the page is sent each time it asks.
 const KEPT: usize = 500;
 const SHOWN: usize = 200;
+/// How many of the lines a program has printed are had when more are asked for, and how far
+/// from the end of its file they are looked for.
+const MORE: usize = 2000;
+const END: u64 = 1 << 20;
 /// How many commands of the tool are kept, with what they printed.
 const ASKED: usize = 20;
 /// How often the programs that can be started are looked for again.
@@ -547,6 +551,25 @@ impl Programs {
     /// The last lines one that was started has printed, the newest last.
     pub fn printed(&self, started: usize) -> Vec<String> {
         self.started[started].lines.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// More of what one that was started has printed than is kept at hand: the last lines of
+    /// the file it prints into, the newest last. A command of the tool prints into no file,
+    /// and has what is kept.
+    pub fn printed_more(&self, started: usize) -> Vec<String> {
+        let one = &self.started[started];
+        let read = || -> std::io::Result<Vec<String>> {
+            let mut file = File::open(self.records.log(one.id))?;
+            let from = file.metadata()?.len().saturating_sub(END);
+            file.seek(SeekFrom::Start(from))?;
+            let mut end = Vec::new();
+            file.read_to_end(&mut end)?;
+            let text = String::from_utf8_lossy(&end);
+            // Begun in the middle of the file, the first line is the rest of one: it is left out.
+            let lines: Vec<&str> = text.lines().skip(usize::from(from > 0)).collect();
+            Ok(lines[lines.len().saturating_sub(MORE)..].iter().map(|line| plain(line)).collect())
+        };
+        if one.asked { self.printed(started) } else { read().unwrap_or_else(|_| self.printed(started)) }
     }
 
     /// The runtime one that was started is, if it runs and is one: the runtime of its process.

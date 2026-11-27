@@ -440,6 +440,9 @@ hand, is the workbench's, which is one of the programs the page starts.
   was taken by something started elsewhere is offered a free name in the same way.
 - **Running.** Each program that was started has a card: what it was started with, the runtime
   it is and how many nodes that has, for how long, and the last line it printed, or all of it.
+  `expand` puts what it printed in a window in front of the page, as large as the page: its
+  last two thousand lines, kept up to date, and still while some of it is selected to be
+  copied. `Collapse`, Esc, or a click beside the window puts it away again.
   `Stop` asks its runtime to shut down, so that it clears its own things away, and ends the
   process if it is no runtime. Pressed again on one that did not shut down, it ends it. One
   that ended by itself with something wrong shows what it printed, which says why. One that

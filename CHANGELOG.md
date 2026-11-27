@@ -10,8 +10,9 @@
   `Behavior` tells of each name and asks for the highlight.
 - **`triq serve`: triq's programs in a browser.** `triq-serve` serves a page to this machine
   alone that starts triq's programs as processes, more than one of each under names of their
-  own, shows what they print, and stops them. It has a line for the commands of the `triq`
-  tool, which offers the names of the machine as they are typed and draws what comes of a
+  own, shows what they print, in the card of each or in a window as large as the page, and
+  stops them. It has a line for the commands of the `triq` tool, on a tab that has the whole
+  width, which offers the names of the machine as they are typed and draws what comes of a
   command. What it starts does not depend on it: a program may be left running when
   `triq-serve` ends, and the next one finds it again by its record. What the page does a
   script or a language model can ask as well, with the token it prints.

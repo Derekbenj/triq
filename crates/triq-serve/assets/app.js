@@ -28,6 +28,8 @@ const view = {
   cards: new Map(),
   open: new Set(),
   opened: new Set(),
+  // The one whose output is in a window in front of the page, by its number, if one is.
+  expanded: null,
   // What the list of programs, the runtimes of elsewhere and the counts were last drawn from,
   // so that they are drawn again only when that changes; and how many problems were said.
   drawn: '',
@@ -236,6 +238,47 @@ function drawPrograms(now = false) {
   $('programs').replaceChildren(...(parts.length ? parts : [h('p.none', {}, none)]));
 }
 
+// How one that was started stands, in a line: what it is doing, for how long, and its process.
+function stateOf(one) {
+  const lasted = one.ended ? `after ${age(one.seconds)}` : `for ${age(one.seconds)}`;
+  // What still ran when triq serve ended was stopped with it, if that was asked: or runs on.
+  const without = view.quit === 'stopped' ? 'stopped with triq serve' : 'left running';
+  const does = view.gone && !one.ended ? without : doing(one);
+  return `${does} · ${lasted} · process ${one.pid}`;
+}
+
+// What one that was started printed, in a window in front of the page that is as large as the
+// page allows, and collapsed to its card again. It has more of it than the card has, and is
+// kept up to date for as long as it is there.
+function expand(id) {
+  view.expanded = id;
+  $('printed-text').textContent = '';
+  $('printed').showModal();
+  drawPrinted();
+}
+
+async function drawPrinted() {
+  if (view.expanded === null) return;
+  const one = state.programs.started.find((one) => one.id === view.expanded);
+  // One that was taken off the page has nothing more to show.
+  if (!one) return $('printed').close();
+  $('printed').className = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
+  $('printed-name').textContent = one.program;
+  $('printed-state').textContent = `${stateOf(one)} · started with ${line(one.told) || 'no arguments'}`;
+  $('printed-where').textContent = `Its last lines. All of it is in ${one.log}`;
+  // Without the server there is what the card has.
+  const { printed } = await api('/api/printed', { id: one.id }).catch(() => one);
+  const [text, chosen] = [$('printed-text'), document.getSelection()];
+  // It is left as it is while some of it is selected, so that it can be copied.
+  const held = !chosen.isCollapsed && text.contains(chosen.anchorNode);
+  const now = printed.join('\n') || 'It has printed nothing.';
+  if (view.expanded !== one.id || held || text.textContent === now) return;
+  // What is new is scrolled to, unless the person has scrolled back to read.
+  const below = text.scrollHeight - text.scrollTop - text.clientHeight < 30;
+  text.textContent = now;
+  if (below) text.scrollTop = text.scrollHeight;
+}
+
 // The card of one that was started. It is made once and kept, so that its output stays where
 // it was scrolled to; `update` brings it in line with what the server says of it.
 function startedCard(id) {
@@ -253,7 +296,8 @@ function startedCard(id) {
       draw();
     },
   });
-  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), again, hints, status, h('div.last', {}, last, output), log);
+  const larger = h('button.link', { onclick: () => expand(id), title: 'What it printed, in a window as large as the page: more of it than is here' }, 'expand');
+  const root = h('div.card', {}, h('div.row', {}, h('div.grow', {}, name, told), ends), again, hints, status, h('div.last', {}, last, larger, output), log);
   let buttons = '';
   const update = (one) => {
     const how = one.failed ? 'failed' : one.ended ? 'ended' : one.stopping ? 'stopping' : 'running';
@@ -263,11 +307,7 @@ function startedCard(id) {
     const before = one.adopted && h('span.badge.kept', { title: 'A triq serve before this one started it, and left it running' }, 'from before');
     name.replaceChildren(one.program, before || '');
     told.replaceChildren(one.told.length ? h('span', {}, 'started with ', h('span.told', {}, one.told.join(' '))) : 'started with no arguments');
-    const lasted = one.ended ? `after ${age(one.seconds)}` : `for ${age(one.seconds)}`;
-    // What still ran when triq serve ended was stopped with it, if that was asked: or runs on.
-    const without = view.quit === 'stopped' ? 'stopped with triq serve' : 'left running';
-    const does = view.gone && !one.ended ? without : doing(one);
-    status.textContent = `${does} · ${lasted} · process ${one.pid}`;
+    status.textContent = stateOf(one);
     // One that found its runtime's name taken is offered a name that is free.
     const unused = clash(one) && free(clash(one), state.runtimes);
     // The buttons are made again only when they change, or a click between two looks is lost.
@@ -699,6 +739,7 @@ async function refresh() {
     if (live && Date.now() - view.looked > 900) Object.assign(live, { machine: await look(), stamp: live.stamp + 1 });
     ended(false);
     draw();
+    drawPrinted();
   } catch (problem) {
     // Another triq serve answers here now, with a token of its own: this is its page to show.
     if (problem.status === 403) return location.reload();
@@ -795,6 +836,15 @@ $('settings-open').addEventListener('click', () => {
   drawSettings();
 });
 $('settings-close').addEventListener('click', () => $('settings').close());
+// What a program printed is collapsed to its card again by its button, by Esc, and by a click
+// beside the window.
+$('printed-close').addEventListener('click', () => $('printed').close());
+$('printed').addEventListener('close', () => (view.expanded = null));
+$('printed').addEventListener('click', (click) => {
+  const within = $('printed').getBoundingClientRect();
+  const beside = click.clientX < within.left || click.clientX > within.right || click.clientY < within.top || click.clientY > within.bottom;
+  if (click.target === $('printed') && beside) $('printed').close();
+});
 $('register').addEventListener('submit', async (sent) => {
   sent.preventDefault();
   const folder = $('folder').value.trim();

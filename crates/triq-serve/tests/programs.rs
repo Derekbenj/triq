@@ -385,6 +385,26 @@ fn a_record_of_a_program_that_is_gone_is_of_one_that_has_ended() {
 }
 
 #[test]
+fn more_of_what_a_program_printed_is_read_from_the_end_of_its_file() {
+    // It prints three thousand lines, of which five hundred are kept at hand.
+    let prints = "i=0; while [ $i -lt 3000 ]; do echo \"line $i\"; i=$((i+1)); done\nsleep 30";
+    let mut programs = Programs::new(vec![program("more", "talker", prints)], kept("more"));
+    programs.start(0, "").expect("start it");
+    assert!(wait_for(|| programs.printed(0).last().is_some_and(|last| last == "line 2999")));
+    assert_eq!(programs.printed(0).len(), 500);
+    // Asked for more, the last two thousand are had, whole lines, the newest last.
+    let more = programs.printed_more(0);
+    assert_eq!((more.len(), more[0].as_str(), more[1999].as_str()), (2000, "line 1000", "line 2999"));
+    // One that printed little has all of it.
+    let mut quiet = Programs::new(vec![program("more", "quiet", "echo one\necho two\nsleep 30")], kept("quiet"));
+    quiet.start(0, "").expect("start it");
+    assert!(wait_for(|| quiet.printed(0).len() == 2));
+    assert_eq!(quiet.printed_more(0), ["one", "two"]);
+    programs.close(&[], false);
+    quiet.close(&[], false);
+}
+
+#[test]
 fn a_line_is_read_without_the_marks_that_colour_it() {
     assert_eq!(
         plain("\u{1b}[2m2026-11-26T05:55Z\u{1b}[0m \u{1b}[32m INFO\u{1b}[0m camera created"),

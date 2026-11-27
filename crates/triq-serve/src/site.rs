@@ -124,6 +124,12 @@ impl Site {
                 let said = said.map_err(|error| format!("the triq tool could not be run: {error}"))?;
                 Ok(Answer::json(&json!({ "usage": String::from_utf8_lossy(&said.stdout) })))
             }
+            // More of what one that was started printed than the page is sent as it looks.
+            ("POST", "/api/printed") => {
+                let id = sent()?["id"].as_u64().ok_or("no number of a program that was started")?;
+                let place = self.programs.place(id).ok_or("no program that was started has that number")?;
+                Ok(Answer::json(&json!({ "printed": self.programs.printed_more(place) })))
+            }
             // What a program says it takes, in its own words, or null if it does not say.
             ("POST", "/api/takes") => {
                 let sent = sent()?;

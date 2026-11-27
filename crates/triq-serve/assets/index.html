@@ -143,6 +143,18 @@
     <button id="quit-not" class="button">Stay</button>
   </div>
 </dialog>
+<dialog id="printed">
+  <div class="section-line">
+    <div>
+      <p class="eyebrow"><span class="eyebrow-line"></span>What it printed</p>
+      <h2 id="printed-name" class="arcade green"></h2>
+    </div>
+    <button id="printed-close" class="button" title="Back to its card: Esc does the same">Collapse</button>
+  </div>
+  <div id="printed-state" class="state"></div>
+  <pre id="printed-text" class="log" tabindex="0"></pre>
+  <p id="printed-where" class="note"></p>
+</dialog>
 <div id="said" role="status" hidden></div>
 <script type="module" src="/app.js"></script>
 </body>
