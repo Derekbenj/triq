@@ -64,8 +64,8 @@
   --bad-edge: #f1a9cb;
   --warn: #c98300;
   --name: #0b7fb5;
-  --prompt: #f08a1c;
-  --prompt-side: #9c4a0c;
+  --prompt: #f59b14;
+  --prompt-side: #d9760a;
   --tint: 62%;
 }
 /* What starts something is green and what stops something is pink, in both. */
@@ -92,13 +92,14 @@ p, h1, h2, h3 { margin: 0; }
 code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0.05rem 0.35rem; color: var(--text); }
 
 /* Letters as on an arcade machine: a face, and two more of the letter behind it, each a step
-   down and to the right, darker. On the light page the faces are deeper, to stand out. */
+   down and to the right, darker. On the light page those behind are not nearly as dark: what
+   reads as depth against a dark page reads as dirt against a light one. */
 .yellow { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; }
 .cyan { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; }
 .green { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; }
-:root[data-theme="light"] .yellow { --face: #ffb515; --side: #d96f00; --deep: #8f4300; }
-:root[data-theme="light"] .cyan { --face: #1cb5ee; --side: #0b78b0; --deep: #064c73; }
-:root[data-theme="light"] .green { --face: #24c765; --side: #10893f; --deep: #095526; }
+:root[data-theme="light"] .yellow { --face: #ffc21f; --side: #f59b14; --deep: #e07c0a; }
+:root[data-theme="light"] .cyan { --face: #2cc3f7; --side: #18a0dd; --deep: #1284bd; }
+:root[data-theme="light"] .green { --face: #3ad676; --side: #22b45c; --deep: #1a964b; }
 .arcade { font: 400 1.25rem/1.2 var(--pixel); text-transform: uppercase; color: var(--face); text-shadow: 1.5px 1.5px 0 var(--side), 3px 3px 0 var(--deep); padding-bottom: 3px; }
 
 /* The top: the name, what is running in a sentence, and what ends things. Behind it, faint
@@ -119,12 +120,12 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .mark span:nth-child(4n + 2) { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; --light: #fff4a8; --x: 0px; --y: 5px; --r: 3deg; }
 .mark span:nth-child(4n + 3) { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; --light: #b4f1ff; --x: 0px; --y: -4px; --r: -2deg; }
 .mark span:nth-child(4n + 4) { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; --light: #c6ffd8; --x: 0px; --y: 4px; --r: 5deg; }
-/* On the light page the faces are deeper, and the edge up and to the left is dark, not light:
-   it is what a bright letter is told from a bright page by. */
-:root[data-theme="light"] .mark span:nth-child(4n + 1) { --face: #ff4d9d; --side: #c41f79; --deep: #7a1050; --light: #c41f79; }
-:root[data-theme="light"] .mark span:nth-child(4n + 2) { --face: #ffc21f; --side: #e07a0c; --deep: #9a4508; --light: #e07a0c; }
-:root[data-theme="light"] .mark span:nth-child(4n + 3) { --face: #2cc6f5; --side: #1180bd; --deep: #0a5380; --light: #1180bd; }
-:root[data-theme="light"] .mark span:nth-child(4n + 4) { --face: #44dc78; --side: #189a4d; --deep: #0d6633; --light: #189a4d; }
+/* On the light page the letters behind a face are a shade under it and no darker, and the
+   edge up and to the left is white. */
+:root[data-theme="light"] .mark span:nth-child(4n + 1) { --face: #ff5fa8; --side: #ee3f92; --deep: #d6297d; --light: #ffffff; }
+:root[data-theme="light"] .mark span:nth-child(4n + 2) { --face: #ffcb2e; --side: #f8a51c; --deep: #e98511; --light: #ffffff; }
+:root[data-theme="light"] .mark span:nth-child(4n + 3) { --face: #38cffb; --side: #1eaae6; --deep: #178dc9; --light: #ffffff; }
+:root[data-theme="light"] .mark span:nth-child(4n + 4) { --face: #55e684; --side: #2fc468; --deep: #21a655; --light: #ffffff; }
 
 /* A strip of counts under the top. */
 .counts { background: var(--strip); border-top: 1px solid var(--line); }
