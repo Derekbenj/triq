@@ -10,7 +10,7 @@ use triq::{NodeInfo, NodeState};
 use triq_workbench::egui::accesskit::Role;
 use triq_workbench::graph::Card;
 use triq_workbench::snarl::{InPinId, OutPinId, Snarl};
-use window::{Bench, around, bar, drag, open, switch, until};
+use window::{Bench, around, bar, drag, open, switch, unfold, until};
 
 fn shows(harness: &Bench<'_>, label: &str) -> bool {
     harness.query_all_by_label(label).next().is_some()
@@ -82,6 +82,9 @@ fn the_workbench_shows_the_machine_and_changes_it_on_request() -> triq::Result {
     // The charts are in a window of their own, open beside the graph. It is about what connections
     // do over time, and lists them with their numbers as they stand.
     let filtered = format!("{robot}/smoother/raw");
+    // What a node hears and sends is folded away under its name there, until that is clicked.
+    assert!(until(&mut harness, |harness| shows(harness, &format!("{robot}/smoother"))), "the filter is in the list");
+    unfold(&mut harness, &filtered);
     let listed = until(&mut harness, |harness| {
         scene.imu.pose.send(Pose::default()).expect("send");
         let connection = harness.query_by_label(&filtered).and_then(|name| name.parent());

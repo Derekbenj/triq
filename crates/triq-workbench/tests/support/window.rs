@@ -246,3 +246,23 @@ pub fn double_click<State>(harness: &mut Harness<'_, State>, at: egui::Pos2) {
     harness.input_mut().time = None;
     harness.run_steps(3);
 }
+
+/// List what a node hears and sends in the list of numbers, if that is folded away under its
+/// name: `entry` is one of them, `runtime/node/port`. Other programs' nodes may be listed above
+/// it, so its name is brought into view first. A chart may be written on with the name of an
+/// entry: the list is to the left of the charts.
+pub fn unfold<State>(harness: &mut Harness<'_, State>, entry: &str) {
+    let node = entry.rsplit_once('/').map_or(entry, |(node, _)| node);
+    fn name<'a, State>(harness: &'a Harness<'_, State>, node: &'a str) -> Node<'a> {
+        let named = harness.query_all_by_label(node).min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()));
+        named.unwrap_or_else(|| panic!("{node} is not in the list of numbers"))
+    }
+    let edge = name(harness, node).rect().right();
+    if harness.query_all_by_label(entry).any(|listed| listed.rect().left() < edge) {
+        return;
+    }
+    name(harness, node).scroll_to_me();
+    harness.run_steps(3);
+    name(harness, node).click();
+    harness.run_steps(6);
+}

@@ -280,12 +280,15 @@ pub struct Charts {
     /// The runtime whose numbers are the only ones in the list, if one was chosen there.
     #[serde(skip)]
     only: Option<String>,
+    /// What is searched for in the list, as it is typed there.
+    #[serde(skip)]
+    search: String,
 }
 
 impl Default for Charts {
     fn default() -> Self {
         let panes = Tree::new_tabs(egui::Id::unique("charts"), vec![Chart::new(1, Kind::Time)]);
-        Self { panes, made: 1, listed: true, chosen: Vec::new(), only: None }
+        Self { panes, made: 1, listed: true, chosen: Vec::new(), only: None, search: String::new() }
     }
 }
 
@@ -325,7 +328,8 @@ impl Charts {
         let most = (ui.available_width() - NARROWEST_CHARTS).max(NARROWEST_LIST);
         let list = egui::Panel::left("numbers").default_size(300.0).size_range(NARROWEST_LIST..=most);
         // A list that is hidden has no topic open that anyone could see.
-        let numbers = |ui: &mut Ui| list::numbers(ui, (recorded, colors), &mut self.chosen, &mut self.only);
+        let (chosen, only, search) = (&mut self.chosen, &mut self.only, &mut self.search);
+        let numbers = |ui: &mut Ui| list::numbers(ui, (recorded, colors), chosen, only, search);
         let opened = if self.listed { list.show(ui, numbers).inner } else { BTreeSet::new() };
         egui::CentralPanel::default().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

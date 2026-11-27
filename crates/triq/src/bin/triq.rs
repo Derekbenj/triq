@@ -2,10 +2,15 @@
 //!
 //! The tool owns no nodes. Every change is a request to the runtime that
 //! owns the node concerned.
+//!
+//! It is also the way to the other programs of triq. `triq <program>` runs
+//! the program called `triq-<program>` that is beside the tool, or on the
+//! PATH: `triq workbench` is `triq-workbench`.
 use serde_json::Value;
 use std::fmt::Write as _;
 use std::io::Write as _;
-use std::process::ExitCode;
+use std::path::PathBuf;
+use std::process::{Command, ExitCode};
 use std::time::Duration;
 use triq::{Error, Inventory, NodeInfo, NodeState, Placement, PortSpec, Remote, Watch};
 
@@ -24,7 +29,26 @@ usage:
   triq pause <runtime/node>
   triq resume <runtime/node>
   triq remove <runtime/node>
-  triq shutdown <runtime>";
+  triq shutdown <runtime>
+  triq <program> [what it is told]            run triq-<program>, as triq workbench runs triq-workbench";
+
+/// What the tool does itself. A program is never run in the place of one of these.
+const COMMANDS: [&str; 14] = [
+    "list",
+    "json",
+    "watch",
+    "spawn",
+    "connect",
+    "disconnect",
+    "fields",
+    "set",
+    "change",
+    "group",
+    "pause",
+    "resume",
+    "remove",
+    "shutdown",
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -33,7 +57,7 @@ fn main() -> ExitCode {
     // What this thread opened is closed, so that the tool leaves nothing of itself behind.
     triq::release();
     match done {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(ended) => ended,
         Err(error) => {
             eprintln!("triq: {error}");
             ExitCode::FAILURE
@@ -41,8 +65,10 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: &[&str]) -> triq::Result {
+fn run(args: &[&str]) -> triq::Result<ExitCode> {
     match args {
+        // Asked for nothing, or for what it can be told: that is said, and nothing has gone wrong.
+        [] | ["help" | "--help" | "-h"] => println!("{}", usage()),
         ["list"] => triq::discover()?.iter().for_each(|inventory| print!("{}", describe(inventory))),
         ["json"] => println!("{}", serde_json::to_string_pretty(&triq::discover()?)?),
         ["watch"] => watch()?,
@@ -63,9 +89,50 @@ fn run(args: &[&str]) -> triq::Result {
         ["resume", node] => on(node, Remote::resume)?,
         ["remove", node] => on(node, Remote::remove)?,
         ["shutdown", runtime] => Remote::open(runtime)?.shutdown()?,
-        _ => return Err(Error::Other(USAGE.into())),
+        [program, told @ ..] if !COMMANDS.contains(program) => return hand_over(program, told),
+        _ => return Err(Error::Other(usage())),
     }
-    Ok(())
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The folders a program of triq is looked for in: the one this tool is in, and then the PATH.
+fn folders() -> impl Iterator<Item = PathBuf> {
+    let beside = std::env::current_exe().ok().and_then(|tool| Some(tool.parent()?.to_owned()));
+    let path: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    beside.into_iter().chain(path)
+}
+
+/// Run the program `triq-<name>`, told what the tool was told after its name, and end as it ends.
+fn hand_over(name: &str, told: &[&str]) -> triq::Result<ExitCode> {
+    let file = format!("triq-{name}{}", std::env::consts::EXE_SUFFIX);
+    let Some(program) = folders().map(|folder| folder.join(&file)).find(|program| program.is_file()) else {
+        let neither = format!("no command `{name}`, and no program {file} beside triq or on the PATH");
+        return Err(Error::Other(format!("{neither}\n{}", usage())));
+    };
+    let ended = Command::new(program).args(told).status()?;
+    // One that a signal ended has no status of its own.
+    Ok(ended.code().map_or(ExitCode::FAILURE, |status| ExitCode::from(status as u8)))
+}
+
+/// What the tool can be told, and the programs of triq it has found, by the names it runs them by.
+fn usage() -> String {
+    let mut programs: Vec<String> = Vec::new();
+    for folder in folders() {
+        let files = std::fs::read_dir(folder).into_iter().flatten().flatten();
+        for file in files.filter(|file| file.path().is_file()) {
+            let name = file.file_name().to_string_lossy().into_owned();
+            let program = name.strip_prefix("triq-").and_then(|name| name.strip_suffix(std::env::consts::EXE_SUFFIX));
+            // A file with something after a dot is not a program: `triq-workbench.d` says what one was built from.
+            if let Some(program) =
+                program.filter(|program| !program.contains('.') && !programs.iter().any(|known| known == program))
+            {
+                programs.push(program.to_owned());
+            }
+        }
+    }
+    programs.sort();
+    let found = if programs.is_empty() { "none".to_owned() } else { programs.join(", ") };
+    format!("{USAGE}\n\nprograms here: {found}")
 }
 
 /// Redraw the list when a runtime says it changed, and once a second for the counters.

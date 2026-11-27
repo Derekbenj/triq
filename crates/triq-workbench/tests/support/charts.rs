@@ -2,7 +2,7 @@
 //! Included with `#[path]`, after `scene` and `window`.
 #![allow(dead_code)]
 use super::scene::*;
-use super::window::{drag, drawn};
+use super::window::{drag, drawn, unfold};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::{Harness, Node};
 use std::time::Duration;
@@ -30,9 +30,11 @@ pub fn number<'a>(harness: &'a Window<'_>, input: &'a str, stat: &'a str) -> Nod
     connection.get_by_label(stat)
 }
 
-/// Where to press on one number in the list. Topics of other programs on the
-/// machine may be listed above it, so it is brought into view first.
+/// Where to press on one number in the list. Its node is opened, if its numbers are folded
+/// away. Topics of other programs on the machine may be listed above it, so it is brought
+/// into view first.
 pub fn grab(harness: &mut Window<'_>, entry: &str, word: &str) -> egui::Pos2 {
+    unfold(harness, entry);
     number(harness, entry, word).scroll_to_me();
     harness.run_steps(3);
     number(harness, entry, word).rect().center()
