@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="triq-token" content="__TOKEN__">
 <title>triq</title>
+<script>
+  // Dark, unless light was chosen here before: set before the page is drawn, so that it does not flash.
+  try { document.documentElement.dataset.theme = localStorage.getItem('triq-theme') === 'light' ? 'light' : 'dark'; } catch (refused) {}
+</script>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -16,6 +20,7 @@
       <h1 id="headline">Nothing is running</h1>
     </div>
     <div class="ends">
+      <button id="theme" class="button" title="Show the page light, or dark: it is remembered in this browser">Light</button>
       <button id="stop-all" class="button" title="Stop every program that was started here" hidden>Stop all</button>
       <button id="quit" class="button" title="End triq serve, and the programs it started">Quit</button>
     </div>
@@ -42,7 +47,10 @@
           <p class="eyebrow"><span class="eyebrow-line"></span>As from a terminal</p>
           <h2 class="arcade yellow">Start a program</h2>
         </div>
-        <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
+        <div class="finding">
+          <select id="of" title="Show the programs of one family, or of every one"></select>
+          <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
+        </div>
       </div>
       <div id="programs"></div>
     </section>
@@ -53,7 +61,13 @@
         <p class="eyebrow"><span class="eyebrow-line"></span>The triq tool</p>
         <h2 class="arcade cyan">Command line</h2>
       </div>
-      <button id="wipe" class="button" title="Take what was typed and answered off the page">Clear</button>
+      <div class="tools">
+        <div class="tabs" role="tablist">
+          <button id="tab-answers" role="tab" aria-selected="true" title="What was typed, and what came of it">Answers</button>
+          <button id="tab-sheet" role="tab" aria-selected="false" title="What the triq tool can be told, with lines to try">Cheat sheet</button>
+        </div>
+        <button id="wipe" class="button" title="Take what was typed and answered off the page">Clear</button>
+      </div>
     </div>
     <div class="terminal">
       <form id="typing" class="prompt" autocomplete="off">
@@ -63,6 +77,7 @@
       </form>
       <p id="hint" class="hint"></p>
       <div id="offers" class="offers"></div>
+      <div id="sheet" class="sheet" hidden></div>
       <div id="answers" class="answers" aria-live="polite">
         <p class="none">Type what you would type after <code>triq</code> in a terminal: <code>list</code>, <code>connect</code> and an output and an input, <code>pause</code> and a node, or the name of a program. Tab takes what is offered, and the arrows bring back what was typed before.</p>
       </div>

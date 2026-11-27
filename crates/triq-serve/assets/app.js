@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, standing } from '/logic.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,11 @@ const $ = (id) => document.getElementById(id);
 // What the server last said, and what the person has done on the page.
 let state = { programs: { found: [], started: [], asked: [] }, runtimes: [], said: [0, null] };
 const view = {
+  // What is typed to find a program, and the one family whose programs are shown, if one is
+  // chosen: the empty name is the family of those that have none.
   search: '',
+  of: undefined,
+  families: '',
   // What a program is to be told, as typed in its box, and the programs whose box is open.
   told: {},
   boxes: new Set(),
@@ -42,6 +46,8 @@ const view = {
   recall: 0,
   // The line that is being done: the next waits for it, so that lines are done in their order.
   doing: Promise.resolve(),
+  // Which of the two is under the line: the answers, or the cheat sheet.
+  tab: 'answers',
 };
 
 async function api(path, body) {
@@ -155,7 +161,15 @@ function programCard(name) {
 // and not while something is being typed in one of their boxes.
 function drawPrograms(now = false) {
   const { found, started } = state.programs;
-  const listed = families(found, view.search);
+  // The families there are, to choose one of. They are listed again when they change.
+  const all = families(found, '').map((each) => each.family);
+  if (all.join() !== view.families) {
+    view.families = all.join();
+    if (!all.includes(view.of)) view.of = undefined;
+    const option = (of) => h('option', { value: of, selected: of === view.of }, of || 'triq');
+    $('of').replaceChildren(h('option', { value: '*' }, 'every family'), ...all.map(option));
+  }
+  const listed = families(found, view.search, view.of);
   const shows = found.map((name) => [running(started, name).length, another(name, started, state.runtimes), earlier(started, name)]);
   const drawn = JSON.stringify([listed, shows, [...view.boxes]]);
   if (!now && (drawn === view.drawn || $('programs').contains(document.activeElement))) return;
@@ -419,6 +433,50 @@ function wipe() {
   drawAnswers();
 }
 
+// The cheat sheet: what the tool can be told, with lines to try that are made of the names on
+// the machine. A click on one puts it on the line, to be changed or run as it is.
+function drawSheet() {
+  const put = (line) => {
+    $('line').value = line;
+    $('line').focus();
+    suggest();
+  };
+  const cheat = (each) =>
+    h(
+      'div.cheat',
+      {},
+      h('div.takes', {}, h('b', {}, each.command), ` ${each.takes}`),
+      h('p', {}, each.about),
+      h('button.try', { type: 'button', onclick: () => put(each.example), title: 'Put this on the line' }, each.example),
+    );
+  const parts = sheet(view.known, view.machine, state.programs.found).map((part) => [h('h3', {}, part.title), part.entries.map(cheat)]);
+  const keys = h('p.keys', {}, 'On the line: Tab takes what is offered, the arrows bring back what was typed before, quotes are as in a terminal, and ', h('code', {}, 'clear'), ' empties the answers.');
+  $('sheet').replaceChildren(...parts.flat(Infinity), keys);
+}
+
+// Show the answers or the cheat sheet under the line. The sheet is made as it is shown, of
+// the machine as it is then.
+function show(tab) {
+  view.tab = tab;
+  for (const name of ['answers', 'sheet']) {
+    $(name).hidden = name !== tab;
+    $(`tab-${name}`).setAttribute('aria-selected', String(name === tab));
+  }
+  $('wipe').hidden = tab !== 'answers';
+  if (tab === 'sheet') look().then(drawSheet);
+}
+
+// The page is dark unless light was chosen, which is remembered in this browser.
+function light(on) {
+  document.documentElement.dataset.theme = on ? 'light' : 'dark';
+  $('theme').textContent = on ? 'Dark' : 'Light';
+  try {
+    localStorage.setItem('triq-theme', on ? 'light' : 'dark');
+  } catch (refused) {
+    // A browser that keeps nothing shows the page dark the next time.
+  }
+}
+
 // Under the line as it is typed: what the command takes, and the names that could end the
 // word being typed. Tab takes as much as they all begin with, or the first.
 function suggest() {
@@ -469,8 +527,12 @@ $('search').addEventListener('input', () => {
   drawPrograms(true);
 });
 // Enter starts the program, when what was typed leaves only one.
+$('of').addEventListener('change', () => {
+  view.of = $('of').value === '*' ? undefined : $('of').value;
+  drawPrograms(true);
+});
 $('search').addEventListener('keydown', (key) => {
-  const left = families(state.programs.found, view.search).flatMap((each) => each.programs);
+  const left = families(state.programs.found, view.search, view.of).flatMap((each) => each.programs);
   if (key.key === 'Enter' && left.length === 1) start(left[0], another(left[0], state.programs.started, state.runtimes));
 });
 $('clear').addEventListener('click', () => send('/api/forget', {}));
@@ -485,10 +547,15 @@ $('quit').addEventListener('click', async () => {
   ended(true);
 });
 
+$('theme').addEventListener('click', () => light(document.documentElement.dataset.theme !== 'light'));
+$('tab-answers').addEventListener('click', () => show('answers'));
+$('tab-sheet').addEventListener('click', () => show('sheet'));
 $('wipe').addEventListener('click', wipe);
 $('typing').addEventListener('submit', (sent) => {
   sent.preventDefault();
   const line = $('line').value;
+  // What comes of the line is among the answers.
+  if (line.trim()) show('answers');
   view.doing = view.doing.then(() => run(line));
   $('line').value = '';
   suggest();
@@ -516,6 +583,7 @@ $('line').addEventListener('keydown', (key) => {
 });
 
 mark($('mark'), 'TRIQ');
+light(document.documentElement.dataset.theme === 'light');
 api('/api/usage')
   .then(({ usage }) => (view.known = commands(usage ?? '')))
   .catch(() => {});

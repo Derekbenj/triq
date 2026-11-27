@@ -1,19 +1,78 @@
-/* The page: dark and plain, with the letters of an arcade machine for its name and its
-   headings, in neon colours. One font is in the program for those letters. */
+/* The page: plain, dark unless light is chosen, with the letters of an arcade machine for its
+   name and its headings, in neon colours. One font is in the program for those letters. */
 @font-face { font-family: "Press Start 2P"; src: url("/press-start-2p.ttf") format("truetype"); font-display: block; }
-:root {
+
+/* The colours, by what they are for. The top of the page has the dark ones whichever is
+   chosen, as the sign over an arcade machine is lit in a bright room too. */
+:root, .top {
   color-scheme: dark;
   --bg: #11111b;
   --surface: #1a1927;
   --raised: #211e30;
+  --lifted: #302a42;
+  --well: #0d0c15;
+  --field: #14131f;
   --line: #353243;
-  --dim: #b6b1c5;
+  --seam: #1f1d2b;
+  --edge: #575063;
   --text: #f4f1f9;
-  --lavender: #c7afff;
-  --pink: #ff5fa8;
-  --yellow: #ffd23f;
-  --cyan: #38d6ff;
-  --green: #62f08a;
+  --ink: #d6d2e3;
+  --dim: #b6b1c5;
+  --faint: #8f899f;
+  --accent: #c7afff;
+  --accent-line: #70657f;
+  --good: #62f08a;
+  --good-well: #16261f;
+  --good-edge: #2f6a45;
+  --bad: #ff9dc8;
+  --bad-well: #2a1723;
+  --bad-edge: #6d2f4c;
+  --warn: #ffd23f;
+  --name: #38d6ff;
+  --prompt: #ffd23f;
+  --prompt-side: #b0500f;
+  /* How much of a family's own colour its name is written in: the rest is the text's. */
+  --tint: 100%;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f5fb;
+  --surface: #ffffff;
+  --raised: #efedf7;
+  --lifted: #e3dff1;
+  --well: #f2f1f9;
+  --field: #ffffff;
+  --line: #d8d4e6;
+  --seam: #e4e1ee;
+  --edge: #b7b1cb;
+  --text: #1d1b2b;
+  --ink: #34314a;
+  --dim: #58536d;
+  --faint: #746e89;
+  --accent: #6a45c8;
+  --accent-line: #b9a8e6;
+  --good: #128a42;
+  --good-well: #e3f7ea;
+  --good-edge: #9bd9b1;
+  --bad: #c2196f;
+  --bad-well: #fde8f1;
+  --bad-edge: #f1a9cb;
+  --warn: #c98300;
+  --name: #0b7fb5;
+  --prompt: #f08a1c;
+  --prompt-side: #9c4a0c;
+  --tint: 62%;
+}
+/* What starts something is green and what stops something is pink, in both. */
+:root {
+  --go: #62f08a;
+  --go-rim: #a5f8bd;
+  --go-under: #1b8747;
+  --go-ink: #0f2417;
+  --stop: #ff5fa8;
+  --stop-rim: #ffa6cd;
+  --stop-under: #a02f68;
+  --stop-ink: #2b0c1b;
   --sans: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
   --pixel: "Press Start 2P", var(--mono);
@@ -23,26 +82,28 @@
 body { margin: 0; background: var(--bg); color: var(--text); font: 0.95rem/1.5 var(--sans); }
 button, input { font: inherit; color: inherit; }
 p, h1, h2, h3 { margin: 0; }
-:focus-visible { outline: 2px solid var(--lavender); outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .wrap { width: min(calc(100% - 3rem), 94rem); margin-inline: auto; }
 code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0.05rem 0.35rem; color: var(--text); }
 
 /* Letters as on an arcade machine: a face, and two more of the letter behind it, each a step
-   down and to the right, darker; and a light edge up and to the left. */
-.pink { --face: #ff5fa8; --side: #c41f79; --deep: #7a1050; --light: #ffb1d6; }
-.yellow { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; --light: #fff4a8; }
-.cyan { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; --light: #b4f1ff; }
-.green { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; --light: #c6ffd8; }
+   down and to the right, darker. On the light page the faces are deeper, to stand out. */
+.yellow { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; }
+.cyan { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; }
+.green { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; }
+:root[data-theme="light"] .yellow { --face: #ffb515; --side: #d96f00; --deep: #8f4300; }
+:root[data-theme="light"] .cyan { --face: #1cb5ee; --side: #0b78b0; --deep: #064c73; }
+:root[data-theme="light"] .green { --face: #24c765; --side: #10893f; --deep: #095526; }
 .arcade { font: 400 1.25rem/1.2 var(--pixel); text-transform: uppercase; color: var(--face); text-shadow: 1.5px 1.5px 0 var(--side), 3px 3px 0 var(--deep); padding-bottom: 3px; }
 
 /* The top: the name, what is running in a sentence, and what ends things. Behind it, faint
    crosses and rings, as on the screen of such a machine. */
-.top { background: #151424 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='180' fill='none' stroke='%23262338' stroke-width='3'%3E%3Cpath d='M22 28l12 12m0-12l-12 12M150 96l12 12m0-12l-12 12M92 150l10 10m0-10l-10 10'/%3E%3Ccircle cx='108' cy='44' r='8'/%3E%3Ccircle cx='190' cy='150' r='6'/%3E%3Ccircle cx='40' cy='118' r='7'/%3E%3C/svg%3E"); border-bottom: 1px solid var(--line); }
+.top { color: var(--text); background: #151424 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='180' fill='none' stroke='%23262338' stroke-width='3'%3E%3Cpath d='M22 28l12 12m0-12l-12 12M150 96l12 12m0-12l-12 12M92 150l10 10m0-10l-10 10'/%3E%3Ccircle cx='108' cy='44' r='8'/%3E%3Ccircle cx='190' cy='150' r='6'/%3E%3Ccircle cx='40' cy='118' r='7'/%3E%3C/svg%3E"); border-bottom: 1px solid var(--line); }
 .bar { display: flex; align-items: center; gap: 2.2rem; padding-block: 1.6rem 1.5rem; }
 .now { flex: 1; min-width: 0; }
 .now h1 { font-size: clamp(1.5rem, 2.4vw, 2.1rem); font-weight: 560; letter-spacing: -0.03em; line-height: 1.15; margin-top: 0.3rem; }
 .ends { display: flex; gap: 0.6rem; }
-.eyebrow { display: flex; align-items: center; gap: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--lavender); }
+.eyebrow { display: flex; align-items: center; gap: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
 .eyebrow-line { display: inline-block; width: 1.4rem; height: 2px; background: currentColor; }
 
 /* The name. Each letter has a colour, stands a little over the edge of the one before it, and
@@ -57,9 +118,9 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 /* A strip of counts under the top. */
 .counts { background: #1c1a29; border-top: 1px solid #2c2939; }
 .count-inner { display: grid; grid-template-columns: repeat(3, 1fr); min-height: 3rem; align-items: center; }
-.count-inner span { display: flex; align-items: center; justify-content: center; gap: 0.6rem; font: 0.8rem/1.5 var(--mono); color: #c5c0d1; }
-.count-inner span + span { border-left: 1px solid #3b354b; }
-.count-inner b { color: #f0e7ff; font-size: 0.98rem; font-weight: 600; }
+.count-inner span { display: flex; align-items: center; justify-content: center; gap: 0.6rem; font: 0.8rem/1.5 var(--mono); color: var(--dim); }
+.count-inner span + span { border-left: 1px solid var(--line); }
+.count-inner b { color: var(--text); font-size: 0.98rem; font-weight: 600; }
 
 /* The programs on the left, the command line on the right, which stays in sight. */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(24rem, 34rem); gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
@@ -68,116 +129,141 @@ section, .console { margin-top: 2.2rem; }
 .section-line h2 { margin-top: 0.55rem; }
 .none { color: var(--dim); margin-bottom: 0.6rem; }
 
-.button { display: inline-flex; align-items: center; justify-content: center; padding: 0.42rem 0.9rem; border-radius: 5px; border: 1px solid #575063; background: var(--raised); color: #f1eaf8; font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; cursor: pointer; }
-.button:hover { background: #302a42; border-color: #95859e; }
-.button.go { color: #0f2417; background: var(--green); border-color: #a5f8bd; box-shadow: 0 2px 0 #1b8747; }
-.button.go:hover { background: #86f6a5; }
-.button.stop { color: #2b0c1b; background: var(--pink); border-color: #ffa6cd; box-shadow: 0 2px 0 #a02f68; }
-.button.stop:hover { background: #ff84bb; }
+.button { display: inline-flex; align-items: center; justify-content: center; padding: 0.42rem 0.9rem; border-radius: 5px; border: 1px solid var(--edge); background: var(--raised); color: var(--text); font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; cursor: pointer; }
+.button:hover { background: var(--lifted); border-color: var(--faint); }
+.button.go { color: var(--go-ink); background: var(--go); border-color: var(--go-rim); box-shadow: 0 2px 0 var(--go-under); }
+.button.go:hover { background: #86f6a5; border-color: var(--go-rim); }
+.button.stop { color: var(--stop-ink); background: var(--stop); border-color: var(--stop-rim); box-shadow: 0 2px 0 var(--stop-under); }
+.button.stop:hover { background: #ff84bb; border-color: var(--stop-rim); }
 .button:active { transform: translateY(1px); }
-.link { border: 0; padding: 0; background: none; color: var(--lavender); cursor: pointer; font-size: 0.84rem; font-weight: 600; text-decoration: underline; text-decoration-color: #70657f; text-underline-offset: 3px; }
+:root[data-theme="light"] main .button.go { border-color: var(--go-under); }
+:root[data-theme="light"] main .button.stop { border-color: var(--stop-under); }
+.link { border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; font-size: 0.84rem; font-weight: 600; text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 3px; }
 .link:hover { text-decoration-color: currentColor; }
-input[type=search], input[type=text] { border: 1px solid #575063; border-radius: 5px; padding: 0.42rem 0.75rem; background: #14131f; outline: none; min-width: 0; }
-input:focus { border-color: var(--lavender); }
-input::placeholder { color: #7d778d; }
+input[type=search], input[type=text], select { border: 1px solid var(--edge); border-radius: 5px; padding: 0.42rem 0.75rem; background: var(--field); outline: none; min-width: 0; }
+input:focus, select:focus { border-color: var(--accent); }
+select { font: inherit; color: inherit; cursor: pointer; }
+.finding { display: flex; gap: 0.5rem; }
+input::placeholder { color: var(--faint); }
 #search { width: 15rem; }
 
 /* Cards, in as many columns as fit. */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 0.8rem; align-items: start; }
 .cards.wide { grid-template-columns: repeat(auto-fill, minmax(24rem, 1fr)); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 0.85rem 1rem; min-width: 0; transition: border-color 0.18s; }
-.card:hover { border-color: #5a5270; }
+.card:hover { border-color: var(--edge); }
 .row { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
 .grow { flex: 1; min-width: 0; }
 .name { font-weight: 650; font-size: 1rem; letter-spacing: -0.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub { color: var(--dim); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .under { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.6rem; min-height: 1.3rem; font-size: 0.82rem; color: var(--dim); }
 .told { font-family: var(--mono); font-size: 0.8rem; background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0.05rem 0.4rem; color: var(--text); }
-.badge { display: inline-block; font: 600 0.72rem/1.6 var(--mono); letter-spacing: 0.04em; color: var(--green); border: 1px solid #2f6a45; border-radius: 4px; padding: 0 0.4rem; background: #16261f; }
+.badge { display: inline-block; font: 600 0.72rem/1.6 var(--mono); letter-spacing: 0.04em; color: var(--good); border: 1px solid var(--good-edge); border-radius: 4px; padding: 0 0.4rem; background: var(--good-well); }
 .tell { display: flex; gap: 0.5rem; margin-top: 0.6rem; }
 .tell input { flex: 1; font-family: var(--mono); font-size: 0.82rem; }
 .before { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
 .before button { cursor: pointer; }
-.before button:hover { border-color: var(--lavender); }
+.before button:hover { border-color: var(--accent); }
 
 /* A program's picture: its squares, in the colour of its family. */
-.picture { flex: none; display: grid; grid-template-columns: repeat(5, 5px); grid-auto-rows: 5px; gap: 1px; padding: 6px; border-radius: 5px; background: color-mix(in srgb, var(--colour) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--colour) 30%, var(--line)); }
-.picture i.on { background: var(--colour); }
+.picture { flex: none; display: grid; grid-template-columns: repeat(5, 5px); grid-auto-rows: 5px; gap: 1px; padding: 6px; border-radius: 5px; background: color-mix(in srgb, var(--colour) 14%, var(--surface)); border: 1px solid color-mix(in srgb, var(--colour) 32%, var(--line)); }
+.picture i.on { background: color-mix(in srgb, var(--colour) var(--tint), var(--text)); }
+:root[data-theme="light"] .picture i.on { background: color-mix(in srgb, var(--colour) 82%, var(--text)); }
 .family { margin-bottom: 1.5rem; }
-.family h3 { margin-bottom: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--colour); display: flex; align-items: center; gap: 0.5rem; }
+.family h3 { margin-bottom: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: color-mix(in srgb, var(--colour) var(--tint), var(--text)); display: flex; align-items: center; gap: 0.5rem; }
 .family h3::before { content: ""; width: 8px; height: 8px; background: var(--colour); }
 
 /* One that was started. A square says how it is: green while it runs. */
-.state { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.6rem; font-size: 0.86rem; color: #d9d4e4; }
-.state::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--green); animation: alive 1.6s ease-in-out infinite; }
-.card.stopping .state::before { background: var(--yellow); }
-.card.ended .state::before { background: #6c667c; animation: none; }
-.card.failed .state::before { background: var(--pink); animation: none; }
-.card.failed { border-color: #6d2f4c; }
+.state { display: flex; align-items: center; gap: 0.55rem; margin-top: 0.6rem; font-size: 0.86rem; color: var(--ink); }
+.state::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--good); animation: alive 1.6s ease-in-out infinite; }
+.card.stopping .state::before { background: var(--warn); }
+.card.ended .state::before { background: var(--faint); animation: none; }
+.card.failed .state::before { background: var(--stop); animation: none; }
+.card.failed { border-color: var(--bad-edge); }
 .card.ended .name, .card.failed .name { color: var(--dim); }
 @keyframes alive { 50% { opacity: 0.35; } }
 .last { margin-top: 0.45rem; display: flex; align-items: center; gap: 0.7rem; }
-.last span { flex: 1; min-width: 0; font: 0.78rem/1.5 var(--mono); color: #8f899f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.log { margin: 0.6rem 0 0; background: #0d0c15; border: 1px solid #2b2838; color: #d6d2e3; border-radius: 5px; padding: 0.6rem 0.75rem; max-height: 16rem; overflow: auto; font: 0.75rem/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.last span { flex: 1; min-width: 0; font: 0.78rem/1.5 var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log { margin: 0.6rem 0 0; background: var(--well); border: 1px solid var(--line); color: var(--ink); border-radius: 5px; padding: 0.6rem 0.75rem; max-height: 16rem; overflow: auto; font: 0.75rem/1.55 var(--mono); white-space: pre-wrap; word-break: break-word; }
 
 /* The runtimes that were started elsewhere. */
 #others { margin-top: 0.9rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; color: var(--dim); font-size: 0.84rem; }
 .other { display: inline-flex; align-items: center; gap: 0.5rem; background: var(--surface); border: 1px solid var(--line); border-radius: 5px; padding: 0.15rem 0.2rem 0.15rem 0.6rem; color: var(--dim); }
 .other b { color: var(--text); font-weight: 650; }
-.other button { border: 1px solid #5c3049; border-radius: 4px; padding: 0 0.45rem; background: #2a1723; color: #ff9dc8; cursor: pointer; font-size: 0.76rem; font-weight: 650; }
-.other button:hover { background: var(--pink); color: #2b0c1b; }
+.other button { border: 1px solid var(--bad-edge); border-radius: 4px; padding: 0 0.45rem; background: var(--bad-well); color: var(--bad); cursor: pointer; font-size: 0.76rem; font-weight: 650; }
+.other button:hover { background: var(--stop); color: var(--stop-ink); }
 
 /* The command line: the line to type on, and under it what was typed and what came of it, the
-   newest first. It stays in sight as the programs are scrolled. */
+   newest first; or, on its other tab, the cheat sheet. It stays in sight as the programs are
+   scrolled. */
 .console { position: sticky; top: 0; display: flex; flex-direction: column; max-height: 100vh; padding-block: 2.2rem 1.2rem; margin-top: 0; }
-.terminal { min-height: 0; display: flex; flex-direction: column; background: #0d0c15; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
-.answers { min-height: 0; overflow: auto; padding: 0.9rem 1rem 0.2rem; border-top: 1px solid #1f1d2b; }
+.tools { display: flex; align-items: center; gap: 0.6rem; }
+.tabs { display: inline-flex; border: 1px solid var(--edge); border-radius: 5px; overflow: hidden; }
+.tabs button { border: 0; padding: 0.42rem 0.8rem; background: none; color: var(--dim); font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em; cursor: pointer; white-space: nowrap; }
+.tabs button + button { border-left: 1px solid var(--edge); }
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-selected="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.terminal { min-height: 0; display: flex; flex-direction: column; background: var(--well); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.answers, .sheet { min-height: 0; overflow: auto; padding: 0.9rem 1rem 0.2rem; border-top: 1px solid var(--seam); }
 .answer { margin-bottom: 1rem; }
 .typed { font: 0.8rem/1.5 var(--mono); color: var(--text); display: flex; gap: 0.5rem; }
-.typed::before { content: "triq"; color: var(--yellow); }
-.typed em { margin-left: auto; font-style: normal; color: #7d778d; }
+.typed::before { content: "triq"; color: var(--prompt); }
+.typed em { margin-left: auto; font-style: normal; color: var(--faint); }
 .came { margin-top: 0.35rem; font-size: 0.84rem; }
-.came pre { margin: 0; font: 0.76rem/1.55 var(--mono); color: #d6d2e3; white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
-.came .done { color: var(--green); font: 600 0.8rem/1.5 var(--mono); }
-.came .wrong { color: #ff9dc8; border-left: 2px solid var(--pink); padding-left: 0.7rem; }
+.came pre { margin: 0; font: 0.76rem/1.55 var(--mono); color: var(--ink); white-space: pre-wrap; word-break: break-word; max-height: 22rem; overflow: auto; }
+.came .done { color: var(--good); font: 600 0.8rem/1.5 var(--mono); }
+.came .wrong { color: var(--bad); border-left: 2px solid var(--stop); padding-left: 0.7rem; }
+.came .wrong pre { color: inherit; }
 .came .wait { color: var(--dim); font: 0.8rem/1.5 var(--mono); }
 .came .long { max-height: 20rem; overflow: auto; }
 .came table { border-collapse: collapse; width: 100%; font: 0.76rem/1.5 var(--mono); }
-.came th { text-align: left; font-weight: 600; color: #8f899f; letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.66rem; padding: 0 0.8rem 0.2rem 0; }
-.came td { padding: 0.12rem 0.8rem 0.12rem 0; vertical-align: top; color: #d6d2e3; border-top: 1px solid #1f1d2b; }
-.came td.dim, .came .dim { color: #8f899f; }
+.came th { text-align: left; font-weight: 600; color: var(--faint); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.66rem; padding: 0 0.8rem 0.2rem 0; }
+.came td { padding: 0.12rem 0.8rem 0.12rem 0; vertical-align: top; color: var(--ink); border-top: 1px solid var(--seam); }
+.came .dim, .node .dim { color: var(--faint); }
 /* A runtime as the list shows it: its name on a bar of its own, and its nodes under it. */
-.home { border: 1px solid #2b2838; border-radius: 5px; margin-bottom: 0.6rem; overflow: hidden; }
-.home-name { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.65rem; background: #181624; font: 0.78rem/1.5 var(--mono); color: #8f899f; }
-.home-name b { color: var(--cyan); font-size: 0.86rem; }
+.home { border: 1px solid var(--line); border-radius: 5px; margin-bottom: 0.6rem; overflow: hidden; background: var(--surface); }
+.home-name { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.65rem; background: var(--raised); font: 0.78rem/1.5 var(--mono); color: var(--faint); }
+.home-name b { color: var(--name); font-size: 0.86rem; }
 .home-name span { margin-left: auto; }
-.node { display: grid; grid-template-columns: 8px minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 0.6rem; align-items: center; padding: 0.22rem 0.65rem; border-top: 1px solid #1f1d2b; font: 0.76rem/1.5 var(--mono); cursor: pointer; }
-.node:hover { background: #14131f; }
-.node::before { content: ""; width: 8px; height: 8px; background: var(--green); }
-.node.paused::before { background: var(--yellow); }
-.node.stopped::before { background: var(--pink); }
+.node { display: grid; grid-template-columns: 8px minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 0.6rem; align-items: center; padding: 0.22rem 0.65rem; border-top: 1px solid var(--seam); font: 0.76rem/1.5 var(--mono); color: var(--ink); cursor: pointer; }
+.node:hover { background: var(--raised); }
+.node::before { content: ""; width: 8px; height: 8px; background: var(--good); }
+.node.paused::before { background: var(--warn); }
+.node.stopped::before { background: var(--stop); }
 .node span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ports { padding: 0.25rem 0.65rem 0.45rem 1.9rem; font: 0.72rem/1.6 var(--mono); color: #8f899f; border-top: 1px dashed #1f1d2b; word-break: break-all; }
-.ports b { color: #d6d2e3; font-weight: 600; }
+.ports { padding: 0.25rem 0.65rem 0.45rem 1.9rem; font: 0.72rem/1.6 var(--mono); color: var(--faint); border-top: 1px dashed var(--seam); word-break: break-all; }
+.ports b { color: var(--ink); font-weight: 600; }
 .offers { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0 1rem; }
 .offers:not(:empty) { padding-block: 0.1rem 0.7rem; }
-.offers button { font: 0.74rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.4rem; color: #d6d2e3; cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.offers button:first-child { border-color: #6b5b96; color: var(--lavender); }
-.offers button:hover { border-color: var(--lavender); }
-.hint { padding: 0 1rem 0.45rem; min-height: 1.55rem; font: 0.72rem/1.5 var(--mono); color: #8f899f; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offers button, .try { font: 0.74rem/1.5 var(--mono); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.4rem; color: var(--ink); cursor: pointer; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offers button:first-child { border-color: var(--accent-line); color: var(--accent); }
+.offers button:hover, .try:hover { border-color: var(--accent); }
+.hint { padding: 0 1rem 0.45rem; min-height: 1.55rem; font: 0.72rem/1.5 var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prompt { display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 0.7rem 0.45rem 1rem; }
-.prompt label { font: 0.7rem/1 var(--pixel); color: var(--yellow); text-shadow: 1.5px 1.5px 0 #b0500f; }
+.prompt label { font: 0.7rem/1 var(--pixel); color: var(--prompt); text-shadow: 1.5px 1.5px 0 var(--prompt-side); }
 .prompt input { flex: 1; font-family: var(--mono); font-size: 0.84rem; }
 
+/* The cheat sheet: the tool's commands in parts, each with what it takes, what it is for, and
+   a line to try, which a click puts on the line. */
+.sheet h3 { margin: 0.2rem 0 0.5rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+.sheet h3:not(:first-child) { margin-top: 1.1rem; }
+.cheat { padding: 0.45rem 0; border-top: 1px solid var(--seam); }
+.cheat .takes { font: 0.78rem/1.5 var(--mono); color: var(--faint); word-break: break-word; }
+.cheat .takes b { color: var(--name); font-weight: 600; }
+.cheat p { font-size: 0.84rem; color: var(--dim); margin: 0.1rem 0 0.3rem; }
+.try { display: inline-block; text-align: left; }
+.try::before { content: "triq "; color: var(--prompt); }
+.sheet .keys { margin: 1.1rem 0 0.8rem; padding-top: 0.7rem; border-top: 1px solid var(--seam); font-size: 0.82rem; color: var(--dim); }
+
 /* What went wrong, said at the foot of the window for a while. */
-#said { position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%); max-width: min(48rem, 92vw); background: #2a2540; border: 1px solid #5a5270; color: var(--text); border-radius: 7px; padding: 0.6rem 1.1rem; box-shadow: 0 0.6rem 1.6rem #0009; z-index: 5; }
+#said { position: fixed; left: 50%; bottom: 1.4rem; transform: translateX(-50%); max-width: min(48rem, 92vw); background: #2a2540; border: 1px solid #5a5270; color: #f4f1f9; border-radius: 7px; padding: 0.6rem 1.1rem; box-shadow: 0 0.6rem 1.6rem #0009; z-index: 5; }
 body.gone main { opacity: 0.45; pointer-events: none; }
-body.gone .state::before { animation: none; background: #6c667c; }
+body.gone .state::before { animation: none; background: var(--faint); }
 
 @media (max-width: 68rem) {
   .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .console { position: static; max-height: none; }
-  .answers { max-height: 30rem; }
+  .answers, .sheet { max-height: 30rem; }
 }
 @media (max-width: 44rem) {
   .bar { flex-wrap: wrap; gap: 0.9rem; }
@@ -185,7 +271,7 @@ body.gone .state::before { animation: none; background: #6c667c; }
   .ends { margin-left: auto; }
   .mark { font-size: 40px; }
   .cards, .cards.wide { grid-template-columns: 1fr; }
-  #search { width: 100%; }
+  #search { flex: 1; width: auto; }
   .section-line { flex-direction: column; align-items: stretch; }
   .count-inner span { flex-direction: column; gap: 0; font-size: 0.72rem; }
 }

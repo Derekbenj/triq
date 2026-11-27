@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, standing } from '../assets/logic.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -18,6 +18,11 @@ test('a program is of the family its name begins with, and the programs are list
   // Searched, a family with nothing found in it is not listed.
   assert.deepEqual(families(programs, 'STEREO alg'), [{ family: 'algorithm', programs: ['algorithm-stereo-depth'] }]);
   assert.deepEqual(families(programs, 'nothing called this'), []);
+  // One family can be chosen, also that of the programs that have none; the search is within it.
+  assert.deepEqual(families(programs, '', 'algorithm'), [{ family: 'algorithm', programs: ['algorithm-sensors', 'algorithm-stereo-depth'] }]);
+  assert.deepEqual(families(programs, '', ''), [{ family: '', programs: ['bench', 'workbench'] }]);
+  assert.deepEqual(families(programs, 'work', ''), [{ family: '', programs: ['workbench'] }]);
+  assert.deepEqual(families(programs, 'sensors', 'stack'), []);
   assert.ok(found('', 'anything') && found('quad  STACK', 'stack-quadcopter') && !found('quad x', 'stack-quadcopter'));
 });
 
@@ -163,4 +168,30 @@ test('what the tool printed is read as what it is', () => {
   assert.deepEqual(said(['registered /robot/target: its programs are run by name from now on']), ['registered /robot/target: its programs are run by name from now on']);
   // How a node stands, in a word.
   assert.deepEqual(MACHINE.flatMap((home) => home.nodes).map(standing), ['paused', 'running', 'stopped']);
+});
+
+test('the cheat sheet has the commands the tool has, by what they are for, each with a line to try', () => {
+  const known = [...commands(USAGE), { command: 'frobnicate', takes: '<thing>', about: 'a command of a newer tool' }];
+  const parts = sheet(known, MACHINE, ['workbench', 'stack-quadcopter']);
+  assert.deepEqual(parts.map((part) => part.title), ['Look', 'Make and remove', 'Wire', 'Change', 'Stop', 'Programs', 'More']);
+  const entry = (command) => parts.flatMap((part) => part.entries).find((each) => each.command === command);
+  // What a command takes is what the tool says; what it is for is said in a sentence.
+  assert.equal(entry('spawn').takes, '<runtime> <kind> <name> [--pool <pool>] [--params <json>]');
+  assert.ok(entry('connect').about.length > 20);
+  // The lines to try are made of the names on the machine, so that they can be run as they are.
+  assert.equal(entry('list').example, 'list');
+  assert.equal(entry('spawn').example, 'spawn robot filter filter1');
+  assert.equal(entry('connect').example, 'connect robot/imu/pose desk/viewer/pose');
+  assert.equal(entry('pause').example, 'pause desk/viewer');
+  assert.equal(entry('shutdown').example, 'shutdown desk');
+  // A program is started by its name; and a command this page has no words for is listed with the tool's own.
+  assert.deepEqual(entry('<program>'), { command: '<program>', takes: '[arguments]', about: entry('<program>').about, example: 'workbench' });
+  assert.deepEqual(entry('frobnicate'), { command: 'frobnicate', takes: '<thing>', about: 'a command of a newer tool', example: 'frobnicate' });
+  // A command the tool does not have is not on the sheet.
+  assert.equal(entry('group'), undefined);
+  // With nothing running, the lines to try are of names that say what goes where.
+  const bare = sheet(known, [], []);
+  const of = (command) => bare.flatMap((part) => part.entries).find((each) => each.command === command).example;
+  assert.deepEqual([of('connect'), of('pause'), of('spawn')], ['connect robot/imu/pose desk/viewer/pose', 'pause robot/filter', "spawn robot filter filter1 --params '{\"alpha\": 0.5}'"]);
+  assert.ok(!bare.some((part) => part.title === 'Programs' && part.entries.length === 0));
 });

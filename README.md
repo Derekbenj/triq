@@ -417,7 +417,8 @@ hand, is the workbench's, which is one of the programs the page starts.
   page, family by family: `algorithm-sensors` is under `algorithm`. `Start` starts one as a
   process of its own. `with arguments` opens a box for what would be typed after its name in a
   terminal, and offers what it was started with before. The box at the top finds a program by
-  part of its name, and Enter starts it when it is the only one found.
+  part of its name, and Enter starts it when it is the only one found; the list beside the box
+  shows the programs of one family alone.
 - **More than one of a program.** A program may be started while others of it run. Two runtimes
   cannot have one name, so the page gives the next one a name that is free, `physics2` beside
   `physics`, where a program takes its runtime's name as the first word it is told. The card
@@ -442,8 +443,12 @@ hand, is the workbench's, which is one of the programs the page starts.
   failed with what the tool said. The name of a program typed there starts the program, as its
   button does. The tool itself is run for each line, so a command does what it does in a
   terminal; the list is drawn from what the runtimes report, which is what `triq json` prints.
+  Beside the answers, on a tab of its own, is a cheat sheet: the commands the tool has, by
+  what they are for, each with what it takes, a sentence, and a line to try that is made of
+  the names on the machine. A click puts that line on the command line.
 
-The page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
+The page is dark, and `Light` at its top shows it light, which the browser remembers. The
+page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
 ends anything. A page that is left open says that `triq-serve` has ended, and comes back when
 it is run again.
 

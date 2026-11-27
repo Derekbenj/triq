@@ -11,10 +11,11 @@ export const found = (search, name) => {
 // algorithm. One whose name is a single word is of none.
 export const family = (name) => (name.includes('-') ? name.slice(0, name.indexOf('-')) : '');
 
-// The programs that have what was typed in their names, family by family, those of no family first.
-export function families(programs, search) {
+// The programs that have what was typed in their names, family by family, those of no family
+// first. With a family given, only that one: the empty name is the family of those with none.
+export function families(programs, search, of) {
   const listed = [];
-  for (const name of programs.filter((name) => found(search, name))) {
+  for (const name of programs.filter((name) => found(search, name) && (of === undefined || family(name) === of))) {
     const known = listed.find((each) => each.family === family(name));
     if (known) known.programs.push(name);
     else listed.push({ family: family(name), programs: [name] });
@@ -176,3 +177,59 @@ export function said(printed) {
 
 // How a node stands, in a word: a runtime says `Running`, `Paused`, or `Stopped` with why.
 export const standing = (node) => (typeof node.state === 'string' ? node.state.toLowerCase() : 'stopped');
+
+// The cheat sheet: what each command of the tool is for, and which go together.
+const SHEET = [
+  ['Look', { list: 'Every runtime, the kinds of node it offers, and its nodes. Click a node for its ports.', watch: 'The list, kept up to date until something else is typed.', json: 'The same as JSON, as a program would read it.', fields: 'The numbers inside what an output sends, each by its name.' }],
+  ['Make and remove', { spawn: 'Make a node of a kind that the runtime offers. Its settings are JSON, in quotes.', remove: 'Take a node away.' }],
+  ['Wire', { connect: 'Have an input hear an output. Both must carry the same message.', disconnect: 'Cut that wire.' }],
+  ['Change', { change: 'Change the settings named, and leave the others.', set: 'Give a node all of its settings anew: one that is left out is its default again.', group: 'Put a node in a group, or with no name in none.', pause: 'Keep a node from running.', resume: 'Let it run again.' }],
+  ['Stop', { shutdown: 'Ask a runtime to shut down, and its program with it.' }],
+  ['Programs', { register: 'Have the programs of a folder found from now on, with nothing on the PATH.', unregister: 'Take a folder out of those again.' }],
+];
+
+// A line to try for a command, made of names from the machine where it has some that fit, so
+// that it can be run as it is; and otherwise of names that say what goes where.
+function example(command, machine) {
+  const nodes = machine.flatMap((home) => home.nodes.map((node) => ({ ...node, name: `${home.runtime}/${node.name}` })));
+  const outputs = nodes.flatMap((node) => node.outputs);
+  const inputs = nodes.flatMap((node) => node.inputs.map((input) => ({ ...input, name: `${node.name}/${input.port.name}` })));
+  const node = nodes[0]?.name ?? 'robot/filter';
+  const offers = machine.find((home) => home.factories.length > 0);
+  // A wire that could be made: an output, and an input that takes what it sends. And one that is there.
+  const pair = outputs.flatMap((output) => inputs.filter((input) => carries(input.port) === carries(output.port)).map((input) => `${output.service} ${input.name}`))[0];
+  const wired = inputs.flatMap((input) => input.sources.map((source) => `${source.output} ${input.name}`))[0];
+  const [setting, value] = Object.entries(nodes[0]?.params ?? {})[0] ?? ['alpha', 0.1];
+  const lines = {
+    fields: `fields ${outputs[0]?.service ?? 'robot/imu/pose'}`,
+    spawn: offers ? `spawn ${offers.runtime} ${offers.factories[0].kind} ${offers.factories[0].kind}1` : `spawn robot filter filter1 --params '{"alpha": 0.5}'`,
+    remove: `remove ${node}`,
+    connect: `connect ${pair ?? 'robot/imu/pose desk/viewer/pose'}`,
+    disconnect: `disconnect ${wired ?? pair ?? 'robot/imu/pose desk/viewer/pose'}`,
+    change: `change ${node} '${JSON.stringify({ [setting]: value })}'`,
+    set: `set ${node} '${JSON.stringify({ [setting]: value })}'`,
+    group: `group ${node} sensing`,
+    pause: `pause ${node}`,
+    resume: `resume ${node}`,
+    shutdown: `shutdown ${machine[0]?.runtime ?? 'robot'}`,
+    register: 'register ~/robot/target/release',
+    unregister: 'unregister ~/robot/target/release',
+  };
+  return lines[command] ?? command;
+}
+
+// The cheat sheet as it is shown: the commands the tool has, in parts by what they are for,
+// each with what it takes, what it is for, and a line to try. A program is started by its
+// name; and a command of a newer tool, which this has no words for, is listed last with the
+// tool's own.
+export function sheet(known, machine, programs) {
+  const entry = (each, about) => ({ command: each.command, takes: each.takes, about, example: example(each.command, machine) });
+  const parts = SHEET.map(([title, about]) => ({ title, entries: known.filter((each) => each.command in about).map((each) => entry(each, about[each.command])) }));
+  if (programs.length > 0) {
+    const about = 'A program is started by its name, as its button starts it, with what is typed after the name.';
+    parts.find((part) => part.title === 'Programs').entries.unshift({ command: '<program>', takes: '[arguments]', about, example: programs[0] });
+  }
+  const said = new Set(SHEET.flatMap(([, about]) => Object.keys(about)));
+  parts.push({ title: 'More', entries: known.filter((each) => !said.has(each.command)).map((each) => entry(each, each.about)) });
+  return parts.filter((part) => part.entries.length > 0);
+}
