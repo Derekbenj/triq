@@ -42,8 +42,8 @@
     <button role="tab" value="programs" aria-selected="true" title="What runs, and the programs to start">Programs</button>
     <button role="tab" value="line" aria-selected="false" title="The commands of the triq tool, with the whole width for what they answer">Command line</button>
   </nav>
-  <div id="page-programs" class="layout">
-  <section class="across">
+  <div id="page-programs">
+  <section>
     <div class="section-line">
       <div>
         <p class="eyebrow"><span class="eyebrow-line"></span>Started here</p>
@@ -62,21 +62,19 @@
     <div id="running" class="cards wide"></div>
     <div id="others"></div>
   </section>
-  <div class="main">
-    <section>
-      <div class="section-line">
-        <div>
-          <p class="eyebrow"><span class="eyebrow-line"></span>As from a terminal</p>
-          <h2 class="arcade yellow">Start a program</h2>
-        </div>
-        <div class="finding">
-          <select id="of" title="Show the programs of one family, or of every one"></select>
-          <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
-        </div>
+  <section>
+    <div class="section-line">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>As from a terminal</p>
+        <h2 class="arcade yellow">Start a program</h2>
       </div>
-      <div id="programs"></div>
-    </section>
-  </div>
+      <div class="finding">
+        <select id="of" title="Show the programs of one family, or of every one"></select>
+        <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
+      </div>
+    </div>
+    <div id="programs"></div>
+  </section>
   </div>
   <aside id="page-line" class="console" hidden>
     <div class="section-line">

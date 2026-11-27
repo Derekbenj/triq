@@ -431,7 +431,8 @@ line for the commands of the `triq` tool. To draw what is inside a runtime, and 
 hand, is the workbench's, which is one of the programs the page starts.
 
 - **Start a program.** Every program of triq that is found, as the tool finds them, is on the
-  page, family by family: `algorithm-sensors` is under `algorithm`. `Start` starts one as a
+  page, family by family, those of a family in two columns where the page is wide enough:
+  `algorithm-sensors` is under `algorithm`. `Start` starts one as a
   process of its own. `with arguments` opens a box for what would be typed after its name in a
   terminal, and offers what it was started with before. Under the box the program says what
   it takes, in its own words, with each option it names to click: the page asks it with

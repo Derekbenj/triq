@@ -146,11 +146,6 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 main { padding-bottom: 4rem; }
 .pages { margin-top: 1.6rem; }
 .pages button { padding: 0.5rem 1.1rem; font-size: 0.94rem; }
-/* The programs: what runs is across the whole page, and under it the programs to start, in a
-   column that is no wider than is read at a glance. Everything in the column is as wide as
-   the column, so that what is in it ends at one edge. */
-.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(0, 1fr); column-gap: 2.4rem; align-items: start; }
-.across { grid-column: 1 / -1; }
 section, .console { margin-top: 1.8rem; }
 .section-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .section-line h2 { margin-top: 0.55rem; }
@@ -201,9 +196,10 @@ input::placeholder { color: var(--faint); }
 .before button { cursor: pointer; }
 .before button:hover { border-color: var(--accent); }
 
-/* A program to start is one line, with an edge in the colour of its family. They are listed
-   one under another. */
-.cards:has(> .item) { grid-template-columns: minmax(0, 1fr); gap: 0.4rem; }
+/* A program to start is one line, with an edge in the colour of its family. Those of a family
+   are in two columns across the page, read from left to right, and in one where the page is
+   narrow. One that is opened for its arguments grows down, and leaves the one beside it be. */
+.cards:has(> .item) { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.4rem 0.8rem; }
 .card.item, #running .card { border-left: 3px solid var(--colour); }
 .card.item { padding: 0.4rem 0.55rem 0.4rem 0.75rem; }
 .card.item .name { font-size: 0.94rem; }
@@ -334,7 +330,7 @@ body.gone main { opacity: 0.45; pointer-events: none; }
 body.gone .state::before { animation: none; background: var(--faint); }
 
 @media (max-width: 68rem) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
+  .cards:has(> .item) { grid-template-columns: minmax(0, 1fr); }
   .bar { flex-wrap: wrap; gap: 0.9rem; }
   .now { order: 3; flex-basis: 100%; }
   .ends { margin-left: auto; }
