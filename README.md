@@ -410,10 +410,14 @@ first in `main` does it:
 
 ```rust
 fn main() -> triq::Result {
-    triq::help("usage: triq-robot [runtime name] [--fast]\n  runtime name   robot, unless another is given\n  --fast         twice the pace");
+    triq::help("usage: triq-robot [--runtime <name>] [--fast]\n  --runtime <name>  robot, unless another is given\n  --fast            twice the pace");
     // ...
 }
 ```
+
+Each thing a program takes is best an option, a word that begins with `--`, the name of its
+runtime among them: `--runtime <name>`. A page that starts programs offers the options a
+program names to click, and so knows where the name goes that it gives one more of a program.
 
 It says a last line of its own, about `--help` itself. A program that parses what it is told
 itself, and does not call `triq::help`, has that line in what it says too: whatever lists
@@ -444,8 +448,10 @@ hand, is the workbench's, which is one of the programs the page starts.
   shows the programs of one family alone.
 - **More than one of a program.** A program may be started while others of it run. Two runtimes
   cannot have one name, so the page gives the next one a name that is free, `physics2` beside
-  `physics`, where a program takes its runtime's name as the first word it is told. The card
-  says what the next will be started with before it is. A program that ended because its name
+  `physics`. A program that says it takes its runtime's name after `--runtime` is told it so,
+  `--runtime physics2`; another as the first word, where a program takes a name that stands
+  alone. The card says what the next will be started with before it is, and the box for its
+  arguments opens with that. A program that ended because its name
   was taken by something started elsewhere is offered a free name in the same way.
 - **Running.** Each program that was started has a card: what it was started with, the runtime
   it is and how many nodes that has, for how long, and the last line it printed, or all of it.

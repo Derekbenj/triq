@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
+import { added, age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -150,8 +150,9 @@ function takesOf(name, put) {
   const named = options(known.said);
   return h('div.takes', {}, h('pre', {}, known.said), named.length > 0 && h('div.before', {}, named.map(option)));
 }
-// What is in a box for arguments, with one more word at its end.
-const added = (typed, more) => `${typed.trimEnd()} ${more} `.trimStart();
+// Whether a program takes its runtime's name after `--runtime`, as far as it has said what it
+// takes: then the name that one more of it is given is written so.
+const byOption = (name) => options(view.takes.get(name)?.said ?? '').includes('--runtime');
 
 // Draw the programs again though one of their boxes is being typed in, and leave the keys
 // where they were.
@@ -169,26 +170,29 @@ function redrawPrograms() {
 function programCard(name) {
   const { started } = state.programs;
   const runs = running(started, name).length;
-  const proposed = another(name, started, state.runtimes);
+  const proposed = another(name, started, state.runtimes, byOption(name));
   const asked = view.boxes.has(name);
-  const go = () => start(name, asked ? (view.told[name] ?? '') : proposed);
+  // The box has what the next would be started with, until something else is typed in it.
+  const typed = () => view.told[name] ?? proposed;
+  const go = () => start(name, asked ? typed() : proposed);
   const ask = () => {
     if (asked) view.boxes.delete(name);
     else view.boxes.add(name);
-    if (!asked && !view.told[name]) view.told[name] = proposed;
+    // A box that was left empty has what the next would be started with when it is opened again.
+    if (!view.told[name]) delete view.told[name];
     drawPrograms(true);
     document.querySelector(`[data-told="${name}"]`)?.focus();
     // What it takes is under the box as soon as it has said.
     if (!asked) takes(name).then(redrawPrograms);
   };
   const more = (option) => {
-    view.told[name] = added(view.told[name] ?? '', option);
+    view.told[name] = added(typed(), option);
     drawPrograms(true);
     const box = document.querySelector(`[data-told="${name}"]`);
     box?.focus();
     box?.setSelectionRange(box.value.length, box.value.length);
   };
-  const box = h('input', { type: 'text', 'data-told': name, value: view.told[name] ?? '', placeholder: 'as after its name in a terminal: a name, --speed 5', spellcheck: 'false', autocomplete: 'off' });
+  const box = h('input', { type: 'text', 'data-told': name, value: typed(), placeholder: 'what would be typed after its name in a terminal', spellcheck: 'false', autocomplete: 'off' });
   box.addEventListener('input', () => (view.told[name] = box.value));
   box.addEventListener('keydown', (key) => key.key === 'Enter' && go());
   const again = (told) => h('button.told', { title: 'It was started with these before', onclick: () => ((view.told[name] = told), drawPrograms(true)) }, told);
@@ -226,7 +230,10 @@ function drawPrograms(now = false) {
     $('of').replaceChildren(h('option', { value: '*' }, 'every family'), ...all.map(option));
   }
   const listed = families(found, view.search, view.of);
-  const shows = found.map((name) => [running(started, name).length, another(name, started, state.runtimes), earlier(started, name)]);
+  // A program of which some run is asked what it takes: the next of it is given a name, and
+  // what it says has where the name goes.
+  for (const name of found) if (running(started, name).length > 0 && !view.takes.has(name)) takes(name).then(redrawPrograms);
+  const shows = found.map((name) => [running(started, name).length, another(name, started, state.runtimes, byOption(name)), earlier(started, name)]);
   const drawn = JSON.stringify([listed, shows, [...view.boxes]]);
   if (!now && (drawn === view.drawn || $('programs').contains(document.activeElement))) return;
   view.drawn = drawn;
@@ -311,12 +318,14 @@ function startedCard(id) {
     status.textContent = stateOf(one);
     // One that found its runtime's name taken is offered a name that is free.
     const unused = clash(one) && free(clash(one), state.runtimes);
+    // Where the free name goes in what it is told is in what the program says it takes.
+    if (unused) takes(one.program);
     // The buttons are made again only when they change, or a click between two looks is lost.
     if (buttons !== how + unused) {
       buttons = how + unused;
       const stop = () => send('/api/stop', { id });
       const about = 'Its runtime did not shut down when it was asked: end the process';
-      const renamed = () => start(one.program, named(one.told, unused));
+      const renamed = () => start(one.program, named(one.told, unused, byOption(one.program)));
       // The box opens with what it was started with, to be added to or changed.
       const more = (option) => {
         other.value = added(other.value, option);

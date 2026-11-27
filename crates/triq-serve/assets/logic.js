@@ -45,14 +45,14 @@ export function earlier(started, program) {
 
 // What one more of a program is told, while others of it run: what the last of them was told.
 // If they are runtimes it is given a name as well, since two runtimes cannot have one name:
-// the name of the first, with the first number that leaves it free. The name goes where a
-// program of triq takes it, as the first word it is told.
-export function another(program, started, runtimes) {
+// the name of the first, with the first number that leaves it free. `option` is whether the
+// program says it takes its runtime's name after `--runtime`.
+export function another(program, started, runtimes, option = false) {
   const runs = running(started, program);
   if (runs.length === 0) return '';
   const told = [...runs[runs.length - 1].told];
   const first = runs.find((each) => each.runtime);
-  return first ? named(told, free(first.runtime, runtimes)) : line(told);
+  return first ? named(told, free(first.runtime, runtimes), option) : line(told);
 }
 
 // A name that no runtime has: the one given without the number it may end in, or that with the
@@ -65,12 +65,20 @@ export function free(name, runtimes) {
   return unused;
 }
 
-// What a program is told, with a name for its runtime: in the place of the first word, if that
-// is no option, since that is the name it was given before; or else in front.
-export function named(told, name) {
+// What a program is told, with a name for its runtime. One that was told its name after
+// `--runtime` has the new one there. Another has it in front: after that word, if the program
+// says it takes its name so (`option`), and else alone, where a program of triq takes a name
+// that stands alone. A name that stood alone in front before gives its place to it.
+export function named(told, name, option = false) {
+  const said = told.indexOf('--runtime');
+  if (said >= 0) return line([...told.slice(0, said + 1), name, ...told.slice(said + 2)]);
   const rest = told.length > 0 && !told[0].startsWith('-') ? told.slice(1) : told;
-  return [name, line(rest)].join(' ').trim();
+  return line([...(option ? ['--runtime'] : []), name, ...rest]);
 }
+
+// What is typed for a program, with one more option at its end and room for what the option
+// takes. One that is there already is not put there again.
+export const added = (typed, option) => (typed.split(/\s+/).includes(option) ? typed : `${typed.trimEnd()} ${option} `.trimStart());
 
 // The name one that was started found taken, if that is what it ended of: triq says so in
 // these words, which a program that returns the error from its main prints inside quotes.

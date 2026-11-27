@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
+import { added, age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, kindIn, line, named, ofKind, offers, options, others, registered, running, said, sheet, shown, shows, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -53,6 +53,21 @@ test('one more of a program that is a runtime is told a name that no runtime has
   // One that is no runtime needs no name: the next is told what the last was.
   assert.equal(another('workbench', [one(4, 'workbench', '')], []), '');
   assert.equal(another('talker', [one(5, 'talker', 'loud --twice')], []), 'loud --twice');
+  // A program that says it takes its runtime's name after --runtime is told it so, in front,
+  // and a name that stood alone before gives its place to it.
+  assert.equal(another('stack-quadcopter', [first], [home('quadcopter', 1)], true), '--runtime quadcopter2');
+  assert.equal(another('stack-quadcopter', [first, second], machine, true), '--runtime quadcopter4 --speed 5');
+  assert.equal(another('physics-rapier', [fast], [home('physics', 3)], true), '--runtime physics2 --speed 2');
+  // One that was told its name after --runtime has the next one's there, where it was.
+  const said = one(6, 'simulator-bevy', '--headless --runtime bevy --fps 30', { runtime: 'bevy' });
+  assert.equal(another('simulator-bevy', [said], [home('bevy', 6)]), '--headless --runtime bevy2 --fps 30');
+  assert.equal(another('simulator-bevy', [said], [home('bevy', 6)], true), '--headless --runtime bevy2 --fps 30');
+});
+
+test('an option that is clicked goes to the end of what is typed, once', () => {
+  assert.deepEqual([added('', '--fps'), added('--runtime bevy2', '--headless'), added('bevy2  ', '--fps')], ['--fps ', '--runtime bevy2 --headless ', 'bevy2 --fps ']);
+  // One that is there already is not put there again.
+  assert.deepEqual([added('--runtime bevy2 --fps 30', '--runtime'), added('--fps', '--fps')], ['--runtime bevy2 --fps 30', '--fps']);
 });
 
 test('one that ended because its name was taken is known by what triq said, and is offered a free one', () => {
@@ -67,6 +82,8 @@ test('one that ended because its name was taken is known by what triq said, and 
   assert.equal(free('sensors', [home('sensors'), home('sensors2')]), 'sensors3');
   assert.equal(free('sensors7', []), 'sensors');
   assert.deepEqual([named([], 'a'), named(['--fps', '60'], 'a'), named(['old', '--fps', '60'], 'a')], ['a', 'a --fps 60', 'a --fps 60']);
+  // After --runtime, for a program that says it takes its name so, or was told it so before.
+  assert.deepEqual([named([], 'a', true), named(['old', '--fps', '60'], 'a', true), named(['--fps', '60', '--runtime', 'old'], 'a')], ['--runtime a', '--runtime a --fps 60', '--fps 60 --runtime a']);
 });
 
 test('what one that was started is doing is said in words, and for how long', () => {

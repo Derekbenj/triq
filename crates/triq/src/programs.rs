@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// first in `main`, with a line of usage and a line for each thing that can be given:
 ///
 /// ```no_run
-/// triq::help("usage: triq-robot [runtime name] [--fast]\n  --fast   twice the pace");
+/// triq::help("usage: triq-robot [--runtime <name>] [--fast]\n  --fast   twice the pace");
 /// ```
 ///
 /// A person asks a program so at a terminal; and whatever lists the programs of triq, as
