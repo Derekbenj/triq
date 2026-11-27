@@ -4,10 +4,13 @@
 //! There may be several of one program at a time, each known by a number of its own. A program
 //! that was started here is stopped when this one is told to quit: what it prints goes here,
 //! and would have nowhere to go.
+//!
+//! A command of the `triq` tool that is typed on the page is run the same way, the tool being
+//! the program: a process that prints and ends. Those are listed apart, and only the last few.
 use serde_json::{Value, json};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -17,6 +20,10 @@ use triq::{Inventory, Remote};
 /// those the page is sent each time it asks.
 const KEPT: usize = 500;
 const SHOWN: usize = 200;
+/// How many commands of the tool are kept, with what they printed.
+const ASKED: usize = 20;
+/// How often the programs that can be started are looked for again.
+const LOOK: Duration = Duration::from_secs(3);
 
 pub struct Programs {
     /// Those that can be started, by the names they are run by.
@@ -25,6 +32,16 @@ pub struct Programs {
     pub started: Vec<Started>,
     /// How many have been started: the next is known by the next number.
     count: u64,
+    /// When the programs were last looked for, if they are looked for again from time to time.
+    looked: Option<Instant>,
+}
+
+/// What became of a line that was typed: a program was started, or the tool was run with it.
+/// Each with the number it is known by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typed {
+    Started(u64),
+    Asked(u64),
 }
 
 /// A program that was started here.
@@ -35,6 +52,8 @@ pub struct Started {
     /// What it was told when it was started.
     pub told: Vec<String>,
     pub pid: u32,
+    /// Whether it is the tool, run with a command that was typed.
+    asked: bool,
     child: Child,
     lines: Arc<Mutex<VecDeque<String>>>,
     /// When it was started, and for how long it ran, once it has ended.
@@ -66,23 +85,86 @@ pub fn plain(line: &str) -> String {
     plain
 }
 
+/// What was typed, split into words as a terminal splits it: at spaces, but that what is
+/// between two quotes of a kind is in one word, spaces and all, with the quotes left out, and a
+/// backslash outside quotes takes the letter after it as it is.
+pub fn words(line: &str) -> Vec<String> {
+    let (mut words, mut word, mut begun, mut within) = (Vec::new(), String::new(), false, None);
+    let mut letters = line.chars();
+    while let Some(letter) = letters.next() {
+        match (within, letter) {
+            (Some(quote), _) if letter == quote => within = None,
+            (Some(_), _) => word.push(letter),
+            (None, '\'' | '"') => (within, begun) = (Some(letter), true),
+            (None, '\\') => {
+                word.extend(letters.next());
+                begun = true;
+            }
+            (None, _) if letter.is_whitespace() => {
+                if std::mem::take(&mut begun) {
+                    words.push(std::mem::take(&mut word));
+                }
+            }
+            (None, _) => {
+                word.push(letter);
+                begun = true;
+            }
+        }
+    }
+    if begun {
+        words.push(word);
+    }
+    words
+}
+
+/// The programs of triq found on this machine, but for the one that asks.
+fn found() -> Vec<(String, PathBuf)> {
+    let own = std::env::current_exe().ok();
+    triq::programs().into_iter().filter(|(_, path)| Some(path) != own.as_ref()).collect()
+}
+
 impl Programs {
+    /// Those programs, and no others for as long as this is kept.
     pub fn new(found: Vec<(String, PathBuf)>) -> Self {
-        Self { found, started: Vec::new(), count: 0 }
+        Self { found, started: Vec::new(), count: 0, looked: None }
     }
 
-    /// The programs of triq found on this machine, but for the one that asks.
+    /// The programs of triq found on this machine. They are looked for again from time to
+    /// time, so that one that is built or registered later is found without starting over.
     pub fn here() -> Self {
-        let own = std::env::current_exe().ok();
-        Self::new(triq::programs().into_iter().filter(|(_, path)| Some(path) != own.as_ref()).collect())
+        Self { looked: Some(Instant::now()), ..Self::new(found()) }
     }
 
     /// Start the program at that place among those found, told the words of `told`: what would
-    /// be typed after its name in a terminal, a space between two of them. It is known by the
-    /// number returned.
+    /// be typed after its name in a terminal. It is known by the number returned.
     pub fn start(&mut self, program: usize, told: &str) -> std::io::Result<u64> {
         let (name, path) = self.found[program].clone();
-        let told: Vec<String> = told.split_whitespace().map(str::to_owned).collect();
+        self.run(name, &path, words(told), false)
+    }
+
+    /// Run the tool with a command that was typed: `told` is what would be typed after the
+    /// tool's name. What it prints is kept like a program's, under the number returned.
+    pub fn ask(&mut self, tool: &Path, told: &str) -> std::io::Result<u64> {
+        self.run("triq".to_owned(), tool, words(told), true)
+    }
+
+    /// Take a line as it is typed in a terminal, with the tool's name in front or without. The
+    /// name of a program starts that program, told the rest, as the tool would hand it over;
+    /// anything else is for the tool. None when nothing was typed.
+    pub fn typed(&mut self, tool: &Path, line: &str) -> std::io::Result<Option<Typed>> {
+        let mut typed = words(line);
+        if typed.first().is_some_and(|first| first == "triq") {
+            typed.remove(0);
+        }
+        let Some(first) = typed.first() else { return Ok(None) };
+        match self.found.iter().find(|(name, _)| name == first).cloned() {
+            Some((name, path)) => self.run(name, &path, typed[1..].to_vec(), false).map(|id| Some(Typed::Started(id))),
+            None => self.run("triq".to_owned(), tool, typed, true).map(|id| Some(Typed::Asked(id))),
+        }
+    }
+
+    /// Run a program as a process of its own, told those words, and keep what it prints.
+    fn run(&mut self, name: String, path: &Path, told: Vec<String>, asked: bool) -> std::io::Result<u64> {
         let mut child = Command::new(path)
             .args(&told)
             .stdin(Stdio::null())
@@ -108,6 +190,14 @@ impl Programs {
                 }
             });
         }
+        // Of the commands that have ended, only the last are kept.
+        let commands = |started: &[Started]| started.iter().filter(|started| started.asked).count();
+        while asked && commands(&self.started) >= ASKED {
+            let Some(oldest) = self.started.iter().position(|started| started.asked && started.ended.is_some()) else {
+                break;
+            };
+            self.started.remove(oldest);
+        }
         self.count += 1;
         let id = self.count;
         let (pid, began) = (child.id(), Instant::now());
@@ -116,6 +206,7 @@ impl Programs {
             program: name,
             told,
             pid,
+            asked,
             child,
             lines,
             began,
@@ -140,10 +231,11 @@ impl Programs {
 
     /// The programs as the page is told of them: the names of those that can be started, and
     /// each that was: the runtime it is and how many nodes that has, for how many seconds it
-    /// has run or ran, how it ended, and the last lines it printed.
+    /// has run or ran, how it ended, and the last lines it printed. The commands of the tool
+    /// that were typed are told the same way, apart, in `asked`.
     pub fn told(&self, machine: &[Inventory]) -> Value {
         let found: Vec<&String> = self.found.iter().map(|(name, _)| name).collect();
-        let started = self.started.iter().enumerate().map(|(place, started)| {
+        let told = |(place, started): (usize, &Started)| {
             let (printed, home) = (self.printed(place), self.home(place, machine));
             json!({
                 "id": started.id,
@@ -158,12 +250,19 @@ impl Programs {
                 "failed": started.failed,
                 "printed": printed[printed.len().saturating_sub(SHOWN)..],
             })
-        });
-        json!({ "found": found, "started": started.collect::<Vec<_>>() })
+        };
+        let of = |asked: bool| -> Vec<Value> {
+            self.started.iter().enumerate().filter(|(_, started)| started.asked == asked).map(told).collect()
+        };
+        json!({ "found": found, "started": of(false), "asked": of(true) })
     }
 
-    /// Notice those that have ended since this was last asked.
+    /// Notice those that have ended since this was last asked, and look for the programs again
+    /// if that was not done for a while.
     pub fn poll(&mut self) {
+        if self.looked.is_some_and(|at| at.elapsed() > LOOK) {
+            (self.found, self.looked) = (found(), Some(Instant::now()));
+        }
         for started in self.started.iter_mut().filter(|started| started.ended.is_none()) {
             let (failed, how) = match started.child.try_wait() {
                 Ok(None) => continue,
@@ -207,9 +306,10 @@ impl Programs {
         None
     }
 
-    /// Forget one that has ended, by its number; or with no number, every one that has.
+    /// Forget one that has ended, by its number; or with no number, every program that has.
     pub fn forget(&mut self, id: Option<u64>) {
-        self.started.retain(|started| started.ended.is_none() || id.is_some_and(|id| id != started.id));
+        let stays = |started: &Started| id.map_or(started.asked, |id| id != started.id);
+        self.started.retain(|started| started.ended.is_none() || stays(started));
     }
 
     /// Stop every one that runs, as the app closes: each runtime is asked to shut down and given

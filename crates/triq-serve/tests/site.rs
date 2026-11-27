@@ -69,6 +69,9 @@ fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() 
         let part = site.answer(&request("GET", part, None, Value::Null));
         assert!(part.status == 200 && part.body.len() > 500, "{}", part.status);
     }
+    // The letters of its headings are a font that is in the program.
+    let font = site.answer(&request("GET", "/press-start-2p.ttf", None, Value::Null));
+    assert!(font.status == 200 && font.kind == "font/ttf" && font.body.len() > 50_000, "{}", font.status);
     assert_eq!(site.answer(&request("GET", "/nothing", None, Value::Null)).status, 404);
     // The page is its own: it fetches nothing from elsewhere.
     assert!(!text.contains("http://") && !text.contains("https://"));
@@ -97,7 +100,8 @@ fn the_page_is_served_to_this_machines_own_browser_and_to_no_other_page_in_it() 
 
     // With it, the help says what can be asked, and Quit is taken.
     let help = json_of(&site.answer(&request("GET", "/api/help", Some(&token), Value::Null)));
-    for asked in ["GET /api/state", "POST /api/start", "POST /api/stop", "POST /api/shutdown", "POST /api/forget"] {
+    let asks = ["GET /api/state", "GET /api/machine", "POST /api/command", "POST /api/start", "POST /api/stop"];
+    for asked in asks.into_iter().chain(["POST /api/shutdown", "POST /api/forget", "GET /api/usage"]) {
         assert!(help["requests"][asked].is_string(), "{asked}");
     }
     json_of(&site.answer(&request("POST", "/api/quit", Some(&token), json!({}))));
@@ -138,6 +142,11 @@ fn the_page_is_told_which_runtimes_there_are_and_one_it_names_is_shut_down() -> 
         assert!(refused.status == 400 && !refused.body.is_empty(), "{path}: {refused:?}");
     }
     assert!(!runtime.stopping());
+
+    // The whole of what the runtimes report is had when it is asked for: what `triq json` prints.
+    let machine = json_of(&site.answer(&request("GET", "/api/machine", Some(&token), Value::Null)));
+    let whole = machine.as_array().unwrap().iter().find(|home| home["runtime"] == name.as_str()).expect("the runtime");
+    assert!(whole["nodes"] == json!([]) && whole["factories"] == json!([]) && whole["pools"].is_array(), "{whole}");
 
     // Named, the runtime is asked to shut down.
     json_of(&site.answer(&request("POST", "/api/shutdown", Some(&token), json!({ "runtime": name }))));
@@ -184,6 +193,56 @@ fn programs_are_started_from_the_page_more_than_one_of_each_and_stopped() {
     assert_eq!(started(&mut site).len(), 1);
     ask(&mut site, "POST", "/api/stop", json!({ "id": 2 }));
     assert!(wait_for(|| started(&mut site)[0]["ended"] == "stopped"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_line_typed_on_the_page_is_a_command_for_the_tool_or_a_program_to_start() {
+    let talker = script("line", "talker", "echo \"told: $*\"\nsleep 30");
+    let (_, tool) = script(
+        "line",
+        "tool",
+        "if [ \"$1\" = help ]; then echo 'usage:'; echo '  triq list   runtimes'; else echo \"asked: $*\"; fi",
+    );
+    let mut site = Site::new(Feed::start(), Programs::new(vec![talker]), PORT);
+    site.tool = tool;
+    let token = site.token().to_owned();
+    let ask = |site: &mut Site, method: &str, path: &str, body: Value| {
+        json_of(&site.answer(&request(method, path, Some(&token), body)))
+    };
+    let programs = |site: &mut Site| ask(site, "GET", "/api/state", Value::Null)["programs"].clone();
+
+    // A command of the tool, typed with its name or without, is run by the tool, told the words.
+    let typed = json!({ "line": "triq connect robot/imu/pose 'desk/viewer/input'" });
+    assert_eq!(ask(&mut site, "POST", "/api/command", typed), json!({ "asked": 1 }));
+    assert_eq!(ask(&mut site, "POST", "/api/command", json!({ "line": "pause robot/imu" })), json!({ "asked": 2 }));
+    let mut asked = Value::Null;
+    assert!(wait_for(|| {
+        asked = programs(&mut site)["asked"].clone();
+        asked.as_array().is_some_and(|asked| asked.len() == 2 && asked.iter().all(|one| one["ended"] == "ended"))
+    }));
+    assert_eq!(asked[0]["told"], json!(["connect", "robot/imu/pose", "desk/viewer/input"]));
+    assert_eq!(asked[0]["printed"], json!(["asked: connect robot/imu/pose desk/viewer/input"]));
+    assert_eq!(asked[1]["printed"], json!(["asked: pause robot/imu"]));
+
+    // The name of a program is that program, started as its button starts it, told the rest.
+    assert_eq!(
+        ask(&mut site, "POST", "/api/command", json!({ "line": "triq talker one --speed 5" })),
+        json!({ "started": 3 })
+    );
+    let started = programs(&mut site)["started"].clone();
+    assert_eq!((&started[0]["program"], &started[0]["told"]), (&json!("talker"), &json!(["one", "--speed", "5"])));
+    ask(&mut site, "POST", "/api/stop", json!({ "id": 3 }));
+
+    // Nothing typed is nothing to do.
+    for nothing in [json!({ "line": "   " }), json!({ "line": "triq" }), json!({})] {
+        assert_eq!(site.answer(&request("POST", "/api/command", Some(&token), nothing)).status, 400);
+    }
+    // What the tool can be told is had from the tool, for the page to offer as it is typed.
+    assert_eq!(
+        ask(&mut site, "GET", "/api/usage", Value::Null),
+        json!({ "usage": "usage:\n  triq list   runtimes\n" })
+    );
 }
 
 #[test]

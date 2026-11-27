@@ -1,7 +1,7 @@
 //! What the page is, and what it may ask: the page and its parts, and under `/api/` the
 //! programs that can be started and those that were, the runtimes there are, and the requests
-//! that start a program, stop one, and shut a runtime down. No more: the nodes of a runtime,
-//! their settings and their wires are the workbench's to handle.
+//! that start a program, stop one, shut a runtime down, and run the `triq` tool with a command
+//! that was typed. To draw and to wire what is inside a runtime is the workbench's.
 //!
 //! The page starts programs and stops them, so it is served with care. Only a request that
 //! names this machine as its host is answered, and under `/api/` only one that carries the
@@ -9,15 +9,19 @@
 //! in the browser can read.
 use crate::feed::Feed;
 use crate::http::{Answer, Request};
-use crate::programs::Programs;
+use crate::programs::{Programs, Typed};
 use serde_json::{Value, json};
 use std::hash::{BuildHasher, Hasher};
+use std::path::PathBuf;
+use std::process::Command;
 
 const PAGE: &str = include_str!("../assets/index.html");
 const STYLE: &str = include_str!("../assets/app.css");
 const SCRIPT: &str = include_str!("../assets/app.js");
 const LOGIC: &str = include_str!("../assets/logic.js");
 const HERO: &str = include_str!("../assets/hero.js");
+/// The letters of the name and of the headings: Press Start 2P, under the licence beside it.
+const FONT: &[u8] = include_bytes!("../assets/press-start-2p.ttf");
 
 /// What the page is told, and what can be asked through it: for a person who reads it, and for
 /// a language model that is to use it.
@@ -26,6 +30,10 @@ const HELP: &str = include_str!("../assets/help.json");
 pub struct Site {
     pub feed: Feed,
     pub programs: Programs,
+    /// The `triq` tool, which is run with the commands that are typed on the page.
+    pub tool: PathBuf,
+    /// What the tool says it can be told, once it has been asked.
+    usage: Option<String>,
     port: u16,
     token: String,
     /// What went wrong last, and how many things have: the page shows each once.
@@ -41,9 +49,16 @@ fn token() -> String {
     format!("{:016x}{:016x}", part(), part())
 }
 
+/// The tool: the one beside this program, as `cargo install` puts it, or else the one on the `PATH`.
+fn tool() -> PathBuf {
+    let name = format!("triq{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe().ok().and_then(|program| Some(program.parent()?.join(&name)));
+    beside.filter(|tool| tool.is_file()).unwrap_or_else(|| name.into())
+}
+
 impl Site {
     pub fn new(feed: Feed, programs: Programs, port: u16) -> Self {
-        Self { feed, programs, port, token: token(), said: (0, None), quit: false }
+        Self { feed, programs, tool: tool(), usage: None, port, token: token(), said: (0, None), quit: false }
     }
 
     pub fn token(&self) -> &str {
@@ -64,6 +79,7 @@ impl Site {
             ("GET", "/app.js") => part("text/javascript; charset=utf-8", SCRIPT),
             ("GET", "/logic.js") => part("text/javascript; charset=utf-8", LOGIC),
             ("GET", "/hero.js") => part("text/javascript; charset=utf-8", HERO),
+            ("GET", "/press-start-2p.ttf") => Answer { status: 200, kind: "font/ttf", body: FONT.to_vec() },
             (_, path) if path.starts_with("/api/") => {
                 if request.header("x-triq-token") != Some(self.token.as_str()) {
                     return Answer::refused(403, "the page's token is not with this request");
@@ -93,6 +109,27 @@ impl Site {
                 let runtimes: Vec<Value> = machine.iter().map(runtime).collect();
                 let programs = self.programs.told(&machine);
                 Ok(Answer::json(&json!({ "programs": programs, "runtimes": runtimes, "said": self.said })))
+            }
+            ("GET", "/api/machine") => {
+                let machine = serde_json::to_value(self.feed.machine()).map_err(|error| error.to_string())?;
+                Ok(Answer::json(&machine))
+            }
+            ("GET", "/api/usage") => {
+                if self.usage.is_none() {
+                    let said = Command::new(&self.tool).arg("help").output();
+                    let said = said.map_err(|error| format!("the triq tool could not be run: {error}"))?;
+                    self.usage = Some(String::from_utf8_lossy(&said.stdout).into_owned());
+                }
+                Ok(Answer::json(&json!({ "usage": self.usage })))
+            }
+            ("POST", "/api/command") => {
+                let line = sent()?["line"].as_str().unwrap_or_default().to_owned();
+                let typed = self.programs.typed(&self.tool, &line);
+                match typed.map_err(|error| format!("could not run that: {error}"))? {
+                    Some(Typed::Started(id)) => Ok(Answer::json(&json!({ "started": id }))),
+                    Some(Typed::Asked(id)) => Ok(Answer::json(&json!({ "asked": id }))),
+                    None => Err("nothing was typed".to_owned()),
+                }
             }
             ("GET", "/api/help") => {
                 Ok(Answer { status: 200, kind: "application/json", body: HELP.as_bytes().to_vec() })

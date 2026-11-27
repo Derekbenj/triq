@@ -1,32 +1,47 @@
 // The page: it asks twice a second which programs there are and which of them run, draws that,
-// and sends what is clicked. It starts programs and stops them, and no more: what is inside a
-// runtime is the workbench's to show.
-import { dissolve, mark } from '/hero.js';
-import { age, another, clash, doing, earlier, families, family, free, named, others, picture, running } from '/logic.js';
+// and sends what is clicked and what is typed. It starts programs and stops them, and has a
+// line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
+import { mark } from '/hero.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
 
 // What the server last said, and what the person has done on the page.
-let state = { programs: { found: [], started: [] }, runtimes: [], said: [0, null] };
+let state = { programs: { found: [], started: [], asked: [] }, runtimes: [], said: [0, null] };
 const view = {
   search: '',
   // What a program is to be told, as typed in its box, and the programs whose box is open.
   told: {},
-  asked: new Set(),
+  boxes: new Set(),
   // The cards of those that were started, by their numbers; whose output is open; and those
   // whose output was opened for them once, because they failed.
   cards: new Map(),
   open: new Set(),
   opened: new Set(),
-  // What the list of programs and the runtimes of elsewhere were last drawn from, so that
-  // they are drawn again only when that changes; and how many problems were said.
+  // What the list of programs, the runtimes of elsewhere and the counts were last drawn from,
+  // so that they are drawn again only when that changes; and how many problems were said.
   drawn: '',
   elsewhere: '',
+  counted: '',
   shown: 0,
   // How many times in a row the server did not answer; and whether it is taken to have ended.
   missed: 0,
   gone: false,
+  // The command line. What the tool can be told; the machine as it was last looked at, and
+  // when; the lines that were typed, the newest last, each with what came of it, and how each
+  // was last drawn; the nodes of a list whose ports are shown; and what to bring back with
+  // the arrow keys.
+  known: [],
+  machine: [],
+  looked: 0,
+  lines: [],
+  answers: new Map(),
+  unfolded: new Set(),
+  before: [],
+  recall: 0,
+  // The line that is being done: the next waits for it, so that lines are done in their order.
+  doing: Promise.resolve(),
 };
 
 async function api(path, body) {
@@ -67,7 +82,7 @@ async function send(path, body) {
 }
 const start = (program, told) => send('/api/start', { program, told });
 
-// An element: `h('button.pill', { onclick }, 'Start')`.
+// An element: `h('button.button', { onclick }, 'Start')`.
 function h(what, attributes = {}, ...children) {
   const [tag, ...classes] = what.split('.');
   const element = document.createElement(tag || 'div');
@@ -83,8 +98,8 @@ function h(what, attributes = {}, ...children) {
 }
 
 // Each family of programs has a colour, and a program's picture is drawn in it.
-const COLOURS = { '': '#e0389a', algorithm: '#1f8fff', peripheral: '#f2a900', physics: '#22c55e', simulator: '#ff7a1a', stack: '#8b3dff' };
-const SPARE = ['#00b3c7', '#e0389a', '#8b3dff', '#ff7a1a', '#1f8fff'];
+const COLOURS = { '': '#c7afff', algorithm: '#38d6ff', peripheral: '#ffd23f', physics: '#62f08a', simulator: '#ff9a3d', stack: '#ff5fa8' };
+const SPARE = ['#7de3d0', '#c7afff', '#ff9a3d', '#38d6ff', '#ff5fa8'];
 const colourOf = (name) => {
   const letters = [...family(name)].reduce((sum, letter) => sum + letter.codePointAt(0), 0);
   return COLOURS[family(name)] ?? SPARE[letters % SPARE.length];
@@ -93,20 +108,20 @@ const pictured = (name) => {
   const squares = picture(name).flat().map((on) => h(on ? 'i.on' : 'i'));
   return h('span.picture', { style: `--colour: ${colourOf(name)}`, 'aria-hidden': 'true' }, squares);
 };
-// A program's name without its family, which is said beside it.
+// A program's name without its family, which is said above it.
 const short = (name) => (family(name) ? name.slice(family(name).length + 1) : name);
 
-// A program that can be started. With others of it running, one more is told what the last
-// was, under a name that is free: that is said on the card before it is done.
+// A program that can be started. With others of it running, one more is started with what the
+// last was, under a name that is free: that is said on the card before it is done.
 function programCard(name) {
   const { started } = state.programs;
   const runs = running(started, name).length;
   const proposed = another(name, started, state.runtimes);
-  const asked = view.asked.has(name);
+  const asked = view.boxes.has(name);
   const go = () => start(name, asked ? (view.told[name] ?? '') : proposed);
   const ask = () => {
-    if (asked) view.asked.delete(name);
-    else view.asked.add(name);
+    if (asked) view.boxes.delete(name);
+    else view.boxes.add(name);
     if (!asked && !view.told[name]) view.told[name] = proposed;
     drawPrograms(true);
     document.querySelector(`[data-told="${name}"]`)?.focus();
@@ -123,13 +138,13 @@ function programCard(name) {
       {},
       pictured(name),
       h('div.grow', {}, h('div.name', {}, short(name)), h('div.sub', {}, runs ? h('span.badge', {}, `${runs} running`) : `triq ${name}`)),
-      h('button.pill', { onclick: go, title: `triq ${name}` }, runs ? 'Start another' : 'Start'),
+      h('button.button.go', { onclick: go, title: `triq ${name}` }, runs ? 'Start another' : 'Start'),
     ),
     h(
       'div.under',
       {},
       h('button.link', { onclick: ask }, asked ? 'without arguments of my own' : 'with arguments'),
-      !asked && proposed && h('span', {}, 'the next is started with ', h('code', {}, proposed)),
+      !asked && proposed && h('span', {}, 'the next is started with ', h('span.told', {}, proposed)),
     ),
     asked && h('div.tell', {}, box),
     asked && earlier(started, name).length > 0 && h('div.before', {}, earlier(started, name).map(again)),
@@ -142,14 +157,14 @@ function drawPrograms(now = false) {
   const { found, started } = state.programs;
   const listed = families(found, view.search);
   const shows = found.map((name) => [running(started, name).length, another(name, started, state.runtimes), earlier(started, name)]);
-  const drawn = JSON.stringify([listed, shows, [...view.asked]]);
+  const drawn = JSON.stringify([listed, shows, [...view.boxes]]);
   if (!now && (drawn === view.drawn || $('programs').contains(document.activeElement))) return;
   view.drawn = drawn;
   const none = found.length
     ? 'No program has that in its name.'
     : 'No program of triq was found. They are looked for beside the triq tool, in the folders registered with triq register <folder>, and on the PATH.';
   const parts = listed.map(({ family: of, programs }) =>
-    h('div.family', {}, h('h3', { style: `--colour: ${colourOf(programs[0])}` }, of || 'triq'), h('div.cards', {}, programs.map(programCard))),
+    h('div.family', { style: `--colour: ${colourOf(programs[0])}` }, h('h3', {}, of || 'triq'), h('div.cards', {}, programs.map(programCard))),
   );
   $('programs').replaceChildren(...(parts.length ? parts : [h('p.none', {}, none)]));
 }
@@ -174,7 +189,7 @@ function startedCard(id) {
     root.className = `card ${how}`;
     if (face.isConnected && !face.firstChild) face.replaceWith(pictured(one.program));
     name.textContent = one.program;
-    told.replaceChildren(one.told.length ? h('span', {}, 'started with ', h('code', {}, one.told.join(' '))) : 'started with no arguments');
+    told.replaceChildren(one.told.length ? h('span', {}, 'started with ', h('span.told', {}, one.told.join(' '))) : 'started with no arguments');
     const lasted = one.ended ? `after ${age(one.seconds)}` : `for ${age(one.seconds)}`;
     // What still ran when triq serve ended, ended with it.
     const does = view.gone && !one.ended ? 'ended with triq serve' : doing(one);
@@ -189,11 +204,11 @@ function startedCard(id) {
       const renamed = () => start(one.program, named(one.told, unused));
       ends.replaceChildren(
         ...[
-          how === 'running' && h('button.pill.stop', { onclick: stop }, 'Stop'),
-          how === 'stopping' && h('button.pill.stop', { onclick: stop, title: about }, 'End it now'),
-          unused && h('button.pill', { onclick: renamed, title: `The name ${clash(one)} is taken: start it under this one` }, `Start as ${unused}`),
-          one.ended && !unused && h('button.pill.plain', { onclick: () => start(one.program, one.told.join(' ')), title: 'Start it as it was started' }, 'Start again'),
-          one.ended && h('button.pill.plain', { onclick: () => send('/api/forget', { id }), title: 'Take it off the page' }, 'Clear'),
+          how === 'running' && h('button.button.stop', { onclick: stop }, 'Stop'),
+          how === 'stopping' && h('button.button.stop', { onclick: stop, title: about }, 'End it now'),
+          unused && h('button.button.go', { onclick: renamed, title: `The name ${clash(one)} is taken: start it under this one` }, `Start as ${unused}`),
+          one.ended && !unused && h('button.button', { onclick: () => start(one.program, one.told.join(' ')), title: 'Start it as it was started' }, 'Start again'),
+          one.ended && h('button.button', { onclick: () => send('/api/forget', { id }), title: 'Take it off the page' }, 'Clear'),
         ].filter(Boolean),
       );
     }
@@ -214,9 +229,10 @@ function startedCard(id) {
   return { root, update };
 }
 
-// Those that were started here, the newest first; and the runtimes that were started elsewhere.
+// Those that were started here, the newest first; the runtimes that were started elsewhere;
+// and what is said of both at the top.
 function drawRunning() {
-  const { started } = state.programs;
+  const { started, found } = state.programs;
   for (const [id, card] of view.cards) {
     if (started.some((one) => one.id === id)) continue;
     card.root.remove();
@@ -230,30 +246,200 @@ function drawRunning() {
     view.cards.get(one.id).update(one);
   }
   const runs = started.filter((one) => !one.ended).length;
+  const elsewhere = others(state.runtimes);
   $('nothing').hidden = started.length > 0;
   $('clear').hidden = !started.some((one) => one.ended);
   $('stop-all').hidden = runs === 0 || view.gone;
   $('quit').hidden = view.gone;
   $('headline').textContent = view.gone ? 'triq serve has ended' : runs === 0 ? 'Nothing is running' : `${runs} ${runs === 1 ? 'program is' : 'programs are'} running`;
+  const counted = [runs, elsewhere.length, found.length].map((count) => String(count).padStart(2, '0'));
+  if (counted.join() !== view.counted) {
+    view.counted = counted.join();
+    const count = (number, of) => h('span', {}, h('b', {}, number), of);
+    $('counts').replaceChildren(count(counted[0], 'running, started here'), count(counted[1], 'started elsewhere'), count(counted[2], 'programs to start'));
+  }
 
-  const elsewhere = others(state.runtimes);
   const drawn = JSON.stringify(elsewhere);
   if (drawn === view.elsewhere) return;
   view.elsewhere = drawn;
+  const shut = (each) => confirm(`Shut down ${each.runtime}? It was not started here.`) && send('/api/shutdown', { runtime: each.runtime });
   const other = (each) =>
     h(
       'span.other',
       { title: `process ${each.pid}` },
       h('b', {}, each.runtime),
       `${each.nodes} ${each.nodes === 1 ? 'node' : 'nodes'}`,
-      h('button', { onclick: () => confirm(`Shut down ${each.runtime}? It was not started here.`) && send('/api/shutdown', { runtime: each.runtime }), title: 'Ask this runtime to shut down' }, 'Shut down'),
+      h('button', { onclick: () => shut(each), title: 'Ask this runtime to shut down' }, 'Shut down'),
     );
   $('others').replaceChildren(...(elsewhere.length ? ['Started elsewhere, and running:', ...elsewhere.map(other)] : []));
+}
+
+// ---- The command line ----
+
+// Look at the whole machine: for a list, and for what is offered as a line is typed.
+async function look() {
+  view.looked = Date.now();
+  view.machine = await api('/api/machine').catch(() => view.machine);
+  return view.machine;
+}
+
+// What a port carries, as the tool writes it.
+const carried = ({ message }) => `${message.name}${message.slice ? '[]' : ''}${message.header ? ` + ${message.header}` : ''}`;
+
+// A node as a row of a list. A click shows its ports under it: what each input hears, and how
+// many inputs each output is heard by.
+function nodeRow(entry, home, node) {
+  const key = `${entry.key}|${home.runtime}/${node.name}`;
+  const fold = () => {
+    if (view.unfolded.has(key)) view.unfolded.delete(key);
+    else view.unfolded.add(key);
+    drawAnswers();
+  };
+  const where = node.placement === null ? 'run by its program' : node.placement === 'Dedicated' ? 'own thread' : `pool ${node.placement.Pool}`;
+  // A node that its program runs itself is not counted by the runtime.
+  const runs = node.placement === null ? '' : `${node.runs} runs`;
+  const row = h(`div.node.${standing(node)}`, { onclick: fold, title: `${standing(node)}, ${where}: click for its ports` }, h('span', {}, node.name), h('span.dim', {}, node.kind || where), h('span.dim', {}, runs));
+  if (!view.unfolded.has(key)) return row;
+  const heard = (source) => h('div', {}, `← ${source.output}: ${source.received} received, ${source.lost} lost, ${source.latency_us} us`);
+  const inputs = node.inputs.map((input) => h('div', {}, h('b', {}, `in ${input.port.name}`), ` ${carried(input.port)}`, input.sources.map(heard)));
+  const outputs = node.outputs.map((output) => h('div', {}, h('b', {}, `out ${output.port.name}`), ` ${carried(output.port)} → ${output.subscribers} ${output.subscribers === 1 ? 'input' : 'inputs'}, ${output.sent} sent`));
+  const panic = typeof node.state !== 'string' && h('div', {}, `stopped by a panic: ${node.state.Stopped}`);
+  return [row, h('div.ports', {}, panic, inputs, outputs, inputs.length + outputs.length === 0 && 'it has no ports')];
+}
+
+// The machine as `triq list` tells it, drawn: each runtime, the kinds it offers, and its nodes.
+function listed(entry) {
+  if (entry.machine.length === 0) return [h('p.dim', {}, 'No runtime is running on this machine.')];
+  return entry.machine.map((home) => {
+    const pools = home.pools.map((pool) => `pool ${pool.name} ×${pool.threads}`).join(', ');
+    const kinds = home.factories.map((factory) => factory.kind).join(', ');
+    return h(
+      'div.home',
+      {},
+      h('div.home-name', {}, h('b', {}, home.runtime), `pid ${home.pid}`, pools, h('span', {}, `${home.nodes.length} ${home.nodes.length === 1 ? 'node' : 'nodes'}`)),
+      kinds && h('div.ports', {}, h('b', {}, 'kinds '), kinds),
+      home.nodes.map((node) => nodeRow(entry, home, node)),
+    );
+  });
+}
+
+// A table: its headings, and its rows. A long one is scrolled within itself.
+const table = (headings, rows) => {
+  const head = h('tr', {}, headings.map((heading) => h('th', {}, heading)));
+  return h('div.long', {}, h('table', {}, head, rows.map((row) => h('tr', {}, row.map((cell) => h('td', {}, cell))))));
+};
+
+// What came of a line that was typed: how it is drawn, and something that changes when it is
+// to be drawn again.
+function answered(entry) {
+  if (entry.kind === 'list') {
+    const unfolded = [...view.unfolded].filter((key) => key.startsWith(`${entry.key}|`));
+    return { note: entry.live ? 'kept up to date' : '', shape: `${entry.stamp}|${unfolded}`, parts: () => listed(entry) };
+  }
+  if (entry.kind === 'json') return { note: '', shape: 'json', parts: () => [h('pre', {}, JSON.stringify(entry.machine, null, 2))] };
+  if (entry.kind === 'wrong') return { note: '', shape: 'wrong', parts: () => [h('div.wrong', {}, entry.text)] };
+  if (entry.kind === 'sent') return { note: '', shape: 'sent', parts: () => [h('div.wait', {}, 'sent')] };
+  if (entry.kind === 'started') {
+    const one = state.programs.started.find((one) => one.id === entry.id);
+    return { note: '', shape: `started ${one?.program}`, parts: () => [h('div.done', {}, `started${one ? ` ${one.program}` : ''} as a program: it is under Running`)] };
+  }
+  // A command the tool was run with. It is forgotten by the server after a while, and is then
+  // shown as it was last seen.
+  const one = (entry.seen = state.programs.asked.find((one) => one.id === entry.id) ?? entry.seen);
+  if (!one) return { note: '', shape: 'gone', parts: () => [] };
+  const printed = said(one.printed);
+  const parts = () => {
+    if (!one.ended) return [h('div.wait', {}, 'running'), printed.length > 0 && h('pre', {}, printed.join('\n'))];
+    if (one.failed) return [h('div.wrong', {}, h('pre', {}, printed.join('\n') || one.ended))];
+    const fields = one.told[0] === 'fields' && fieldsOf(one.printed);
+    if (fields) return [table(['in', 'stored as', 'at byte', 'number'], fields.map((field) => [field.part, field.kind, String(field.at), field.name]))];
+    const usage = one.told[0] === 'help' && commands(one.printed.join('\n'));
+    if (usage) return [table(['command', 'takes', 'for'], usage.map((each) => [each.command, each.takes, each.about]))];
+    return [printed.length ? h('pre', {}, printed.join('\n')) : h('div.done', {}, 'done')];
+  };
+  return { note: one.ended ? '' : 'running', shape: `${one.ended}|${one.printed.length}`, parts };
+}
+
+// The lines that were typed, the newest first, each with what came of it. One is drawn again
+// when what came of it has changed.
+function drawAnswers() {
+  const box = $('answers');
+  box.querySelector('.none').hidden = view.lines.length > 0;
+  for (const [key, made] of view.answers) {
+    if (view.lines.some((entry) => entry.key === key)) continue;
+    made.root.remove();
+    view.answers.delete(key);
+  }
+  for (const entry of view.lines) {
+    if (!view.answers.has(entry.key)) {
+      const [note, came] = [h('em'), h('div.came')];
+      const root = h('div.answer', {}, h('div.typed', {}, h('span', {}, entry.line), note), came);
+      view.answers.set(entry.key, { root, note, came, shape: null });
+      box.prepend(root);
+    }
+    const [made, { note, shape, parts }] = [view.answers.get(entry.key), answered(entry)];
+    made.note.textContent = note;
+    if (shape === made.shape) continue;
+    made.shape = shape;
+    made.came.replaceChildren(...parts().flat(Infinity).filter(Boolean));
+  }
+}
+
+// Do what a line says. The list is drawn here from what the runtimes report, which is what
+// the tool would print; a program's name starts the program; the rest is for the tool.
+async function run(line) {
+  const typed = line.trim().replace(/^triq(\s+|$)/, '');
+  if (!typed) return;
+  view.before.push(typed);
+  view.recall = view.before.length;
+  if (typed === 'clear') return wipe();
+  // It is on the page at once, in the order it was typed in, and what comes of it follows.
+  const entry = { key: view.before.length, line: typed, kind: 'sent', stamp: 0 };
+  // A list that was kept up to date is left as it is once something else is typed.
+  for (const other of view.lines) other.live = false;
+  view.lines = [...view.lines, entry].slice(-40);
+  $('answers').scrollTop = 0;
+  drawAnswers();
+  if (['list', 'watch', 'json'].includes(typed)) {
+    Object.assign(entry, { machine: await look(), kind: typed === 'json' ? 'json' : 'list', live: typed === 'watch' });
+  } else {
+    try {
+      const { started, asked } = await api('/api/command', { line: typed });
+      Object.assign(entry, started ? { kind: 'started', id: started } : { kind: 'asked', id: asked });
+    } catch (problem) {
+      Object.assign(entry, { kind: 'wrong', text: problem.message });
+    }
+  }
+  refresh();
+}
+
+function wipe() {
+  view.lines = [];
+  view.unfolded.clear();
+  drawAnswers();
+}
+
+// Under the line as it is typed: what the command takes, and the names that could end the
+// word being typed. Tab takes as much as they all begin with, or the first.
+function suggest() {
+  const line = $('line').value;
+  $('hint').textContent = hint(line, view.known) ?? '';
+  const known = view.known.map((each) => each.command);
+  const names = line.trim() ? offers(line, known, state.programs.found, view.machine).slice(0, 10) : [];
+  $('offers').replaceChildren(...names.map((name) => h('button', { type: 'button', onclick: () => take(name) }, name)));
+  return names;
+}
+function take(name, whole = true) {
+  const taken = completed($('line').value, name);
+  $('line').value = whole ? taken : taken.trimEnd();
+  $('line').focus();
+  suggest();
 }
 
 function draw() {
   drawRunning();
   drawPrograms();
+  drawAnswers();
   // What went wrong is said once, when it is new.
   const [count, problem] = state.said;
   if (count !== view.shown) {
@@ -266,6 +452,9 @@ async function refresh() {
   try {
     state = await api('/api/state');
     view.missed = 0;
+    // The list that is kept up to date is looked at again once a second.
+    const live = view.lines.find((entry) => entry.live);
+    if (live && Date.now() - view.looked > 900) Object.assign(live, { machine: await look(), stamp: live.stamp + 1 });
     ended(false);
     draw();
   } catch (problem) {
@@ -295,7 +484,40 @@ $('quit').addEventListener('click', async () => {
   await api('/api/quit', {}).catch((problem) => say(problem.message));
   ended(true);
 });
+
+$('wipe').addEventListener('click', wipe);
+$('typing').addEventListener('submit', (sent) => {
+  sent.preventDefault();
+  const line = $('line').value;
+  view.doing = view.doing.then(() => run(line));
+  $('line').value = '';
+  suggest();
+});
+$('line').addEventListener('input', suggest);
+// The names that are offered are those of the machine as it is when the line is typed on.
+$('line').addEventListener('focus', () => look().then(suggest));
+$('line').addEventListener('keydown', (key) => {
+  if (key.key === 'Tab') {
+    const names = suggest();
+    if (names.length === 0) return;
+    key.preventDefault();
+    // As much as all of them begin with, if that is more than is typed; or else the first.
+    const shared = names.reduce((a, b) => a.slice(0, [...a].findIndex((letter, at) => letter !== b[at]) >>> 0));
+    const piece = $('line').value.split(/\s+/).pop();
+    if (names.length > 1 && shared.length > piece.length) take(shared, false);
+    else take(names[0]);
+  } else if (key.key === 'ArrowUp' || key.key === 'ArrowDown') {
+    // What was typed before comes back, and what was typed after it.
+    key.preventDefault();
+    view.recall = Math.min(view.before.length, Math.max(0, view.recall + (key.key === 'ArrowUp' ? -1 : 1)));
+    $('line').value = view.before[view.recall] ?? '';
+    suggest();
+  }
+});
+
 mark($('mark'), 'TRIQ');
-dissolve($('edge'), getComputedStyle(document.documentElement).getPropertyValue('--page').trim());
+api('/api/usage')
+  .then(({ usage }) => (view.known = commands(usage ?? '')))
+  .catch(() => {});
 refresh();
 setInterval(refresh, 500);

@@ -1,6 +1,6 @@
 //! `triq-serve [--port 7474] [--no-open]`: triq's programs in a browser. It serves one page, to
 //! this machine alone, and opens it. The page starts triq's programs, as processes of their
-//! own, shows what they print, and stops them.
+//! own, shows what they print, and stops them; and it has a line to type the tool's commands on.
 //!
 //! `triq serve` runs it, with the `triq` tool beside it. The programs it started are stopped
 //! when the page's Quit is pressed; Ctrl-C ends it as it ends anything.
@@ -14,7 +14,8 @@ use triq_serve::site::Site;
 const USAGE: &str = "\
 usage: triq-serve [--port 7474] [--no-open]
   serves a page to this machine alone, and opens it in the browser:
-  start triq's programs there, as many of each as are wanted, and stop them";
+  start triq's programs there, as many of each as are wanted, stop them,
+  and type the commands of the triq tool, with their answers drawn";
 
 /// Show a page in the person's own browser, as each system does it.
 fn open(address: &str) {

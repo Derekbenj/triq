@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use triq::Inventory;
-use triq_serve::programs::{Programs, plain};
+use triq_serve::programs::{Programs, plain, words};
 
 /// A program of the test's own: a script that does what `script` says.
 fn program(tag: &str, name: &str, script: &str) -> (String, PathBuf) {
@@ -148,6 +148,59 @@ fn one_that_is_a_runtime_is_asked_to_shut_down_and_ended_when_it_is_stopped_agai
         programs.started[0].ended.is_some()
     }));
     assert_eq!(programs.told(&machine)["started"][0]["ended"], "stopped");
+}
+
+#[test]
+fn what_is_typed_is_split_into_words_as_a_terminal_splits_it() {
+    assert_eq!(words("connect  robot/imu/pose\tdesk/viewer/input"), ["connect", "robot/imu/pose", "desk/viewer/input"]);
+    // What is between quotes is one word, spaces and all, and the quotes are not part of it.
+    let spawn = r#"spawn physics multirotor quad --params '{"position": [0, 0, -1]}'"#;
+    assert_eq!(words(spawn), ["spawn", "physics", "multirotor", "quad", "--params", r#"{"position": [0, 0, -1]}"#]);
+    assert_eq!(words(r#"a "b c"d 'it''s' e\ f """#), ["a", "b cd", "its", "e f", ""]);
+    assert_eq!(words("   "), Vec::<String>::new());
+    // A program is told the words in the same way.
+    let talker = program("words", "talker", "for word in \"$@\"; do echo \"<$word>\"; done");
+    let mut programs = Programs::new(vec![talker]);
+    programs.start(0, "one 'two three'").expect("start it");
+    assert!(wait_for(|| programs.printed(0).len() == 2));
+    assert_eq!(programs.printed(0), ["<one>", "<two three>"]);
+}
+
+#[test]
+fn a_command_of_the_tool_is_run_as_a_process_and_listed_apart_from_the_programs() {
+    let (_, tool) =
+        program("tool", "tool", "echo \"asked: $*\"\nif [ \"$1\" = bad ]; then echo 'triq: no' >&2; exit 1; fi");
+    let mut programs = Programs::new(Vec::new());
+    let first = programs.ask(&tool, "connect a/b/c 'd e'").expect("run it");
+    let second = programs.ask(&tool, "bad idea").expect("run it");
+    assert_eq!((first, second), (1, 2));
+    let mut told = Value::Null;
+    assert!(wait_for(|| {
+        programs.poll();
+        told = programs.told(&[]);
+        told["asked"].as_array().is_some_and(|asked| asked.iter().all(|one| !one["ended"].is_null()))
+    }));
+    // They are no programs that were started: the page lists them where the commands are typed.
+    assert_eq!(told["started"], json!([]));
+    let (done, refused) = (&told["asked"][0], &told["asked"][1]);
+    assert_eq!(
+        (&done["told"], &done["printed"]),
+        (&json!(["connect", "a/b/c", "d e"]), &json!(["asked: connect a/b/c d e"]))
+    );
+    assert_eq!((&done["ended"], &done["failed"]), (&json!("ended"), &json!(false)));
+    assert_eq!((&refused["ended"], &refused["failed"]), (&json!("ended with status 1"), &json!(true)));
+    assert!(refused["printed"].as_array().unwrap().contains(&json!("triq: no")));
+
+    // Only the last of them are kept: what was asked long ago is forgotten by itself.
+    for _ in 0..30 {
+        programs.ask(&tool, "list").expect("run it");
+        assert!(wait_for(|| {
+            programs.poll();
+            programs.started.iter().all(|one| one.ended.is_some())
+        }));
+    }
+    let kept = programs.told(&[])["asked"].as_array().unwrap().len();
+    assert!((1..=20).contains(&kept), "{kept}");
 }
 
 #[test]

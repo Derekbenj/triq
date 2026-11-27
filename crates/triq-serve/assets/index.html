@@ -8,43 +8,66 @@
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header class="hero">
-  <div class="top">
-    <div id="mark" role="img" aria-label="triq"></div>
-    <div class="title">
-      <p class="over">On this machine</p>
+<header class="top">
+  <div class="wrap bar">
+    <div id="mark" class="mark" role="img" aria-label="TRIQ"></div>
+    <div class="now">
+      <p class="eyebrow"><span class="eyebrow-line"></span>On this machine</p>
       <h1 id="headline">Nothing is running</h1>
     </div>
     <div class="ends">
-      <button id="stop-all" class="pill glass" title="Stop every program that was started here" hidden>Stop all</button>
-      <button id="quit" class="pill glass" title="End triq serve, and the programs it started">Quit</button>
+      <button id="stop-all" class="button" title="Stop every program that was started here" hidden>Stop all</button>
+      <button id="quit" class="button" title="End triq serve, and the programs it started">Quit</button>
     </div>
   </div>
-  <canvas id="edge" aria-hidden="true"></canvas>
+  <div class="counts"><div id="counts" class="wrap count-inner"></div></div>
 </header>
-<main>
-  <section>
-    <div class="heading">
-      <div>
-        <p class="over">Started here</p>
-        <h2>Running</h2>
+<main class="wrap layout">
+  <div class="main">
+    <section>
+      <div class="section-line">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span>Started here</p>
+          <h2 class="arcade green">Running</h2>
+        </div>
+        <button id="clear" class="button" title="Take those that have ended off the page" hidden>Clear what has ended</button>
       </div>
-      <button id="clear" class="pill plain" title="Take those that have ended off the page" hidden>Clear what has ended</button>
-    </div>
-    <p id="nothing" class="none">Nothing was started yet. Pick a program below: it runs as it would from a terminal.</p>
-    <div id="running" class="cards wide"></div>
-    <div id="others"></div>
-  </section>
-  <section>
-    <div class="heading">
-      <div>
-        <p class="over">As from a terminal</p>
-        <h2>Start a program</h2>
+      <p id="nothing" class="none">Nothing was started yet. Pick a program below, or type its name in the command line: it runs as it would from a terminal.</p>
+      <div id="running" class="cards wide"></div>
+      <div id="others"></div>
+    </section>
+    <section>
+      <div class="section-line">
+        <div>
+          <p class="eyebrow"><span class="eyebrow-line"></span>As from a terminal</p>
+          <h2 class="arcade yellow">Start a program</h2>
+        </div>
+        <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
       </div>
-      <input id="search" type="search" placeholder="find a program" autocomplete="off" title="Enter starts the program, when only one is found">
+      <div id="programs"></div>
+    </section>
+  </div>
+  <aside class="console">
+    <div class="section-line">
+      <div>
+        <p class="eyebrow"><span class="eyebrow-line"></span>The triq tool</p>
+        <h2 class="arcade cyan">Command line</h2>
+      </div>
+      <button id="wipe" class="button" title="Take what was typed and answered off the page">Clear</button>
     </div>
-    <div id="programs"></div>
-  </section>
+    <div class="terminal">
+      <form id="typing" class="prompt" autocomplete="off">
+        <label for="line">triq</label>
+        <input id="line" type="text" spellcheck="false" autocapitalize="off" placeholder="list">
+        <button class="button go">Run</button>
+      </form>
+      <p id="hint" class="hint"></p>
+      <div id="offers" class="offers"></div>
+      <div id="answers" class="answers" aria-live="polite">
+        <p class="none">Type what you would type after <code>triq</code> in a terminal: <code>list</code>, <code>connect</code> and an output and an input, <code>pause</code> and a node, or the name of a program. Tab takes what is offered, and the arrows bring back what was typed before.</p>
+      </div>
+    </div>
+  </aside>
 </main>
 <div id="said" role="status" hidden></div>
 <script type="module" src="/app.js"></script>

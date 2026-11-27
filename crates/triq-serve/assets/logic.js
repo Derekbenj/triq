@@ -102,3 +102,77 @@ export function picture(name) {
   const sparse = rows.flat().filter(Boolean).length < 9;
   return sparse ? rows.map((row) => row.map((on) => !on)) : rows;
 }
+
+// What the tool can be told, read from what it says when asked: of each command its name, what
+// it takes, and what it is for. The line about programs is no command of its own.
+export function commands(usage) {
+  const lines = usage.split('\n').filter((line) => /^ {2}triq [a-z]/.test(line));
+  return lines.map((line) => {
+    const [, command, takes = '', about = ''] = line.match(/^ {2}triq (\S+) ?(.*?)(?: {2,}(.*))?$/);
+    return { command, takes: takes.trim(), about: about.trim() };
+  });
+}
+
+// The words of a line as far as it is typed, without the tool's name: the last is the one
+// being typed, and is empty after a space.
+const typedWords = (line) => line.replace(/^\s*(triq(\s+|$))?/, '').split(/\s+/);
+
+// What the tool takes for the command that is being typed, to be shown under the line. While
+// the command's own name is being typed, that is the one command it can still become.
+export function hint(line, known) {
+  const [first, ...rest] = typedWords(line);
+  const becomes = known.filter((each) => (rest.length ? each.command === first : first && each.command.startsWith(first)));
+  if (becomes.length !== 1) return null;
+  const [{ command, takes, about }] = becomes;
+  return takes ? `triq ${command} ${takes}` : `triq ${command}: ${about}`;
+}
+
+// What a port carries, to tell whether an output and an input go together.
+const carries = (port) => JSON.stringify(port.message);
+
+// The names that can stand where the last word of a line is being typed, in the order they are
+// offered in: a command or a program, or what the command takes in that place, from the machine.
+export function offers(line, known, programs, machine) {
+  const typed = typedWords(line);
+  const [command, place, piece] = [typed[0], typed.length - 1, typed[typed.length - 1]];
+  const home = machine.find((each) => each.runtime === typed[1]);
+  const runtimes = machine.map((each) => each.runtime);
+  const nodes = machine.flatMap((each) => each.nodes.map((node) => `${each.runtime}/${node.name}`));
+  const outputs = machine.flatMap((each) => each.nodes.flatMap((node) => node.outputs));
+  const inputs = machine.flatMap((each) => each.nodes.flatMap((node) => node.inputs.map((input) => ({ ...input, name: `${each.runtime}/${node.name}/${input.port.name}` }))));
+  const from = outputs.find((output) => output.service === typed[1]);
+  let names = [];
+  if (place === 0) names = [...known, ...programs];
+  else if (command === 'spawn' && place === 1) names = runtimes;
+  else if (command === 'spawn' && place === 2) names = (home?.factories ?? []).map((factory) => factory.kind);
+  else if (command === 'spawn' && typed[place - 1] === '--pool') names = (home?.pools ?? []).map((pool) => pool.name);
+  else if (command === 'spawn' && place > 3 && piece.startsWith('-')) names = ['--pool', '--params'];
+  else if (['connect', 'disconnect', 'fields'].includes(command) && place === 1) names = outputs.map((output) => output.service);
+  // An input is offered to an output that sends what it takes.
+  else if (['connect', 'disconnect'].includes(command) && place === 2) names = inputs.filter((input) => !from || carries(input.port) === carries(from.port)).map((input) => input.name);
+  else if (['set', 'change', 'group', 'pause', 'resume', 'remove'].includes(command) && place === 1) names = nodes;
+  else if (command === 'shutdown' && place === 1) names = runtimes;
+  return names.filter((name) => name.startsWith(piece) && name !== piece);
+}
+
+// A line with an offer taken: it stands where the last word was being typed, with a space
+// after it for the next.
+export const completed = (line, offer) => `${line.slice(0, line.length - typedWords(line).pop().length)}${offer} `;
+
+// What `triq fields` printed, as rows: which part of what is sent a number is in, how it is
+// stored, where it begins, and its name. Null if what was printed is something else.
+export function fieldsOf(printed) {
+  const rows = printed.map((line) => line.match(/^(message|header)\s+(\w+)\s+at byte (\d+)\s+(.+)$/));
+  if (printed.length === 0 || rows.some((row) => !row)) return null;
+  return rows.map(([, part, kind, at, name]) => ({ part, kind, at: Number(at), name }));
+}
+
+// What the tool printed, as it is worth reading: without its own name in front of what went
+// wrong, and without all it can be told, which it prints after a command it does not know.
+export function said(printed) {
+  const usage = printed.indexOf('usage:');
+  return (usage < 0 ? printed : printed.slice(0, usage)).map((line) => line.replace(/^triq: /, ''));
+}
+
+// How a node stands, in a word: a runtime says `Running`, `Paused`, or `Stopped` with why.
+export const standing = (node) => (typeof node.state === 'string' ? node.state.toLowerCase() : 'stopped');

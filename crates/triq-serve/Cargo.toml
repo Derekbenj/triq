@@ -1,6 +1,6 @@
 [package]
 name = "triq-serve"
-description = "triq's programs in a browser: a page served to this machine alone, which starts them, shows what they print, and stops them"
+description = "triq's programs in a browser: a page served to this machine alone, which starts them, shows what they print, stops them, and runs the commands of the triq tool"
 edition.workspace = true
 version.workspace = true
 license.workspace = true

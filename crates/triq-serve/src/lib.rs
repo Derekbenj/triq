@@ -1,6 +1,6 @@
 //! triq's programs in a browser: a page served to this machine alone, which starts them as
 //! processes of their own, more than one of each if that is wanted, shows what they print,
-//! and stops them.
+//! and stops them; and has a line for the commands of the `triq` tool, which it runs.
 pub mod feed;
 pub mod http;
 pub mod programs;

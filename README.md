@@ -409,9 +409,9 @@ triq serve                # or triq-serve [--port 7474] [--no-open]
 ```
 
 `triq-serve` serves one page, to this machine alone, and opens it in the browser. The page
-starts the programs of triq and stops them, as a terminal would, with less typing. What is
-inside a runtime, its nodes, their settings and their wires, is the workbench's to show, and
-the workbench is one of the programs the page starts.
+starts the programs of triq and stops them, as a terminal would, with less typing, and has a
+line for the commands of the `triq` tool. To draw what is inside a runtime, and to wire it by
+hand, is the workbench's, which is one of the programs the page starts.
 
 - **Start a program.** Every program of triq that is found, as the tool finds them, is on the
   page, family by family: `algorithm-sensors` is under `algorithm`. `Start` starts one as a
@@ -430,6 +430,18 @@ the workbench is one of the programs the page starts.
   that ended by itself with something wrong shows what it printed, which says why. `Stop all`
   stops every one. Runtimes that were started elsewhere are listed under the cards, each with
   `Shut down`.
+- **Command line.** A line for what would be typed after `triq` in a terminal, split into
+  words as a terminal splits it, so that `spawn robot filter f2 --params '{"alpha": 0.5}'` is
+  typed as it is there. As a line is typed the page says what the command takes, and offers
+  names to end the word being typed, from the machine as it is: runtimes, nodes, ports, the
+  kinds a runtime offers, and for the second end of a wire only the inputs that take what the
+  output sends. Tab takes what is offered, and the arrows bring back what was typed before.
+  What comes of a line is under it, drawn for what it is: `list` as the runtimes with their
+  kinds and their nodes, a node's ports under it at a click, and `watch` the same, kept up to
+  date; `fields` and `help` as tables; a command that printed nothing as `done`; one that
+  failed with what the tool said. The name of a program typed there starts the program, as its
+  button does. The tool itself is run for each line, so a command does what it does in a
+  terminal; the list is drawn from what the runtimes report, which is what `triq json` prints.
 
 The page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
 ends anything. A page that is left open says that `triq-serve` has ended, and comes back when
@@ -438,8 +450,9 @@ it is run again.
 **It starts programs, so it is served with care.** It listens on `127.0.0.1` alone. A request
 that does not name this machine as its host is refused, and so is one under `/api/` without
 the token `triq-serve` makes as it starts, which the page it serves is given and no other
-page in the browser can read. Nothing is fetched from elsewhere: the page is in the program,
-and works on a machine with no network.
+page in the browser can read. Nothing is fetched from elsewhere: the page and the font of its
+headings, Press Start 2P, under its own licence beside it, are in the program, and it works
+on a machine with no network.
 
 **For a language model, or a script.** Everything the page does is a request it could make
 too, and `triq-serve` prints how as it starts:
@@ -449,16 +462,18 @@ curl -H 'x-triq-token: <the token it printed>' http://127.0.0.1:7474/api/help   
 curl -H 'x-triq-token: ...' http://127.0.0.1:7474/api/state                     # the programs, and what runs
 curl -H 'x-triq-token: ...' -d '{"program": "workbench", "told": ""}' http://127.0.0.1:7474/api/start
 curl -H 'x-triq-token: ...' -d '{"id": 1}' http://127.0.0.1:7474/api/stop
+curl -H 'x-triq-token: ...' -d '{"line": "pause robot/filter"}' http://127.0.0.1:7474/api/command
 ```
 
 | File of `crates/triq-serve` | What it holds |
 | --- | --- |
 | `src/http.rs` | as much of HTTP as one page needs: a request read, an answer written |
 | `src/site.rs` | the page and its parts, the requests under `/api/`, and who is answered |
-| `src/programs.rs` | programs started as processes, what they print, and stopping them |
+| `src/programs.rs` | programs started as processes, the tool run with a line that was typed, what they print, and stopping them |
 | `src/feed.rs` | the runtimes of the machine as they are seen, and one asked to shut down, off the thread that answers |
 | `assets/app.js`, `logic.js` | the page: what it draws and sends, and what it works out, which `node --test` tries |
-| `assets/hero.js`, `app.css` | the name in squares and the edge under it, and how the page looks |
+| `assets/hero.js`, `app.css` | the name at the top, which jiggles under the pointer, and how the page looks |
+| `assets/press-start-2p.ttf`, `.LICENSE` | the font of the name and the headings, and the licence it is under, the SIL Open Font License |
 
 ## The workbench
 

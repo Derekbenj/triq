@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, clash, doing, earlier, families, family, found, free, named, others, picture, running } from '../assets/logic.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -86,4 +86,81 @@ test('a program has a picture of its own: five rows of five squares, the same on
     assert.deepEqual(picture(name), squares);
   }
   assert.notDeepEqual(picture('algorithm-sensors'), picture('algorithm-estimators'));
+});
+
+// What the tool says it can be told, as far as the tests need it; and a machine of two runtimes.
+const USAGE = `usage:
+  triq list                                   runtimes, factories, nodes and connections
+  triq spawn <runtime> <kind> <name> [--pool <pool>] [--params <json>]
+  triq connect <runtime/node/output> <runtime/node/input>
+  triq pause <runtime/node>
+  triq shutdown <runtime>
+  triq <program> [what it is told]            run triq-<program>, as triq workbench runs triq-workbench
+
+programs here, each run as triq <its name>:
+  workbench`;
+const carried = (name) => ({ name, size: 8, align: 8, slice: false, header: '' });
+const output = (runtime, node, port, message) => ({ port: { name: port, message: carried(message) }, service: `${runtime}/${node}/${port}`, subscribers: 0, sent: 0 });
+const input = (port, message) => ({ port: { name: port, message: carried(message) }, sources: [] });
+const MACHINE = [
+  { runtime: 'desk', pid: 2, pools: [], factories: [], nodes: [{ name: 'viewer', kind: '', state: 'Paused', inputs: [input('pose', 'Pose'), input('count', 'u64')], outputs: [] }] },
+  {
+    runtime: 'robot',
+    pid: 1,
+    pools: [{ name: 'dsp', threads: 2 }],
+    factories: [{ kind: 'filter' }, { kind: 'fuser' }],
+    nodes: [
+      { name: 'imu', kind: '', state: 'Running', inputs: [], outputs: [output('robot', 'imu', 'pose', 'Pose'), output('robot', 'imu', 'ticks', 'u64')] },
+      { name: 'smoother', kind: 'filter', state: { Stopped: 'it panicked' }, inputs: [input('raw', 'Pose')], outputs: [output('robot', 'smoother', 'smooth', 'Pose')] },
+    ],
+  },
+];
+
+test('what the tool can be told is read from what it says, and said back for the command being typed', () => {
+  const known = commands(USAGE);
+  assert.deepEqual(known.map((each) => each.command), ['list', 'spawn', 'connect', 'pause', 'shutdown']);
+  assert.deepEqual(known[0], { command: 'list', takes: '', about: 'runtimes, factories, nodes and connections' });
+  assert.equal(known[1].takes, '<runtime> <kind> <name> [--pool <pool>] [--params <json>]');
+  assert.equal(hint('triq connect robot/imu', known), 'triq connect <runtime/node/output> <runtime/node/input>');
+  assert.equal(hint('list', known), 'triq list: runtimes, factories, nodes and connections');
+  // While its name is still being typed, the one command it can become; with several, or none, nothing.
+  assert.equal(hint('sp', known), 'triq spawn <runtime> <kind> <name> [--pool <pool>] [--params <json>]');
+  assert.deepEqual([hint('s', known), hint('workbench', known), hint('', known)], [null, null, null]);
+});
+
+test('what is being typed is offered its ending: a command, a program, or a name from the machine', () => {
+  const known = commands(USAGE).map((each) => each.command);
+  const offer = (line) => offers(line, known, ['workbench', 'stack-quadcopter'], MACHINE);
+  assert.deepEqual(offer('s'), ['spawn', 'shutdown', 'stack-quadcopter']);
+  assert.deepEqual(offer('triq pa'), ['pause']);
+  assert.deepEqual(offer('shutdown '), ['desk', 'robot']);
+  assert.deepEqual(offer('pause robot/'), ['robot/imu', 'robot/smoother']);
+  // A kind of the runtime that was named, and then its pools after the word that takes one.
+  assert.deepEqual(offer('spawn robot f'), ['filter', 'fuser']);
+  assert.deepEqual(offer('spawn robot filter f2 --pool '), ['dsp']);
+  assert.deepEqual(offer('spawn robot filter f2 -'), ['--pool', '--params']);
+  // An output to wire from, and then only the inputs that take what it sends.
+  assert.deepEqual(offer('connect robot/imu'), ['robot/imu/pose', 'robot/imu/ticks']);
+  assert.deepEqual(offer('connect robot/imu/pose '), ['desk/viewer/pose', 'robot/smoother/raw']);
+  assert.deepEqual(offer('connect robot/imu/ticks '), ['desk/viewer/count']);
+  // Nothing is offered that is typed already, or after a program's name.
+  assert.deepEqual([offer('shutdown robot'), offer('workbench '), offer('list ')], [[], [], []]);
+  // An offer taken stands in the place of what was being typed, with room for the next word.
+  assert.equal(completed('triq connect robot/imu', 'robot/imu/pose'), 'triq connect robot/imu/pose ');
+  assert.equal(completed('sp', 'spawn'), 'spawn ');
+});
+
+test('what the tool printed is read as what it is', () => {
+  const printed = ['message  F64   at byte 0    translation[0]', 'message  F64   at byte 8    translation[1]', 'header   U32   at byte 0    width'];
+  assert.deepEqual(fieldsOf(printed), [
+    { part: 'message', kind: 'F64', at: 0, name: 'translation[0]' },
+    { part: 'message', kind: 'F64', at: 8, name: 'translation[1]' },
+    { part: 'header', kind: 'U32', at: 0, name: 'width' },
+  ]);
+  assert.equal(fieldsOf(['triq: "robot/imu" is not `runtime/node/output`']), null);
+  // What went wrong is the tool's first words, without its name; what it can be told, printed after, is left out.
+  assert.deepEqual(said(['triq: no command `lst`, and no program triq-lst beside triq', 'usage:', '  triq list']), ['no command `lst`, and no program triq-lst beside triq']);
+  assert.deepEqual(said(['registered /robot/target: its programs are run by name from now on']), ['registered /robot/target: its programs are run by name from now on']);
+  // How a node stands, in a word.
+  assert.deepEqual(MACHINE.flatMap((home) => home.nodes).map(standing), ['paused', 'running', 'stopped']);
 });
