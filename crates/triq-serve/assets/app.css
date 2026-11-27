@@ -124,12 +124,14 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .mark span:nth-child(4n + 2) { --face: #ffd23f; --side: #f08a1c; --deep: #b0500f; --light: #fff4a8; --x: 0px; --y: 5px; --r: 3deg; }
 .mark span:nth-child(4n + 3) { --face: #38d6ff; --side: #168bcb; --deep: #0b5788; --light: #b4f1ff; --x: 0px; --y: -4px; --r: -2deg; }
 .mark span:nth-child(4n + 4) { --face: #62f08a; --side: #1fa957; --deep: #0f6c37; --light: #c6ffd8; --x: 0px; --y: 4px; --r: 5deg; }
-/* On the light page the letters behind a face are a shade under it and no darker, and the
-   edge up and to the left is white. */
-:root[data-theme="light"] .mark span:nth-child(4n + 1) { --face: #ff5fa8; --side: #ee3f92; --deep: #d6297d; --light: #ffffff; }
-:root[data-theme="light"] .mark span:nth-child(4n + 2) { --face: #ffcb2e; --side: #f8a51c; --deep: #e98511; --light: #ffffff; }
-:root[data-theme="light"] .mark span:nth-child(4n + 3) { --face: #38cffb; --side: #1eaae6; --deep: #178dc9; --light: #ffffff; }
-:root[data-theme="light"] .mark span:nth-child(4n + 4) { --face: #55e684; --side: #2fc468; --deep: #21a655; --light: #ffffff; }
+/* On the light page the letters behind a face are a shade under it and no darker; and the
+   edge up and to the left is the face's own colour, paler, and thinner than on the dark page:
+   a light on the letter, where white was a line around it. */
+:root[data-theme="light"] .mark span { text-shadow: -1.5px -1.5px 0 var(--light), 3.5px 3.5px 0 var(--side), 7px 7px 0 var(--side), 10.5px 10.5px 0 var(--deep); }
+:root[data-theme="light"] .mark span:nth-child(4n + 1) { --face: #ff5fa8; --side: #ee3f92; --deep: #d6297d; --light: #ffa9d2; }
+:root[data-theme="light"] .mark span:nth-child(4n + 2) { --face: #ffcb2e; --side: #f8a51c; --deep: #e98511; --light: #ffe68c; }
+:root[data-theme="light"] .mark span:nth-child(4n + 3) { --face: #38cffb; --side: #1eaae6; --deep: #178dc9; --light: #a3e9ff; }
+:root[data-theme="light"] .mark span:nth-child(4n + 4) { --face: #55e684; --side: #2fc468; --deep: #21a655; --light: #adf5c4; }
 
 /* A strip of counts under the top. */
 .counts { background: var(--strip); border-top: 1px solid var(--line); }
@@ -138,8 +140,10 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .count-inner span + span { border-left: 1px solid var(--line); }
 .count-inner b { color: var(--text); font-size: 0.98rem; font-weight: 600; }
 
-/* The programs on the left, the command line on the right, which stays in sight. */
-.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(24rem, 34rem); gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
+/* The programs on the left, in a column that is no wider than is read at a glance, and the
+   command line on the right, which has the rest and stays in sight. Everything in a column is
+   as wide as the column, so that what is in it ends at one edge. */
+.layout { display: grid; grid-template-columns: minmax(0, 46rem) minmax(24rem, 1fr); gap: 2.4rem; align-items: start; padding-bottom: 4rem; }
 section, .console { margin-top: 2.2rem; }
 .section-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
 .section-line h2 { margin-top: 0.55rem; }
@@ -159,6 +163,8 @@ section, .console { margin-top: 2.2rem; }
 input[type=search], input[type=text], select { border: 1px solid var(--edge); border-radius: 5px; padding: 0.42rem 0.75rem; background: var(--field); outline: none; min-width: 0; }
 input:focus, select:focus { border-color: var(--accent); }
 select { font: inherit; color: inherit; cursor: pointer; }
+/* What is typed in or chosen from shows by its edge that it is the one the keys go to. */
+select:focus-visible, input:focus-visible { outline: none; }
 .finding { display: flex; gap: 0.5rem; }
 input::placeholder { color: var(--faint); }
 #search { width: 15rem; }
@@ -183,8 +189,8 @@ input::placeholder { color: var(--faint); }
 .before button:hover { border-color: var(--accent); }
 
 /* A program to start is one line, with an edge in the colour of its family. They are listed
-   one under another, in a column that is no wider than is read at a glance. */
-.cards:has(> .item) { grid-template-columns: minmax(0, 44rem); gap: 0.4rem; }
+   one under another. */
+.cards:has(> .item) { grid-template-columns: minmax(0, 1fr); gap: 0.4rem; }
 .card.item, #running .card { border-left: 3px solid var(--colour); }
 .card.item { padding: 0.4rem 0.55rem 0.4rem 0.75rem; }
 .card.item .name { font-size: 0.94rem; }
