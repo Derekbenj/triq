@@ -102,7 +102,7 @@ code { font-family: var(--mono); font-size: 0.86em; background: var(--raised); b
 .bar { display: flex; align-items: center; gap: 2.2rem; padding-block: 1.6rem 1.5rem; }
 .now { flex: 1; min-width: 0; }
 .now h1 { font-size: clamp(1.5rem, 2.4vw, 2.1rem); font-weight: 560; letter-spacing: -0.03em; line-height: 1.15; margin-top: 0.3rem; }
-.ends { display: flex; gap: 0.6rem; }
+.ends { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem; }
 .eyebrow { display: flex; align-items: center; gap: 0.6rem; font: 600 0.72rem/1.5 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
 .eyebrow-line { display: inline-block; width: 1.4rem; height: 2px; background: currentColor; }
 
@@ -202,7 +202,7 @@ input::placeholder { color: var(--faint); }
 .tabs button { border: 0; padding: 0.42rem 0.8rem; background: none; color: var(--dim); font-size: 0.88rem; font-weight: 650; letter-spacing: -0.01em; cursor: pointer; white-space: nowrap; }
 .tabs button + button { border-left: 1px solid var(--edge); }
 .tabs button:hover { color: var(--text); }
-.tabs button[aria-selected="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.tabs button[aria-selected="true"], .tabs button[aria-checked="true"] { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
 .terminal { min-height: 0; display: flex; flex-direction: column; background: var(--well); border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
 .answers, .sheet { min-height: 0; overflow: auto; padding: 0.9rem 1rem 0.2rem; border-top: 1px solid var(--seam); }
 .answer { margin-bottom: 1rem; }

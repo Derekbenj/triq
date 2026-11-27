@@ -6,8 +6,13 @@
 <meta name="triq-token" content="__TOKEN__">
 <title>triq</title>
 <script>
-  // Dark, unless light was chosen here before: set before the page is drawn, so that it does not flash.
-  try { document.documentElement.dataset.theme = localStorage.getItem('triq-theme') === 'light' ? 'light' : 'dark'; } catch (refused) {}
+  // Dark, unless light was chosen here before, or the system's own setting was and that is
+  // light: set before the page is drawn, so that it does not flash. As `shown` in logic.js.
+  try {
+    var chosen = localStorage.getItem('triq-theme');
+    var light = chosen === 'light' || (chosen === 'auto' && matchMedia('(prefers-color-scheme: light)').matches);
+    document.documentElement.dataset.theme = light ? 'light' : 'dark';
+  } catch (refused) {}
 </script>
 <link rel="stylesheet" href="/app.css">
 </head>
@@ -20,7 +25,11 @@
       <h1 id="headline">Nothing is running</h1>
     </div>
     <div class="ends">
-      <button id="theme" class="button" title="Show the page light, or dark: it is remembered in this browser">Light</button>
+      <div id="theme" class="tabs" role="radiogroup" aria-label="How the page is shown: it is remembered in this browser">
+        <button role="radio" value="dark" aria-checked="true" title="Show the page dark">Dark</button>
+        <button role="radio" value="light" aria-checked="false" title="Show the page light">Light</button>
+        <button role="radio" value="auto" aria-checked="false" title="Show the page as the system is set, light or dark, and change with it">Auto</button>
+      </div>
       <button id="stop-all" class="button" title="Stop every program that was started here" hidden>Stop all</button>
       <button id="quit" class="button" title="End triq serve, and the programs it started">Quit</button>
     </div>

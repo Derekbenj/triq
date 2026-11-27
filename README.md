@@ -447,7 +447,8 @@ hand, is the workbench's, which is one of the programs the page starts.
   what they are for, each with what it takes, a sentence, and a line to try that is made of
   the names on the machine. A click puts that line on the command line.
 
-The page is dark, and `Light` at its top shows it light, which the browser remembers. The
+The page is dark, unless `Light` is chosen at its top, or `Auto`, which shows it as the system
+is set and changes with it; what was chosen is remembered by the browser. The
 page's `Quit` ends `triq-serve` and stops the programs it started; Ctrl-C ends it as it
 ends anything. A page that is left open says that `triq-serve` has ended, and comes back when
 it is run again.

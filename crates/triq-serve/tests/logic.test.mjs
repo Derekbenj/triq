@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, standing } from '../assets/logic.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -194,4 +194,12 @@ test('the cheat sheet has the commands the tool has, by what they are for, each 
   const of = (command) => bare.flatMap((part) => part.entries).find((each) => each.command === command).example;
   assert.deepEqual([of('connect'), of('pause'), of('spawn')], ['connect robot/imu/pose desk/viewer/pose', 'pause robot/filter', "spawn robot filter filter1 --params '{\"alpha\": 0.5}'"]);
   assert.ok(!bare.some((part) => part.title === 'Programs' && part.entries.length === 0));
+});
+
+test('the page is shown dark or light as was chosen, or as the system is', () => {
+  // Nothing chosen, or something this page does not know, is dark.
+  assert.deepEqual([shown(null, true), shown('', true), shown('sepia', true)], ['dark', 'dark', 'dark']);
+  assert.deepEqual([shown('dark', true), shown('light', false)], ['dark', 'light']);
+  // Left to the system, it is as the system is, and changes with it.
+  assert.deepEqual([shown('auto', true), shown('auto', false)], ['light', 'dark']);
 });

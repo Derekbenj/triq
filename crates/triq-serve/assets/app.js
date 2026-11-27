@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, standing } from '/logic.js';
+import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -48,6 +48,8 @@ const view = {
   doing: Promise.resolve(),
   // Which of the two is under the line: the answers, or the cheat sheet.
   tab: 'answers',
+  // How the page is to be shown: dark, light, or auto for as the system is set.
+  theme: 'dark',
 };
 
 async function api(path, body) {
@@ -466,16 +468,26 @@ function show(tab) {
   if (tab === 'sheet') look().then(drawSheet);
 }
 
-// The page is dark unless light was chosen, which is remembered in this browser.
-function light(on) {
-  document.documentElement.dataset.theme = on ? 'light' : 'dark';
-  $('theme').textContent = on ? 'Dark' : 'Light';
+// The page is dark, or light, or as the system is set, whichever was chosen: that is
+// remembered in this browser. Left to the system, it changes when the system does.
+const system = window.matchMedia('(prefers-color-scheme: light)');
+function theme(chosen) {
+  view.theme = ['light', 'auto'].includes(chosen) ? chosen : 'dark';
+  document.documentElement.dataset.theme = shown(view.theme, system.matches);
+  for (const choice of $('theme').children) choice.setAttribute('aria-checked', String(choice.value === view.theme));
   try {
-    localStorage.setItem('triq-theme', on ? 'light' : 'dark');
+    localStorage.setItem('triq-theme', view.theme);
   } catch (refused) {
     // A browser that keeps nothing shows the page dark the next time.
   }
 }
+const remembered = () => {
+  try {
+    return localStorage.getItem('triq-theme');
+  } catch (refused) {
+    return null;
+  }
+};
 
 // Under the line as it is typed: what the command takes, and the names that could end the
 // word being typed. Tab takes as much as they all begin with, or the first.
@@ -547,7 +559,8 @@ $('quit').addEventListener('click', async () => {
   ended(true);
 });
 
-$('theme').addEventListener('click', () => light(document.documentElement.dataset.theme !== 'light'));
+for (const choice of $('theme').children) choice.addEventListener('click', () => theme(choice.value));
+system.addEventListener('change', () => theme(view.theme));
 $('tab-answers').addEventListener('click', () => show('answers'));
 $('tab-sheet').addEventListener('click', () => show('sheet'));
 $('wipe').addEventListener('click', wipe);
@@ -583,7 +596,7 @@ $('line').addEventListener('keydown', (key) => {
 });
 
 mark($('mark'), 'TRIQ');
-light(document.documentElement.dataset.theme === 'light');
+theme(remembered());
 api('/api/usage')
   .then(({ usage }) => (view.known = commands(usage ?? '')))
   .catch(() => {});

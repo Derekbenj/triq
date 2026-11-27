@@ -233,3 +233,7 @@ export function sheet(known, machine, programs) {
   parts.push({ title: 'More', entries: known.filter((each) => !said.has(each.command)).map((each) => entry(each, each.about)) });
   return parts.filter((part) => part.entries.length > 0);
 }
+
+// How the page is shown, for what was chosen and whether the system is set light: dark or
+// light as chosen, as the system is when that was left to it, and dark when nothing was chosen.
+export const shown = (chosen, systemLight) => (chosen === 'light' || (chosen === 'auto' && systemLight) ? 'light' : 'dark');
