@@ -3,7 +3,7 @@
 //! scripts in a folder of the test's own, which it puts on the PATH of the tool it runs.
 #![cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// A folder of the test's own, with a program `triq-<name>` in it for each of `programs`: a
@@ -22,10 +22,10 @@ fn folder(tag: &str, programs: &[(&str, u8)]) -> PathBuf {
 }
 
 /// Run the tool with `folder` on its PATH, before what is there already.
-fn triq(folder: &PathBuf, args: &[&str]) -> Output {
+fn triq(folder: &Path, args: &[&str]) -> Output {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path =
-        std::env::join_paths(std::iter::once(folder.clone()).chain(std::env::split_paths(&path))).expect("a PATH");
+        std::env::join_paths(std::iter::once(folder.to_owned()).chain(std::env::split_paths(&path))).expect("a PATH");
     Command::new(env!("CARGO_BIN_EXE_triq")).args(args).env("PATH", path).output().expect("run triq")
 }
 
