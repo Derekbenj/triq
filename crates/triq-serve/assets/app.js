@@ -2,7 +2,7 @@
 // and sends what is clicked and what is typed. It starts programs and stops them, and has a
 // line for the commands of the triq tool. To draw what is inside a runtime is the workbench's.
 import { mark } from '/hero.js';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '/logic.js';
 
 const token = document.querySelector('meta[name=triq-token]').content;
 const $ = (id) => document.getElementById(id);
@@ -46,6 +46,8 @@ const view = {
   recall: 0,
   // The line that is being done: the next waits for it, so that lines are done in their order.
   doing: Promise.resolve(),
+  // Lines that were pasted together, waiting to be run one after another.
+  batch: [],
   // Which of the two is under the line: the answers, or the cheat sheet.
   tab: 'answers',
   // How the page is to be shown: dark, light, or auto for as the system is set.
@@ -345,6 +347,10 @@ const table = (headings, rows) => {
   return h('div.long', {}, h('table', {}, head, rows.map((row) => h('tr', {}, row.map((cell) => h('td', {}, cell))))));
 };
 
+// The command the tool was run with for a line, as the server last told of it: it forgets a
+// command after a while, and the line then keeps what was last seen of it.
+const seen = (entry) => (entry.seen = state.programs.asked.find((one) => one.id === entry.id) ?? entry.seen);
+
 // What came of a line that was typed: how it is drawn, and something that changes when it is
 // to be drawn again.
 function answered(entry) {
@@ -353,6 +359,12 @@ function answered(entry) {
     return { note: entry.live ? 'kept up to date' : '', shape: `${entry.stamp}|${unfolded}`, parts: () => listed(entry) };
   }
   if (entry.kind === 'json') return { note: '', shape: 'json', parts: () => [h('pre', {}, JSON.stringify(entry.machine, null, 2))] };
+  // Of lines that were pasted together, the first that fails is the last that is run.
+  if (entry.rest) {
+    const rest = h('div.rest', {}, `${entry.rest === 1 ? 'the line' : `the ${entry.rest} lines`} after it ${entry.rest === 1 ? 'was' : 'were'} not run`);
+    const { note, shape, parts } = answered({ ...entry, rest: 0 });
+    return { note, shape: `${shape}|rest`, parts: () => [...parts(), rest] };
+  }
   if (entry.kind === 'wrong') return { note: '', shape: 'wrong', parts: () => [h('div.wrong', {}, entry.text)] };
   if (entry.kind === 'sent') return { note: '', shape: 'sent', parts: () => [h('div.wait', {}, 'sent')] };
   if (entry.kind === 'started') {
@@ -361,7 +373,7 @@ function answered(entry) {
   }
   // A command the tool was run with. It is forgotten by the server after a while, and is then
   // shown as it was last seen.
-  const one = (entry.seen = state.programs.asked.find((one) => one.id === entry.id) ?? entry.seen);
+  const one = seen(entry);
   if (!one) return { note: '', shape: 'gone', parts: () => [] };
   const printed = said(one.printed);
   const parts = () => {
@@ -401,8 +413,61 @@ function drawAnswers() {
   }
 }
 
-// Do what a line says. The list is drawn here from what the runtimes report, which is what
-// the tool would print; a program's name starts the program; the rest is for the tool.
+// Wait until what a line asked for is done, so that the next line finds it done: until the
+// tool has ended; or, for a program that was started, until it is a runtime that can be
+// asked things, or has ended, or three seconds have passed, since not every program is one.
+async function settled(entry) {
+  const began = Date.now();
+  for (;;) {
+    await refresh();
+    const program = entry.kind === 'started' && state.programs.started.find((one) => one.id === entry.id);
+    const waits = entry.kind === 'asked' ? seen(entry) && !seen(entry).ended : program && !program.ended && !program.runtime && Date.now() - began < 3000;
+    if (!waits || Date.now() - began > 60000) return;
+    await new Promise((later) => setTimeout(later, 120));
+  }
+}
+
+// Whether what a line asked for went wrong.
+const failed = (entry) => {
+  if (entry.kind === 'wrong') return true;
+  if (entry.kind === 'asked') return Boolean(seen(entry)?.failed);
+  return entry.kind === 'started' && Boolean(state.programs.started.find((one) => one.id === entry.id)?.failed);
+};
+
+// Run lines one after another, each when the one before it is done. The first that fails is
+// the last: what comes after it was written for a machine on which it had worked.
+async function runAll(lines) {
+  for (const [at, line] of lines.entries()) {
+    const entry = await run(line);
+    if (entry && failed(entry) && at + 1 < lines.length) {
+      entry.rest = lines.length - at - 1;
+      drawAnswers();
+      return;
+    }
+  }
+}
+
+// The lines that were pasted together, shown before they are run.
+function drawBatch() {
+  $('batch').hidden = view.batch.length === 0;
+  const go = () => {
+    const lines = view.batch;
+    view.batch = [];
+    drawBatch();
+    show('answers');
+    view.doing = view.doing.then(() => runAll(lines));
+  };
+  const forget = () => {
+    view.batch = [];
+    drawBatch();
+  };
+  const about = `${view.batch.length} lines were pasted. They are run one after another, each when the one before it is done, and the first that fails is the last.`;
+  $('batch').replaceChildren(about, h('pre', {}, view.batch.join('\n')), h('div.row', {}, h('button.button.go', { type: 'button', onclick: go }, 'Run them'), h('button.button', { type: 'button', onclick: forget }, 'Forget them')));
+}
+
+// Do what a line says, and wait until it is done. The list is drawn here from what the
+// runtimes report, which is what the tool would print; a program's name starts the program;
+// the rest is for the tool.
 async function run(line) {
   const typed = line.trim().replace(/^triq(\s+|$)/, '');
   if (!typed) return;
@@ -426,7 +491,8 @@ async function run(line) {
       Object.assign(entry, { kind: 'wrong', text: problem.message });
     }
   }
-  refresh();
+  await settled(entry);
+  return entry;
 }
 
 function wipe() {
@@ -574,6 +640,14 @@ $('typing').addEventListener('submit', (sent) => {
   suggest();
 });
 $('line').addEventListener('input', suggest);
+// Several lines pasted at once are not one line: they are shown, to be run one after another.
+$('line').addEventListener('paste', (pasted) => {
+  const lines = batch(pasted.clipboardData?.getData('text') ?? '');
+  if (lines.length < 2) return;
+  pasted.preventDefault();
+  view.batch = lines;
+  drawBatch();
+});
 // The names that are offered are those of the machine as it is when the line is typed on.
 $('line').addEventListener('focus', () => look().then(suggest));
 $('line').addEventListener('keydown', (key) => {

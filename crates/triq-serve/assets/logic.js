@@ -237,3 +237,11 @@ export function sheet(known, machine, programs) {
 // How the page is shown, for what was chosen and whether the system is set light: dark or
 // light as chosen, as the system is when that was left to it, and dark when nothing was chosen.
 export const shown = (chosen, systemLight) => (chosen === 'light' || (chosen === 'auto' && systemLight) ? 'light' : 'dark');
+
+// What was pasted, as the lines to run one after another: without the empty ones, without
+// those that are a remark, which begin with #, and without the $ that a line copied from a
+// terminal may begin with.
+export const batch = (pasted) => {
+  const lines = pasted.split(/\r?\n/).map((line) => line.trim().replace(/^\$\s+/, ''));
+  return lines.filter((line) => line && !line.startsWith('#'));
+};

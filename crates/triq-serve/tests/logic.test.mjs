@@ -1,7 +1,7 @@
 // What the page works out from what it is told, tried with node: `node --test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { age, another, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '../assets/logic.js';
+import { age, another, batch, clash, commands, completed, doing, earlier, families, family, fieldsOf, found, free, hint, named, offers, others, picture, running, said, sheet, shown, standing } from '../assets/logic.js';
 
 // A program that was started, as the page is told of it.
 const one = (id, program, told, more = {}) => ({ id, program, told: told ? told.split(' ') : [], pid: 100 + id, runtime: null, nodes: null, seconds: 5, stopping: false, ended: null, failed: false, printed: [], ...more });
@@ -202,4 +202,17 @@ test('the page is shown dark or light as was chosen, or as the system is', () =>
   assert.deepEqual([shown('dark', true), shown('light', false)], ['dark', 'light']);
   // Left to the system, it is as the system is, and changes with it.
   assert.deepEqual([shown('auto', true), shown('auto', false)], ['light', 'dark']);
+});
+
+test('what is pasted is the lines to run, one after another', () => {
+  const pasted = `# a world with one body in it
+physics-rapier
+  triq spawn physics multirotor quad --params '{"position": [0, 0, -1]}'
+
+$ triq pause physics/quad\r
+   # and nothing more
+`;
+  assert.deepEqual(batch(pasted), ['physics-rapier', `triq spawn physics multirotor quad --params '{"position": [0, 0, -1]}'`, 'triq pause physics/quad']);
+  // A single line is a single line, with whatever ends it; and nothing is nothing.
+  assert.deepEqual([batch('list\n'), batch('  \n\n')], [['list'], []]);
 });
